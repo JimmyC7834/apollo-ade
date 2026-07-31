@@ -74,22 +74,25 @@ export function WorkbenchController() {
 	useEffect(() => {
 		let cancelled = false;
 		async function start(): Promise<void> {
-			if (!provider.canChooseWorkspace) {
-				// Browser mode: the fixture workspace is always "selected".
-				setSelection({ label: 'Fixture', path: '' });
-			} else if (restored?.workspace) {
+			// Whether a folder can be *chosen* says nothing about whether one is
+			// already available: the browser can now do both.
+			let workspace = provider.defaultWorkspace;
+			if (restored?.workspace) {
 				try {
-					const workspace = await provider.restoreWorkspace(restored.workspace.path);
-					if (cancelled) {
-						return;
-					}
-					setSelection(workspace);
+					workspace = await provider.restoreWorkspace(restored.workspace.path);
 				} catch {
-					return; // The folder moved or is gone; start with none.
+					// Gone, or a browser handle that cannot be re-granted
+					// without a gesture. Fall back to whatever exists by
+					// default, which is nothing at all natively.
 				}
-			} else {
+			}
+			if (cancelled) {
 				return;
 			}
+			if (!workspace) {
+				return;
+			}
+			setSelection(workspace);
 
 			const reopened: EditorInput[] = [];
 			for (const editor of restored?.editors ?? []) {

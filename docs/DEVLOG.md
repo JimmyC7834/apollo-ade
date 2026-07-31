@@ -908,3 +908,88 @@ self-check at the data level only — nothing has looked at the pixels.
   relevant state change, so a stale reason is not possible today.
 - Only Open Folder uses it. Save and Close Active Editor are still runnable
   no-ops when no editor is open, rather than reporting why.
+
+## Slice 10c: Opening a real folder in the browser (deviation)
+
+Not a slice, and a deliberate departure from the guide. Requested explicitly by
+the user, restated after the guide's position was presented.
+
+### The deviation, stated plainly
+
+Slice 4's goal is to reach a real workspace *without granting broad filesystem
+access to the frontend*, and §12 assigns folder opening to native mode only,
+with the rule that browser fallbacks need not pretend to provide capability
+they cannot safely emulate. This change gives the frontend real filesystem
+handles via the File System Access API, which is the thing that goal excludes.
+
+The consequence, accepted knowingly: every rule `workspace.rs` enforces now has
+a second implementation in untrusted code. Depth cap, ignored directories, the
+2 MiB limit, UTF-8 only, and rejecting `..` in an id are all re-stated in
+`workspace.ts`, and nothing but review keeps the two copies in agreement.
+
+### User outcome
+
+In a Chromium browser, `File: Open Folder` is in the palette and the folder
+button is in the Explorer header. Choosing a folder replaces the fixture with
+the real tree; opening, editing, saving, and searching all work against disk.
+
+### Added
+
+- `fileSystemAccessProvider()` in `src/workspace.ts`, selected when there is no
+  Tauri and `showDirectoryPicker` exists. Firefox and Safari still get the
+  fixture.
+- `WorkspaceProvider.defaultWorkspace` — a workspace that exists without being
+  chosen.
+
+### Why `defaultWorkspace` exists
+
+The controller used `canChooseWorkspace === false` to mean "the fixture is
+already selected". Those are now independent: the browser can both choose a
+folder and have one by default. Conflating them made the fixture disappear the
+moment the picker became available. The provider states each separately, and
+until a folder is chosen the browser provider delegates every call to the
+fixture, so the deterministic boot state the guide relies on is intact.
+
+### Security boundary
+
+Re-implemented, not shared:
+
+- Ids are split and every segment checked; `''`, `.` and `..` are rejected
+  before any handle lookup.
+- Files are decoded with `TextDecoder('utf-8', { fatal: true })`, so a binary
+  file fails loudly instead of arriving as replacement characters and being
+  written back over the original.
+- 2 MiB is enforced on read and on write.
+- `handleAt` never passes `create: true`, so saving can overwrite but never
+  bring a new path into existence — matching `write_file`.
+- The picker is opened with `mode: 'readwrite'` once, rather than escalating
+  during a save.
+- A handle exposes no real path and none is invented: `label` is all the UI
+  shows and all that is persisted.
+
+### Validation performed
+
+Live in the browser, read from the DOM:
+
+- Palette now lists `File: Open Folder` first; the header folder button
+  renders; the fixture tree (`src`, `README.md`) still boots.
+- `npx tsc --noEmit`, `npm run check` (4 checks) and `npm run build` clean.
+
+### Not validated
+
+Nothing past the picker. Choosing a real folder needs a user gesture and an OS
+dialog, which cannot be driven from here, so the entire post-selection path is
+unexercised: the recursive walk, ignored directories, the depth cap, reading,
+the UTF-8 rejection, saving through `createWritable`, and search over real
+files. Every one of those is first-run code.
+
+### Caveats and deviations
+
+- A chosen folder does not survive a reload. Re-granting a handle needs it
+  stored in IndexedDB *and* a user gesture, so `restoreWorkspace` throws and
+  the controller falls back to the fixture rather than pretending.
+- Changes and Terminal stay on their fixtures in the browser regardless of the
+  folder chosen. There is no git and no PTY in a page, and the guide's rule
+  against faking native capability still holds for those.
+- The policy constants are duplicated between `workspace.rs` and
+  `workspace.ts` with only a comment tying them together.
