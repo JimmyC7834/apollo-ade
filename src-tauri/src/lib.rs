@@ -1,3 +1,4 @@
+mod git;
 mod terminal;
 mod workspace;
 
@@ -17,6 +18,11 @@ pub fn run() {
             terminal::terminal_write,
             terminal::terminal_resize,
             terminal::terminal_kill,
+            git::git_changes,
+            git::git_diff,
+            git::git_stage,
+            git::git_unstage,
+            git::git_revert,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -47,7 +47,7 @@ pub struct Entry {
 /// Rejects absolute ids, `..`, anything that resolves outside the root, and
 /// anything that is not a regular file. Symlinks are rejected because
 /// `symlink_metadata` is checked before following.
-fn resolve(root: &Path, id: &str) -> Result<PathBuf, String> {
+pub(crate) fn resolve(root: &Path, id: &str) -> Result<PathBuf, String> {
     let candidate = Path::new(id);
     if candidate
         .components()
@@ -117,7 +117,7 @@ fn walk(dir: &Path, prefix: &str, depth: usize, out: &mut Vec<Entry>) {
     }
 }
 
-fn root_of(state: &WorkspaceState) -> Result<PathBuf, String> {
+pub(crate) fn root_of(state: &WorkspaceState) -> Result<PathBuf, String> {
     state
         .0
         .lock()

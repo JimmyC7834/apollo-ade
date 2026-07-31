@@ -1,6 +1,6 @@
 // The source-control seam. The Changes UI talks to `ChangesProvider` and does
-// not know whether the working tree is real. Slice 9 adds a git-backed
-// implementation behind this same interface.
+// not know whether the working tree is real: in the browser it is a fixture,
+// under Tauri it is the installed `git` in the selected workspace.
 
 export type ChangeStatus = 'added' | 'modified' | 'deleted';
 
@@ -10,6 +10,12 @@ export interface Change {
 	readonly name: string;
 	readonly status: ChangeStatus;
 	readonly staged: boolean;
+	/**
+	 * False where the change cannot be undone by restoring a previous version —
+	 * an untracked or newly added file has none. The UI hides Revert instead of
+	 * offering an action that would fail or delete the file.
+	 */
+	readonly revertable: boolean;
 }
 
 export interface ChangeDiff {
@@ -30,6 +36,11 @@ export interface ChangesProvider {
 	revert(id: string): Promise<void>;
 	/** Fires whenever the change set moves. Returns an unsubscribe function. */
 	subscribe(listener: () => void): () => void;
+	/**
+	 * Signal that something outside this provider moved the working tree — a
+	 * file save, most importantly. Nothing here watches the filesystem.
+	 */
+	refresh(): void;
 }
 
 interface Seed {
@@ -70,13 +81,7 @@ const SEED: readonly Seed[] = [
 function fixtureChangesProvider(): ChangesProvider {
 	let seeds = [...SEED];
 	const staged = new Set<string>();
-	const listeners = new Set<() => void>();
-
-	function emit(): void {
-		for (const listener of listeners) {
-			listener();
-		}
-	}
+	const { subscribe, emit } = signal();
 
 	function find(id: string): Seed {
 		const seed = seeds.find((candidate) => candidate.id === id);
@@ -93,6 +98,8 @@ function fixtureChangesProvider(): ChangesProvider {
 				name: seed.id.slice(seed.id.lastIndexOf('/') + 1),
 				status: seed.status,
 				staged: staged.has(seed.id),
+				// Mirrors git: an addition has no earlier version to restore.
+				revertable: seed.status !== 'added',
 			}));
 		},
 		async getDiff(id) {
@@ -119,18 +126,62 @@ function fixtureChangesProvider(): ChangesProvider {
 			staged.delete(id);
 			emit();
 		},
-		subscribe(listener) {
+		subscribe,
+		// Nothing outside this provider can move an in-memory working tree, but
+		// the interface is the same shape in both modes.
+		refresh: emit,
+	};
+}
+
+/**
+ * Real repository state via the native layer.
+ *
+ * Every mutation re-emits rather than patching a local copy: git is the source
+ * of truth and a single `git add` can move more than the row that was clicked.
+ */
+function gitChangesProvider(): ChangesProvider {
+	const core = () => import('@tauri-apps/api/core');
+	const { subscribe, emit } = signal();
+
+	const mutate = async (command: string, id: string) => {
+		await (await core()).invoke(command, { id });
+		emit();
+	};
+
+	return {
+		async getChanges() {
+			return (await core()).invoke<Change[]>('git_changes');
+		},
+		async getDiff(id) {
+			return (await core()).invoke<ChangeDiff>('git_diff', { id });
+		},
+		stage: (id) => mutate('git_stage', id),
+		unstage: (id) => mutate('git_unstage', id),
+		revert: (id) => mutate('git_revert', id),
+		subscribe,
+		refresh: emit,
+	};
+}
+
+/** Shared listener set: both providers notify the same way. */
+function signal() {
+	const listeners = new Set<() => void>();
+	return {
+		subscribe(listener: () => void) {
 			listeners.add(listener);
-			return () => listeners.delete(listener);
+			return () => {
+				listeners.delete(listener);
+			};
+		},
+		emit() {
+			for (const listener of listeners) {
+				listener();
+			}
 		},
 	};
 }
 
-/*
- * ponytail: one implementation, chosen unconditionally. Unlike the workspace
- * there is no native counterpart yet — Slice 9 adds the git-backed provider
- * and the environment check alongside it.
- */
 export function createChangesProvider(): ChangesProvider {
-	return fixtureChangesProvider();
+	const isTauri = '__TAURI_INTERNALS__' in window;
+	return isTauri ? gitChangesProvider() : fixtureChangesProvider();
 }

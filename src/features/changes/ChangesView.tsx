@@ -41,7 +41,12 @@ export function ChangesView({ provider, activeDiffId, onOpenDiff }: ChangesViewP
 	// The provider owns the change set; this view re-reads it on every signal
 	// rather than trying to apply each mutation to local state as well.
 	const refresh = useCallback(() => {
-		void provider.getChanges().then(setChanges);
+		void provider.getChanges().then(setChanges, (error: unknown) => {
+			// No workspace, not a repository, git missing: an empty change list,
+			// never a broken workbench. Logged so a real failure is findable.
+			console.warn('changes unavailable', error);
+			setChanges([]);
+		});
 	}, [provider]);
 
 	useEffect(() => {
@@ -144,13 +149,20 @@ export function ChangesView({ provider, activeDiffId, onOpenDiff }: ChangesViewP
 											label: 'Stage',
 											run: () => void provider.stage(target.id),
 										},
-								{
-									id: 'revert',
-									label: 'Revert file',
-									danger: true,
-									// Confirmed before it runs: this one destroys work.
-									run: () => setConfirmRevertId(target.id),
-								},
+								// Revert is only offered where a previous version exists
+								// to restore; for an addition it would mean deleting
+								// the file, which is not what this action means.
+								...(target.revertable
+									? [
+											{
+												id: 'revert',
+												label: 'Revert file',
+												danger: true,
+												// Confirmed first: this one destroys work.
+												run: () => setConfirmRevertId(target.id),
+											},
+										]
+									: []),
 							]
 						: []
 				}

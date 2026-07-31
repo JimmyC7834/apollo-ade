@@ -127,6 +127,9 @@ export function WorkbenchShell() {
 			setEntries([]);
 			return;
 		}
+		// The change set belongs to the root too: until one is chosen there is
+		// no repository to ask.
+		changesProvider.refresh();
 		let cancelled = false;
 		void provider.getTree().then((tree) => {
 			if (!cancelled) {
@@ -136,7 +139,7 @@ export function WorkbenchShell() {
 		return () => {
 			cancelled = true;
 		};
-	}, [provider, selection]);
+	}, [changesProvider, provider, selection]);
 
 	const dirty = inputs.some(isDirty);
 
@@ -194,19 +197,19 @@ export function WorkbenchShell() {
 			const diffId = `diff:${id}`;
 			setActiveEditorId(diffId);
 			const diff = await changesProvider.getDiff(id);
+			const input: EditorInput = {
+				kind: 'diff',
+				id: diffId,
+				name: diff.name,
+				original: diff.original,
+				modified: diff.modified,
+			};
+			// A diff has no unsaved state, so re-opening one that is already
+			// there replaces it: that is how a stale diff picks up a save.
 			setInputs((current) =>
-				current.some((input) => input.id === diffId)
-					? current
-					: [
-							...current,
-							{
-								kind: 'diff',
-								id: diffId,
-								name: diff.name,
-								original: diff.original,
-								modified: diff.modified,
-							},
-						]
+				current.some((existing) => existing.id === diffId)
+					? current.map((existing) => (existing.id === diffId ? input : existing))
+					: [...current, input]
 			);
 		},
 		[changesProvider]
@@ -235,8 +238,11 @@ export function WorkbenchShell() {
 					item.id === id && item.kind === 'source' ? { ...item, saved: content } : item
 				)
 			);
+			// The working tree just moved and nothing watches the filesystem, so
+			// the Changes view is told directly.
+			changesProvider.refresh();
 		},
-		[inputs, provider]
+		[changesProvider, inputs, provider]
 	);
 
 	const forceCloseEditor = useCallback((id: string) => {

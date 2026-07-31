@@ -592,3 +592,94 @@ result at its matching line.
   persisted, per the guide's persistence policy.
 - Layout state is read synchronously at mount rather than in an effect;
   applying it after the first paint would show the default and then snap.
+
+## Slice 9: Real Git Source Control
+
+### User outcome
+
+The Changes view now shows the actual state of the selected repository. Saving
+a file makes it appear there; staging, unstaging and reverting run real git;
+opening a change shows HEAD against the working tree in the Monaco diff editor.
+Browser mode is unchanged and still runs the deterministic fixture.
+
+### Added
+
+- `src-tauri/src/git.rs` — the git authority. `git_changes`, `git_diff`,
+  `git_stage`, `git_unstage`, `git_revert`, all via `git -C <root>`.
+- `git status --porcelain=v1 -z --untracked-files=all` parsing in
+  `parse_status`, with a Rust unit test over the shapes the UI renders.
+- `Change.revertable` through the whole seam, so the UI can hide an action it
+  cannot honour.
+- `ChangesProvider.refresh()`, so a save (or a workspace change) can tell the
+  view the working tree moved.
+- `gitChangesProvider()` in `src/changes.ts` behind the existing interface,
+  selected by the same `__TAURI_INTERNALS__` check as the workspace.
+
+### UI extracted/reused
+
+Nothing new. The Changes tree, status badges, context menu, confirm overlay,
+Monaco diff editor and editor tab model were all reused unchanged — which is
+the point of the slice. The only view edit was making the Revert menu item
+conditional.
+
+### Adapters and dependencies
+
+No new dependencies on either side; `git` is invoked with `std::process`. The
+frontend still never touches Tauri outside `changes.ts` / `workspace.ts` /
+`terminal.ts`. `workspace::resolve` and `root_of` became `pub(crate)` so the
+git module reads working-tree content under the workspace's own rules rather
+than inventing a second file-reading path.
+
+### Security boundary
+
+- Ids from the frontend pass `relative()` before reaching git: `Normal`
+  components only, so no absolute paths, no `..`, and nothing that could be
+  read as an option. Every mutating command also uses `--`.
+- Working-tree content is read through `workspace::resolve`, inheriting
+  symlink rejection, the 2 MiB cap and root confinement.
+- All git operations are scoped to the canonical workspace root; there is no
+  command that takes a path from the UI as a repository.
+- `CREATE_NO_WINDOW` on Windows, so git calls do not flash a console.
+
+### Accessibility behavior
+
+Unchanged. Revert disappearing from the context menu rather than appearing
+disabled keeps the menu's arrow navigation over actionable items only.
+
+### Validation performed
+
+- `cargo test` — 3 passing, including the new `parse_status` test (staged and
+  unstaged modify, untracked, staged delete, staged add, a rename whose second
+  `-z` field must not be read as another entry, and a path with a space) and
+  `relative_rejects_escapes`.
+- `npm run build` and `npm run check` clean.
+
+### Not validated
+
+Nothing has been run natively — no `npm run tauri dev` session has ever
+happened in this project. Every native behaviour in this slice is
+compile-verified only: real `git status` output, staging, unstaging, revert,
+the diff contents, the non-repository fallback, and the save-then-appear
+workflow the user reported. The exact `not a git repository` substring match
+in `git_changes` in particular has never been seen against real git output.
+
+### Caveats and deviations
+
+- Porcelain v1 parsing is deliberately minimal, one row per path. A file that
+  is staged *and* edited again shows only its staged half; renames appear as a
+  modification of the new path; conflicts, submodules, binary files and
+  ignored files are not modelled.
+- `git_diff` is HEAD-vs-worktree only. It does not show the index as a third
+  side, which is the guide's noted `git_content` caveat.
+- Revert restores from HEAD *and* unstages, so the file leaves the change list
+  entirely — matching the fixture's behaviour. It is hidden for untracked and
+  newly added files, which have no HEAD version to restore from; deleting them
+  is not an action this app offers.
+- An already-open diff tab does not auto-refresh after a save or a stage.
+  Re-activating the change row replaces its contents, which is one click. The
+  editor is not re-activated automatically because that would steal focus from
+  the file being saved.
+- A genuine git failure (git missing, repository corrupt) surfaces as an empty
+  change list plus a `console.warn`, not a visible error. The guide requires a
+  non-git workspace not to crash the workbench; distinguishing the two states
+  in the UI is not modelled.
