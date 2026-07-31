@@ -11,6 +11,13 @@ export interface Command {
 	readonly title: string;
 	/** Optional grouping prefix, rendered muted, e.g. "View". */
 	readonly category?: string;
+	/**
+	 * Why this command cannot run right now. Present means unrunnable: the
+	 * palette shows it with the reason instead of hiding it. A command that
+	 * exists but is temporarily blocked must stay visible — silently vanishing
+	 * looks identical to never having existed.
+	 */
+	readonly disabled?: string;
 	readonly run: () => void;
 }
 
@@ -27,7 +34,10 @@ export interface WorkbenchActions {
 	saveActiveEditor: () => void;
 	showExplorer: () => void;
 	showSearch: () => void;
+	/** Undefined where the capability does not exist at all, as in the browser. */
 	openFolder: (() => void) | undefined;
+	/** Set when a folder could be opened but not right now. */
+	openFolderDisabled?: string;
 	showAccessibilityHelp: () => void;
 }
 
@@ -40,10 +50,19 @@ export interface WorkbenchActions {
 export function buildCommands(actions: WorkbenchActions): readonly Command[] {
 	const { openFolder } = actions;
 	return [
-		// Omitted rather than shown-and-disabled: in the browser there is no
-		// folder to open, and an unrunnable palette entry is just noise.
+		// Omitted only where the capability is absent: in the browser there is
+		// no folder to open at all, and an entry that can never run is noise.
+		// A capability that exists but is blocked is shown with its reason.
 		...(openFolder
-			? [{ id: 'file.openFolder', category: 'File', title: 'Open Folder', run: openFolder }]
+			? [
+					{
+						id: 'file.openFolder',
+						category: 'File',
+						title: 'Open Folder',
+						disabled: actions.openFolderDisabled,
+						run: openFolder,
+					},
+				]
 			: []),
 		{
 			id: 'file.save',

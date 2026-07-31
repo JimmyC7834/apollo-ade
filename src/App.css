@@ -673,6 +673,10 @@ body {
 	gap: var(--ide-space-3);
 }
 
+.ide-quickpick-row-disabled .ide-quickpick-label {
+	color: var(--ide-fg-subtle);
+}
+
 /* Empty state — a pane with nothing in it yet, offering the way out. */
 
 .ide-empty-state {

@@ -839,3 +839,72 @@ opens are compile-verified only.
 - `MIN` in `WorkbenchLayout.tsx` and `--ide-region-min` in `tokens.css` are the
   same number written twice. The token cannot be read from JS without a
   `getComputedStyle` call at drag time, which is worse.
+
+## Slice 10b: Blocked commands stay in the palette (follow-up)
+
+Not a slice. `File: Open Folder` already existed; it was disappearing.
+
+### User outcome
+
+`Ctrl+Shift+P` → `File: Open Folder` is now always present in the native app.
+While an editor has unsaved changes it appears greyed with "Save your changes
+first" instead of silently vanishing from the list.
+
+### Added
+
+- `Command.disabled?: string` — the reason a command cannot run right now.
+- `WorkbenchActions.openFolderDisabled`.
+- `CommandCenter` renders a disabled row muted with `aria-disabled`, shows the
+  reason in the detail column, and refuses to run it.
+- `src/commands/commandRegistry.check.ts`, wired into `npm run check`.
+
+### The distinction being drawn
+
+Absent capability and blocked capability are not the same thing and must not
+render the same way:
+
+- Browser mode has no folder to open at all, so the entry stays omitted. An
+  entry that can never run is noise.
+- Native mode with unsaved work can open a folder, just not yet. Hiding it
+  there is indistinguishable from the feature not existing — which is exactly
+  how it was reported.
+
+`openFolder` also now refuses when dirty on its own. Switching roots discards
+every editor, so the guard belongs on the operation, not only on the controls
+that offer it: `IconButton` was already `disabled`, but that is presentation.
+
+### UI extracted/reused
+
+None. `.ide-quickpick-row-disabled` is feature CSS with one consumer.
+
+### Accessibility behavior
+
+Blocked rows stay selectable and keep `aria-selected`, so arrow-key navigation
+reaches them and a screen reader reads both the label and the reason. Enter on
+one does nothing and leaves the palette open — closing it would look like the
+command had run. `aria-disabled` rather than removal from the list is the point
+of the change.
+
+### Validation performed
+
+- Live in the browser: `Ctrl+Shift+P` opens the palette with 8 commands and no
+  `File: Open Folder` entry — correct, the capability is absent there.
+- `commandRegistry.check.ts`: absent capability omits the entry; present and
+  unblocked is runnable and actually invokes the callback; present and blocked
+  carries the reason; a reason without a capability does not conjure an entry;
+  ids are unique.
+- `npx tsc --noEmit` and `npm run check` (4 checks) clean.
+
+### Not validated
+
+The disabled row has never been rendered. It requires native mode plus an
+unsaved editor, and the browser cannot produce it. Its colour, the reason text
+in the detail column, and the Enter-does-nothing behaviour are covered by the
+self-check at the data level only — nothing has looked at the pixels.
+
+### Caveats and deviations
+
+- `disabled` is a plain string, not a predicate. Commands are rebuilt on every
+  relevant state change, so a stale reason is not possible today.
+- Only Open Folder uses it. Save and Close Active Editor are still runnable
+  no-ops when no editor is open, rather than reporting why.

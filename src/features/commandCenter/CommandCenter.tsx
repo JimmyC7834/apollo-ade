@@ -16,9 +16,16 @@ export interface CommandCenterProps {
 const COMMAND_PREFIX = '>';
 const MAX_RESULTS = 50;
 
+interface BaseResult {
+	readonly id: string;
+	readonly label: string;
+	/** Muted trailing text: a file's path, or why a command cannot run. */
+	readonly detail?: string;
+}
+
 type Result =
-	| { readonly kind: 'command'; readonly id: string; readonly label: string }
-	| { readonly kind: 'file'; readonly id: string; readonly label: string; readonly detail: string };
+	| (BaseResult & { readonly kind: 'command'; readonly disabled?: string })
+	| (BaseResult & { readonly kind: 'file' });
 
 /**
  * Quick pick over commands and files.
@@ -51,7 +58,13 @@ export function CommandCenter({
 			const term = query.slice(COMMAND_PREFIX.length).trim();
 			return fuzzyFilter(term, commands, commandLabel)
 				.slice(0, MAX_RESULTS)
-				.map(({ item }) => ({ kind: 'command', id: item.id, label: commandLabel(item) }));
+				.map(({ item }) => ({
+					kind: 'command',
+					id: item.id,
+					label: commandLabel(item),
+					disabled: item.disabled,
+					detail: item.disabled,
+				}));
 		}
 		const onlyFiles = files.filter((entry) => entry.kind === 'file');
 		return fuzzyFilter(query.trim(), onlyFiles, (entry) => entry.name)
@@ -71,6 +84,11 @@ export function CommandCenter({
 
 	function accept(result: Result | undefined): void {
 		if (!result) {
+			return;
+		}
+		// Blocked commands stay selectable so a screen reader can read the
+		// reason, but activating one does nothing and leaves the palette open.
+		if (result.kind === 'command' && result.disabled) {
 			return;
 		}
 		// Close first, so focus restoration happens before the command runs and
@@ -132,14 +150,21 @@ export function CommandCenter({
 						id={`quickpick-${index}`}
 						role="option"
 						aria-selected={index === activeIndex}
-						className={`ide-quickpick-row${index === activeIndex ? ' ide-quickpick-row-active' : ''}`}
+						aria-disabled={result.kind === 'command' && result.disabled ? true : undefined}
+						className={
+							'ide-quickpick-row' +
+							(index === activeIndex ? ' ide-quickpick-row-active' : '') +
+							(result.kind === 'command' && result.disabled
+								? ' ide-quickpick-row-disabled'
+								: '')
+						}
 						// Mouse down would steal focus from the input before the click lands.
 						onMouseDown={(event) => event.preventDefault()}
 						onClick={() => accept(result)}
 					>
 						<Icon name={result.kind === 'command' ? 'gear' : 'file'} />
 						<span className="ide-quickpick-label">{result.label}</span>
-						{result.kind === 'file' ? (
+						{result.detail ? (
 							<span className="ide-quickpick-detail">{result.detail}</span>
 						) : null}
 					</li>

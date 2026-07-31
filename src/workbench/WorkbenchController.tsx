@@ -145,6 +145,12 @@ export function WorkbenchController() {
 	const dirty = inputs.some(isDirty);
 
 	const openFolder = useCallback(async () => {
+		// Switching roots discards every editor, so the guard lives here and not
+		// only on the controls that offer it. Callers may be disabled; this is
+		// what makes the operation itself safe.
+		if (dirty) {
+			return;
+		}
 		const chosen = await provider.chooseWorkspace();
 		if (!chosen) {
 			return;
@@ -154,7 +160,7 @@ export function WorkbenchController() {
 		setInputs([]);
 		setActiveEditorId(undefined);
 		setSelection(chosen);
-	}, [provider]);
+	}, [dirty, provider]);
 
 	const openFile = useCallback(
 		async (id: string, revealLine?: number) => {
@@ -332,7 +338,11 @@ export function WorkbenchController() {
 				},
 				showExplorer: () => showPrimaryView('explorer'),
 				showSearch: () => showPrimaryView('search'),
-				openFolder: provider.canChooseWorkspace && !dirty ? () => void openFolder() : undefined,
+				// The command exists wherever the capability does. Unsaved work
+				// blocks it — switching roots drops every editor — but it stays
+				// in the palette saying so rather than disappearing.
+				openFolder: provider.canChooseWorkspace ? () => void openFolder() : undefined,
+				openFolderDisabled: dirty ? 'Save your changes first' : undefined,
 				showAccessibilityHelp: () => setHelpOpen(true),
 			}),
 		[
