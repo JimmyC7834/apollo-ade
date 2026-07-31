@@ -419,8 +419,33 @@ body {
 	display: flex;
 	flex: none;
 	overflow-x: auto;
+}
+
+/* Editor strip: boxed tabs on the titlebar surface, VS Code's tab.* colours. */
+.ide-tabs-editor {
 	background: var(--ide-bg-titlebar);
 	border-bottom: 1px solid var(--ide-border);
+}
+
+/*
+ * Panel strip: flat, no boxes, active marked by an underline. This is the
+ * shape VS Code uses inside the bottom panel, where the tabs sit on the same
+ * surface as the content rather than above it.
+ */
+.ide-tabs-panel .ide-tab {
+	height: 30px;
+	border-right: none;
+	border-bottom: 1px solid transparent;
+	padding: 0 var(--ide-space-3);
+}
+
+.ide-tabs-panel .ide-tab-active {
+	background: transparent;
+	border-bottom-color: var(--ide-terminal-tab-active-border);
+}
+
+.ide-tabs-panel .ide-tab:hover {
+	color: var(--ide-fg);
 }
 
 .ide-tab {
@@ -510,22 +535,47 @@ body {
 	align-items: center;
 	flex: none;
 	gap: var(--ide-space-2);
+	height: 30px;
+	padding-right: var(--ide-space-3);
+	border-bottom: 1px solid var(--ide-border);
+}
+
+.ide-terminal-title {
+	flex: none;
+	padding-left: var(--ide-space-3);
 }
 
 .ide-terminal-bar .ide-tabs {
 	flex: 1;
 	min-width: 0;
-	border-bottom: none;
+	/* The bar already draws the rule; a second one would double it. */
+	margin-bottom: -1px;
 }
 
 .ide-terminal-bar .ide-action-bar {
 	margin-left: auto;
+	padding: 0;
 }
 
 .ide-terminal-instance {
 	flex: 1;
 	min-height: 0;
-	padding: var(--ide-space-2) var(--ide-space-3);
+	/* VS Code leaves a small gutter around the buffer, not a full pane inset. */
+	padding: var(--ide-space-2) 0 0 var(--ide-space-3);
+}
+
+.ide-terminal-empty {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	flex: 1;
+	margin: 0;
+	color: var(--ide-fg-subtle);
+}
+
+/* xterm sizes itself to the host; let it own the full box. */
+.ide-terminal-instance .xterm {
+	height: 100%;
 }
 
 /* `hidden` alone loses to the flex display above. */

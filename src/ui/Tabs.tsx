@@ -17,6 +17,11 @@ export interface TabsProps {
 	readonly activeId: string | undefined;
 	readonly onSelect: (id: string) => void;
 	readonly onClose?: (id: string) => void;
+	/**
+	 * "editor" is the boxed strip above an editor; "panel" is the flat,
+	 * underlined strip VS Code uses inside the bottom panel.
+	 */
+	readonly variant?: 'editor' | 'panel';
 }
 
 /**
@@ -26,7 +31,7 @@ export interface TabsProps {
  * through every open file; arrow keys move between tabs, which is what the
  * tablist pattern expects.
  */
-export function Tabs({ label, items, activeId, onSelect, onClose }: TabsProps) {
+export function Tabs({ label, items, activeId, onSelect, onClose, variant = 'editor' }: TabsProps) {
 	const stripRef = useRef<HTMLDivElement>(null);
 
 	function focusTab(index: number): void {
@@ -59,7 +64,12 @@ export function Tabs({ label, items, activeId, onSelect, onClose }: TabsProps) {
 	}
 
 	return (
-		<div className="ide-tabs" role="tablist" aria-label={label} ref={stripRef}>
+		<div
+			className={`ide-tabs ide-tabs-${variant}`}
+			role="tablist"
+			aria-label={label}
+			ref={stripRef}
+		>
 			{items.map((item, index) => {
 				const selected = item.id === activeId;
 				return (

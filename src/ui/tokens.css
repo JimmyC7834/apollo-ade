@@ -26,6 +26,38 @@
 	--ide-focus: #0078d4;
 	--ide-focus-width: 1px;
 
+	/*
+	 * Terminal. Values are VS Code's own dark defaults, not approximations:
+	 * `terminal.foreground` and the `terminal.ansi*` map from
+	 * src/vs/workbench/contrib/terminal/common/terminalColorRegistry.ts,
+	 * `terminal.selectionBackground` from `editor.selectionBackground`,
+	 * `terminal.tab.activeBorder` from the dark_modern theme, and the font
+	 * from DEFAULT_WINDOWS_FONT_FAMILY / defaultTerminalFontSize.
+	 * `terminal.background` is unset in VS Code, so it inherits the panel.
+	 */
+	--ide-terminal-font-family: Consolas, "Courier New", monospace;
+	--ide-terminal-font-size: 14px;
+	--ide-terminal-fg: #cccccc;
+	--ide-terminal-selection: #264f78;
+	--ide-terminal-tab-active-border: #0078d4;
+
+	--ide-ansi-black: #000000;
+	--ide-ansi-red: #cd3131;
+	--ide-ansi-green: #0dbc79;
+	--ide-ansi-yellow: #e5e510;
+	--ide-ansi-blue: #2472c8;
+	--ide-ansi-magenta: #bc3fbc;
+	--ide-ansi-cyan: #11a8cd;
+	--ide-ansi-white: #e5e5e5;
+	--ide-ansi-bright-black: #666666;
+	--ide-ansi-bright-red: #f14c4c;
+	--ide-ansi-bright-green: #23d18b;
+	--ide-ansi-bright-yellow: #f5f543;
+	--ide-ansi-bright-blue: #3b8eea;
+	--ide-ansi-bright-magenta: #d670d6;
+	--ide-ansi-bright-cyan: #29b8db;
+	--ide-ansi-bright-white: #e5e5e5;
+
 	/* Scrollbars — VS Code's translucent slider over the scrolled surface. */
 	--ide-scrollbar-size: 10px;
 	--ide-scrollbar-slider: rgb(121 121 121 / 40%);

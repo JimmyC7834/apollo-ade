@@ -49,8 +49,15 @@ export function TerminalPanel({ adapter, cwd }: TerminalPanelProps) {
 	const active = sessions.find((session) => session.id === activeId);
 
 	return (
-		<div className="ide-terminal-panel">
+		/*
+		 * No `Pane` wrapper: a 35px pane header above a 30px tab bar would
+		 * spend a third of the panel's default height on chrome. VS Code puts
+		 * the title, the tabs, and the actions in one row, so this bar is the
+		 * header, and the region is labelled here instead.
+		 */
+		<section className="ide-terminal-panel" aria-label="Terminal">
 			<div className="ide-terminal-bar">
+				<h2 className="ide-pane-title ide-terminal-title">Terminal</h2>
 				{sessions.length > 0 ? (
 					<Tabs
 						label="Terminals"
@@ -58,6 +65,7 @@ export function TerminalPanel({ adapter, cwd }: TerminalPanelProps) {
 						activeId={activeId}
 						onSelect={setActiveId}
 						onClose={close}
+						variant="panel"
 					/>
 				) : null}
 				<ActionBar label="Terminal actions">
@@ -76,7 +84,7 @@ export function TerminalPanel({ adapter, cwd }: TerminalPanelProps) {
 			</div>
 
 			{sessions.length === 0 ? (
-				<p className="ide-tree-empty">No terminals. Use New terminal to start one.</p>
+				<p className="ide-terminal-empty">No terminals open.</p>
 			) : (
 				sessions.map((session) => (
 					<TerminalInstance
@@ -89,6 +97,6 @@ export function TerminalPanel({ adapter, cwd }: TerminalPanelProps) {
 					/>
 				))
 			)}
-		</div>
+		</section>
 	);
 }

@@ -470,3 +470,34 @@ echo fallback, marked with an "Echo" badge so it is never mistaken for a shell.
   this is cheaper than the bookkeeping it would replace.
 - The browser fallback echoes text and handles backspace. It is not a shell and
   says so in its banner and its badge.
+
+## Slice 6a: Terminal visual pass (follow-up)
+
+Not a slice: reported as "the terminal looks ass". Corrected against the VS
+Code source in `../`, so the values are quoted, not eyeballed.
+
+**Changed**
+
+- Terminal tokens added to `tokens.css` from VS Code's own defaults: the full
+  16-colour `terminal.ansi*` map and `terminal.foreground` from
+  `terminalColorRegistry.ts`, `terminal.selectionBackground` (via
+  `editor.selectionBackground`, `#264F78`), `terminal.tab.activeBorder` from
+  `dark_modern.json`, and the font from `DEFAULT_WINDOWS_FONT_FAMILY` plus
+  `defaultTerminalFontSize` (14, not the 12 I had guessed).
+- Cursor is now block and non-blinking, `lineHeight` 1, `letterSpacing` 0,
+  `scrollback` 1000 — all VS Code defaults.
+- **Fixed a real bug:** the font family was `var(--ide-font-family-mono)`.
+  xterm measures on a canvas, so it read that string as a font *name*. Tokens
+  are now read off the document with `getComputedStyle` and passed as literals,
+  which keeps `tokens.css` the single source without breaking measurement.
+- `Tabs` gained a `variant`: "editor" is the existing boxed strip, "panel" is
+  VS Code's flat strip with an underlined active tab. The terminal uses panel.
+- Dropped the `Pane` wrapper around the terminal. A 35px pane header above a
+  30px tab bar spent a third of the panel's default height on chrome; VS Code
+  puts title, tabs, and actions in one row, so the bar is now the header and
+  the region is labelled on the section itself.
+
+**Not validated**
+
+- Still nothing rendered. These are corrections to values and structure, not
+  observations of pixels.

@@ -32,11 +32,45 @@ export function TerminalInstance({ adapter, id, active, cwd, onExit }: TerminalI
 		if (!host) {
 			return;
 		}
+		/*
+		 * xterm measures and paints on a canvas, so it needs literal values —
+		 * a `var(--ide-*)` string would be taken as a font name. The tokens
+		 * are still the single source: they are read off the document here.
+		 */
+		const styles = getComputedStyle(document.documentElement);
+		const token = (name: string) => styles.getPropertyValue(name).trim();
+
 		const terminal = new Terminal({
-			fontSize: 12,
-			fontFamily: 'var(--ide-font-family-mono)',
-			cursorBlink: true,
-			theme: { background: '#181818', foreground: '#cccccc' },
+			fontFamily: token('--ide-terminal-font-family'),
+			fontSize: Number.parseInt(token('--ide-terminal-font-size'), 10),
+			// VS Code's defaults: block cursor, no blink, no extra leading.
+			cursorStyle: 'block',
+			cursorBlink: false,
+			lineHeight: 1,
+			letterSpacing: 0,
+			scrollback: 1000,
+			theme: {
+				background: token('--ide-bg-panel'),
+				foreground: token('--ide-terminal-fg'),
+				cursor: token('--ide-terminal-fg'),
+				selectionBackground: token('--ide-terminal-selection'),
+				black: token('--ide-ansi-black'),
+				red: token('--ide-ansi-red'),
+				green: token('--ide-ansi-green'),
+				yellow: token('--ide-ansi-yellow'),
+				blue: token('--ide-ansi-blue'),
+				magenta: token('--ide-ansi-magenta'),
+				cyan: token('--ide-ansi-cyan'),
+				white: token('--ide-ansi-white'),
+				brightBlack: token('--ide-ansi-bright-black'),
+				brightRed: token('--ide-ansi-bright-red'),
+				brightGreen: token('--ide-ansi-bright-green'),
+				brightYellow: token('--ide-ansi-bright-yellow'),
+				brightBlue: token('--ide-ansi-bright-blue'),
+				brightMagenta: token('--ide-ansi-bright-magenta'),
+				brightCyan: token('--ide-ansi-bright-cyan'),
+				brightWhite: token('--ide-ansi-bright-white'),
+			},
 		});
 		const fit = new FitAddon();
 		fitRef.current = fit;

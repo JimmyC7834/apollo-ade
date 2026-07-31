@@ -411,12 +411,10 @@ export function WorkbenchShell() {
 								data-region="panel"
 								style={{ height: panelHeight }}
 							>
-								<Pane title="Terminal">
-									<TerminalPanel
-										adapter={terminalAdapter}
-										cwd={selection?.path || undefined}
-									/>
-								</Pane>
+								<TerminalPanel
+									adapter={terminalAdapter}
+									cwd={selection?.path || undefined}
+								/>
 							</div>
 						</>
 					) : null}
