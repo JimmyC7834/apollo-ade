@@ -1064,3 +1064,48 @@ freezing. Streaming into a `role="log"` region word by word is noisy for a
 screen reader; the guide specifies it, so it stands, and the plain-text
 transcript is the intended mitigation. Conversations and the selected mode are
 deliberately not persisted, per the guide's caveats.
+
+## Slice 11a: Guide alignment audit (follow-up)
+
+**User outcome.** No visible change except that a disabled `.ide-button` now
+looks disabled everywhere, not only in the agent composer.
+
+**Added.** Nothing. One CSS rule moved from feature scope to global scope.
+
+**UI extracted/reused.** Nothing extracted — and that is the audited answer,
+not an omission. All ten primitives in guide §7 exist and are exported from
+`src/ui/index.ts`, and every one has a real consumer. The `Button` and
+`ConfirmDialog` extraction question left open since Slice 10 is now closed
+against guide §7.2: both fail "the API hides meaningful implementation
+complexity", `Button` matches the explicit "do not add when it only shortens a
+small JSX fragment", and `ConfirmDialog` matches "the second use case is
+hypothetical" with `ConfirmDiscard` still its only consumer. Neither appears in
+the §7 table. The correct shape for a shared button is the shared `.ide-button`
+class it already has.
+
+**Adapters and dependencies.** Unchanged. Guide §12 lists Agent as
+"Deterministic event stream" in browser and "Future Agent Host/Copilot adapter"
+in native, so Slice 11 shipping one deterministic provider with no mode branch
+is the specified state, not a shortcut.
+
+**Security boundary.** Untouched.
+
+**Accessibility behavior.** Improved: a disabled button outside the agent
+composer previously rendered identically to an enabled one, conveying the
+disabled state through the DOM only. `.ide-button:disabled` is now global,
+matching `.ide-icon-button:disabled`, per guide §8 "the same semantic role uses
+the same token, control, and interaction".
+
+**Validation performed.** `tsc`, `npm run check` (5), `npm run build` clean.
+Computed style read live from the disabled Send button: `#6e6e6e`
+(`--ide-fg-subtle`) with `cursor: default`, confirming the global rule binds.
+Primitive consumers enumerated from source.
+
+**Not validated.** Nothing new in the native window.
+
+**Caveats and deviations.** None. Two small divergences from the §7 table's
+"proven consumers" column are worth noting but are not defects: `ContextMenu`
+is listed for "Explorer/Changes workflows" but only Changes uses it, and
+`ResizableSeparator` has a single consumer now that Slice 10 moved all sash
+ownership into `WorkbenchLayout`. Both are guide-sanctioned primitives, so
+neither is a candidate for removal.

@@ -210,6 +210,16 @@ body {
 	background: var(--ide-bg-hover);
 }
 
+/* Disabled is a semantic role, so it renders the same wherever a button is. */
+.ide-button:disabled {
+	color: var(--ide-fg-subtle);
+	cursor: default;
+}
+
+.ide-button:disabled:hover {
+	background: transparent;
+}
+
 /* Pane */
 
 .ide-pane {
@@ -929,15 +939,6 @@ body {
 	justify-content: flex-end;
 	gap: var(--ide-space-3);
 	margin-top: var(--ide-space-3);
-}
-
-.ide-agent-composer-actions .ide-button:disabled {
-	color: var(--ide-fg-subtle);
-	cursor: default;
-}
-
-.ide-agent-composer-actions .ide-button:disabled:hover {
-	background: transparent;
 }
 
 .ide-agent-plain {
