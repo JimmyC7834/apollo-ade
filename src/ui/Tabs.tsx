@@ -7,6 +7,8 @@ export interface TabItem {
 	readonly label: string;
 	/** Shown on hover; typically the full path. */
 	readonly title?: string;
+	/** Renders an unsaved marker and announces "unsaved" to screen readers. */
+	readonly dirty?: boolean;
 }
 
 export interface TabsProps {
@@ -72,6 +74,12 @@ export function Tabs({ label, items, activeId, onSelect, onClose }: TabsProps) {
 						onKeyDown={(event) => onKeyDown(event, index)}
 					>
 						<span className="ide-tab-label">{item.label}</span>
+						{item.dirty ? (
+							<>
+								<span className="ide-tab-dirty" aria-hidden="true" />
+								<span className="ide-visually-hidden">unsaved</span>
+							</>
+						) : null}
 						{onClose ? (
 							<button
 								type="button"

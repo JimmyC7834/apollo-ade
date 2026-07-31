@@ -9,6 +9,12 @@ export interface WorkspaceEntry {
 	readonly depth: number;
 }
 
+export interface WorkspaceFile {
+	readonly id: string;
+	readonly name: string;
+	readonly content: string;
+}
+
 export interface WorkspaceSelection {
 	readonly label: string;
 	readonly path: string;
@@ -18,8 +24,12 @@ export interface WorkspaceProvider {
 	/** False in the browser: there is no real folder to choose. */
 	readonly canChooseWorkspace: boolean;
 	chooseWorkspace(): Promise<WorkspaceSelection | undefined>;
+	/** Re-select a previously chosen root by absolute path. */
+	restoreWorkspace(path: string): Promise<WorkspaceSelection>;
 	getTree(): Promise<readonly WorkspaceEntry[]>;
-	readFile(id: string): Promise<string>;
+	getFiles(): Promise<readonly WorkspaceEntry[]>;
+	readFile(id: string): Promise<WorkspaceFile>;
+	writeFile(id: string, content: string): Promise<void>;
 }
 
 const FIXTURE: Record<string, string> = {
@@ -28,6 +38,10 @@ const FIXTURE: Record<string, string> = {
 	'src/util.ts': 'export const noop = (): void => {};\n',
 };
 
+function basename(id: string): string {
+	return id.slice(id.lastIndexOf('/') + 1);
+}
+
 function fixtureProvider(): WorkspaceProvider {
 	const entries: WorkspaceEntry[] = [
 		{ id: 'src', name: 'src', kind: 'dir', depth: 0 },
@@ -35,43 +49,65 @@ function fixtureProvider(): WorkspaceProvider {
 		{ id: 'src/util.ts', name: 'util.ts', kind: 'file', depth: 1 },
 		{ id: 'README.md', name: 'README.md', kind: 'file', depth: 0 },
 	];
+	// Writes stay in this object for the session, so the dirty/save workflow is
+	// exercisable in the browser without a native process.
+	const contents = { ...FIXTURE };
 	return {
 		canChooseWorkspace: false,
 		async chooseWorkspace() {
 			return undefined;
 		},
+		async restoreWorkspace(path) {
+			return { label: 'fixture', path };
+		},
 		async getTree() {
 			return entries;
 		},
+		async getFiles() {
+			return entries.filter((entry) => entry.kind === 'file');
+		},
 		async readFile(id) {
-			const content = FIXTURE[id];
+			const content = contents[id];
 			if (content === undefined) {
 				throw new Error(`not found: ${id}`);
 			}
-			return content;
+			return { id, name: basename(id), content };
+		},
+		async writeFile(id, content) {
+			if (contents[id] === undefined) {
+				throw new Error(`not found: ${id}`);
+			}
+			contents[id] = content;
 		},
 	};
 }
 
 function tauriProvider(): WorkspaceProvider {
+	const core = () => import('@tauri-apps/api/core');
+	// `set_workspace` is idempotent: choosing and restoring are the same
+	// canonicalize-and-store operation, only the source of the path differs.
+	const select = async (path: string) =>
+		(await core()).invoke<WorkspaceSelection>('set_workspace', { path });
+	const tree = async () => (await core()).invoke<WorkspaceEntry[]>('list_tree');
+
 	return {
 		canChooseWorkspace: true,
 		async chooseWorkspace() {
 			const { open } = await import('@tauri-apps/plugin-dialog');
-			const { invoke } = await import('@tauri-apps/api/core');
 			const picked = await open({ directory: true, multiple: false });
-			if (typeof picked !== 'string') {
-				return undefined;
-			}
-			return invoke<WorkspaceSelection>('set_workspace', { path: picked });
+			return typeof picked === 'string' ? select(picked) : undefined;
 		},
-		async getTree() {
-			const { invoke } = await import('@tauri-apps/api/core');
-			return invoke<WorkspaceEntry[]>('list_tree');
+		restoreWorkspace: select,
+		getTree: tree,
+		async getFiles() {
+			return (await tree()).filter((entry) => entry.kind === 'file');
 		},
 		async readFile(id) {
-			const { invoke } = await import('@tauri-apps/api/core');
-			return invoke<string>('read_file', { id });
+			const content = await (await core()).invoke<string>('read_file', { id });
+			return { id, name: basename(id), content };
+		},
+		async writeFile(id, content) {
+			await (await core()).invoke('write_file', { id, content });
 		},
 	};
 }

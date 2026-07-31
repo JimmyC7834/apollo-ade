@@ -159,6 +159,25 @@ pub fn read_file(id: String, state: tauri::State<'_, WorkspaceState>) -> Result<
     String::from_utf8(bytes).map_err(|_| "file is not valid UTF-8".to_string())
 }
 
+/// Overwrite an existing file in the workspace.
+///
+/// `resolve` requires the target to already exist as a regular file, so this
+/// cannot create files, follow a symlink out of the root, or clobber a
+/// directory. Creating new files is a separate capability the UI does not have.
+#[tauri::command]
+pub fn write_file(
+    id: String,
+    content: String,
+    state: tauri::State<'_, WorkspaceState>,
+) -> Result<(), String> {
+    let root = root_of(&state)?;
+    let path = resolve(&root, &id)?;
+    if content.len() as u64 > MAX_FILE_BYTES {
+        return Err("file is larger than 2 MiB".into());
+    }
+    fs::write(path, content).map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

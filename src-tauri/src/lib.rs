@@ -9,6 +9,7 @@ pub fn run() {
             workspace::set_workspace,
             workspace::list_tree,
             workspace::read_file,
+            workspace::write_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,18 +1,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { buildCommands } from '../commands/commandRegistry';
-import { EditorWorkbench, type EditorInput } from '../editor/EditorWorkbench';
+import { EditorWorkbench, isDirty, type EditorInput } from '../editor/EditorWorkbench';
 import { CommandCenter } from '../features/commandCenter/CommandCenter';
 import { ExplorerTree } from '../features/explorer/ExplorerTree';
 import { IconButton, Pane, ResizableSeparator } from '../ui';
-import { createWorkspaceProvider, type WorkspaceEntry } from '../workspace';
+import {
+	createWorkspaceProvider,
+	type WorkspaceEntry,
+	type WorkspaceSelection,
+} from '../workspace';
 import { AccessibilityHelp } from './AccessibilityHelp';
+import { ConfirmDiscard } from './ConfirmDiscard';
 import { Titlebar } from './Titlebar';
 import { useWindowControls } from './useWindowControls';
 
 const MIN = 170;
 const MAX_SIDEBAR = 600;
 const MAX_PANEL = 600;
+const WORKSPACE_KEY = 'ade.workspace.path';
 
 type Region = 'primarySidebar' | 'secondarySidebar' | 'panel';
 
@@ -36,11 +42,53 @@ export function WorkbenchShell() {
 	 * has made the shell too broad to change comfortably.
 	 */
 	const provider = useMemo(() => createWorkspaceProvider(), []);
+	const [selection, setSelection] = useState<WorkspaceSelection | undefined>(undefined);
 	const [entries, setEntries] = useState<readonly WorkspaceEntry[]>([]);
 	const [inputs, setInputs] = useState<readonly EditorInput[]>([]);
 	const [activeEditorId, setActiveEditorId] = useState<string | undefined>(undefined);
+	const [pendingCloseId, setPendingCloseId] = useState<string | undefined>(undefined);
 
+	/*
+	 * Restore the last root on start.
+	 *
+	 * ponytail: one raw localStorage key, not the versioned persistence schema.
+	 * Slice 7 replaces this with PersistenceAdapter, which also restores layout
+	 * and open editors; the workspace path is the only piece Slice 4 needs.
+	 */
 	useEffect(() => {
+		let cancelled = false;
+		async function start(): Promise<void> {
+			if (!provider.canChooseWorkspace) {
+				// Browser mode: the fixture workspace is always "selected".
+				setSelection({ label: 'Fixture', path: '' });
+				return;
+			}
+			const saved = localStorage.getItem(WORKSPACE_KEY);
+			if (!saved) {
+				return;
+			}
+			try {
+				const restored = await provider.restoreWorkspace(saved);
+				if (!cancelled) {
+					setSelection(restored);
+				}
+			} catch {
+				// The folder moved or is gone; forget it rather than retrying.
+				localStorage.removeItem(WORKSPACE_KEY);
+			}
+		}
+		void start();
+		return () => {
+			cancelled = true;
+		};
+	}, [provider]);
+
+	// The tree belongs to the selected root, so it is reloaded with it.
+	useEffect(() => {
+		if (!selection) {
+			setEntries([]);
+			return;
+		}
 		let cancelled = false;
 		void provider.getTree().then((tree) => {
 			if (!cancelled) {
@@ -50,6 +98,21 @@ export function WorkbenchShell() {
 		return () => {
 			cancelled = true;
 		};
+	}, [provider, selection]);
+
+	const dirty = inputs.some(isDirty);
+
+	const openFolder = useCallback(async () => {
+		const chosen = await provider.chooseWorkspace();
+		if (!chosen) {
+			return;
+		}
+		localStorage.setItem(WORKSPACE_KEY, chosen.path);
+		// Editor ids are relative to the old root, so they cannot survive.
+		// Switching is blocked while anything is dirty, so nothing is lost.
+		setInputs([]);
+		setActiveEditorId(undefined);
+		setSelection(chosen);
 	}, [provider]);
 
 	const openFile = useCallback(
@@ -59,17 +122,40 @@ export function WorkbenchShell() {
 			if (inputs.some((input) => input.id === entry.id)) {
 				return;
 			}
-			const content = await provider.readFile(entry.id);
+			const file = await provider.readFile(entry.id);
 			setInputs((current) =>
 				current.some((input) => input.id === entry.id)
 					? current
-					: [...current, { id: entry.id, name: entry.name, content }]
+					: [...current, { id: file.id, name: file.name, content: file.content, saved: file.content }]
 			);
 		},
 		[inputs, provider]
 	);
 
-	const closeEditor = useCallback((id: string) => {
+	const editFile = useCallback((id: string, content: string) => {
+		setInputs((current) =>
+			current.map((input) => (input.id === id ? { ...input, content } : input))
+		);
+	}, []);
+
+	const saveFile = useCallback(
+		async (id: string) => {
+			const input = inputs.find((item) => item.id === id);
+			if (!input || !isDirty(input)) {
+				return;
+			}
+			const { content } = input;
+			await provider.writeFile(id, content);
+			// Mark the written text as the new baseline, not the text as it is
+			// now — the user may have typed more while the write was in flight.
+			setInputs((current) =>
+				current.map((item) => (item.id === id ? { ...item, saved: content } : item))
+			);
+		},
+		[inputs, provider]
+	);
+
+	const forceCloseEditor = useCallback((id: string) => {
 		setInputs((current) => {
 			const index = current.findIndex((input) => input.id === id);
 			const next = current.filter((input) => input.id !== id);
@@ -80,6 +166,18 @@ export function WorkbenchShell() {
 			return next;
 		});
 	}, []);
+
+	const closeEditor = useCallback(
+		(id: string) => {
+			const input = inputs.find((item) => item.id === id);
+			if (input && isDirty(input)) {
+				setPendingCloseId(id);
+				return;
+			}
+			forceCloseEditor(id);
+		},
+		[inputs, forceCloseEditor]
+	);
 
 	const toggle = useCallback((region: Region) => {
 		setVisible((current) => ({ ...current, [region]: !current[region] }));
@@ -114,9 +212,15 @@ export function WorkbenchShell() {
 						closeEditor(activeEditorId);
 					}
 				},
+				saveActiveEditor: () => {
+					if (activeEditorId) {
+						void saveFile(activeEditorId);
+					}
+				},
+				openFolder: provider.canChooseWorkspace && !dirty ? () => void openFolder() : undefined,
 				showAccessibilityHelp: () => setHelpOpen(true),
 			}),
-		[toggle, closeEditor, activeEditorId]
+		[toggle, closeEditor, saveFile, activeEditorId, provider, dirty, openFolder]
 	);
 
 	/*
@@ -136,6 +240,21 @@ export function WorkbenchShell() {
 		window.addEventListener('keydown', onKeyDown, true);
 		return () => window.removeEventListener('keydown', onKeyDown, true);
 	}, []);
+
+	// Ctrl+S likewise: capture, so the WebView's own save never appears.
+	useEffect(() => {
+		function onKeyDown(event: KeyboardEvent): void {
+			if (event.ctrlKey && !event.shiftKey && event.key.toLowerCase() === 's') {
+				event.preventDefault();
+				event.stopPropagation();
+				if (activeEditorId) {
+					void saveFile(activeEditorId);
+				}
+			}
+		}
+		window.addEventListener('keydown', onKeyDown, true);
+		return () => window.removeEventListener('keydown', onKeyDown, true);
+	}, [activeEditorId, saveFile]);
 
 	return (
 		<div className="ide-workbench">
@@ -179,7 +298,23 @@ export function WorkbenchShell() {
 							data-region="primarySidebar"
 							style={{ width: primaryWidth }}
 						>
-							<Pane title="Explorer">
+							<Pane
+								title={selection ? `Explorer — ${selection.label}` : 'Explorer'}
+								actions={
+									provider.canChooseWorkspace ? (
+										<IconButton
+											icon="folder-opened"
+											label={
+												dirty
+													? 'Open folder (save your changes first)'
+													: 'Open folder'
+											}
+											disabled={dirty}
+											onClick={() => void openFolder()}
+										/>
+									) : null
+								}
+							>
 								<ExplorerTree
 									entries={entries}
 									activeId={activeEditorId}
@@ -212,6 +347,7 @@ export function WorkbenchShell() {
 							activeId={activeEditorId}
 							onSelect={setActiveEditorId}
 							onClose={closeEditor}
+							onChange={editFile}
 						/>
 					</div>
 
@@ -265,6 +401,25 @@ export function WorkbenchShell() {
 				files={entries}
 				onOpenFile={(entry) => void openFile(entry)}
 				onClose={closeCommandCenter}
+			/>
+			<ConfirmDiscard
+				name={inputs.find((input) => input.id === pendingCloseId)?.name}
+				onCancel={() => setPendingCloseId(undefined)}
+				onDiscard={() => {
+					if (pendingCloseId) {
+						forceCloseEditor(pendingCloseId);
+					}
+					setPendingCloseId(undefined);
+				}}
+				onSave={() => {
+					const id = pendingCloseId;
+					setPendingCloseId(undefined);
+					if (id) {
+						// Only close once the write succeeded; a failed save
+						// that still closed the tab would lose the edit.
+						void saveFile(id).then(() => forceCloseEditor(id));
+					}
+				}}
 			/>
 			<AccessibilityHelp open={helpOpen} onClose={closeHelp} />
 		</div>

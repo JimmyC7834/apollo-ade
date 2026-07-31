@@ -218,3 +218,89 @@ ones that isolate the rule under test.
   verified by being run, not type-checked.
 - File search covers the fixture tree only, and matches on basename. Real
   workspace search is Slice 8.
+
+## Slice 4: Real Filesystem Workspace
+
+**User outcome**
+
+Open a real folder from the titlebar's Explorer pane, browse it, open files,
+edit them, and save with `Ctrl+S` or the `File: Save` command. Unsaved tabs
+carry a dot; closing one asks Save / Don't save / Cancel. The chosen folder is
+reopened on the next launch. In the browser the fixture workspace is still
+fully usable, including editing and saving (in memory).
+
+**Added**
+
+- Rust `write_file` command, registered in `lib.rs`.
+- `WorkspaceProvider` grew `restoreWorkspace`, `getFiles`, `writeFile`;
+  `readFile` now returns a `WorkspaceFile` rather than a bare string.
+- Fixture provider keeps writes for the session, so the dirty/save workflow is
+  exercisable without a native process.
+- Editor inputs carry `saved` alongside `content`; `isDirty` compares them.
+- `MonacoEditor` gained `onChange`, attached once to the editor (not per model)
+  so it survives tab switches.
+- `ConfirmDiscard` overlay; `Ctrl+S` on the capture phase; `File: Open Folder`
+  and `File: Save` commands; workspace label in the Explorer pane title.
+- Custom scrollbars (`::-webkit-scrollbar`) replacing the native Windows ones.
+
+**UI extracted / reused**
+
+- Reused `Overlay`, `Pane`, `IconButton`, `Tabs`. Nothing new was extracted.
+- `Tabs` gained a `dirty` flag (marker plus a visually hidden "unsaved");
+  `IconButton` gained `disabled`. Both are presentational, no workspace logic.
+
+**Adapters and dependencies**
+
+- All filesystem access still goes through `WorkspaceProvider`. No feature
+  imports Tauri.
+- `chooseWorkspace` and `restoreWorkspace` share one Rust command:
+  `set_workspace` canonicalizes and stores, whatever the path's source.
+
+**Security boundary**
+
+- `write_file` resolves through the same `resolve()` as reads, which requires
+  an existing regular file under the canonical root. It therefore cannot create
+  files, follow a symlink out of the root, or overwrite a directory.
+- Content over 2 MiB is rejected on write as well as read.
+- Root confinement is covered by `resolve_confines_to_root`.
+
+**Accessibility behavior**
+
+- Dirty state is announced, not only shown: a visually hidden "unsaved" is part
+  of each dirty tab's accessible name.
+- The disabled Open Folder button explains itself in its accessible name
+  ("Open folder (save your changes first)").
+- `ConfirmDiscard` focuses Cancel first, and Escape cancels.
+- `Ctrl+S` is documented in the keyboard help dialog.
+
+**Validation performed**
+
+- `npm run build` (tsc + vite) passes.
+- **`cargo test` passes** — the first compile of `workspace.rs` in this repo.
+  `resolve_confines_to_root` is green, closing the standing debt that the Rust
+  side had never been built.
+
+**Not validated**
+
+- No native run: the folder picker, a real recursive listing, an actual disk
+  write, and workspace restore across a restart have not been exercised
+  end-to-end. Everything native is compile-verified only.
+- `write_file` has no dedicated Rust test; it delegates its checks to the
+  tested `resolve()`.
+- The new scrollbar styling has not been seen rendered.
+
+**Caveats and deviations**
+
+- **`search()` is not on the provider yet.** The guide lists it in Slice 4's
+  interface block, but its own slice split puts workspace search in Slice 8.
+  Deferred there rather than shipping a stub.
+- **Workspace restore uses one raw `localStorage` key**, not the versioned
+  persistence schema — that is Slice 7. Marked with a `ponytail:` comment.
+- `getFiles()` returns `WorkspaceEntry[]` filtered to files, not a separate
+  `WorkspaceFile[]` with content; loading every file's content to list names
+  would defeat the point.
+- Switching workspaces is blocked while any editor is dirty, rather than
+  prompting per file. Editor ids are root-relative and cannot survive a root
+  change, so the alternative is silent data loss.
+- Scrollbars use `::-webkit-scrollbar`, which is accurate here because the
+  WebView is Chromium on every target. Monaco draws its own and is unaffected.

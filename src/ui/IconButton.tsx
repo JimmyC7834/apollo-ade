@@ -8,9 +8,18 @@ export interface IconButtonProps {
 	readonly pressed?: boolean;
 	readonly danger?: boolean;
 	readonly className?: string;
+	readonly disabled?: boolean;
 }
 
-export function IconButton({ icon, label, onClick, pressed, danger, className }: IconButtonProps) {
+export function IconButton({
+	icon,
+	label,
+	onClick,
+	pressed,
+	danger,
+	className,
+	disabled,
+}: IconButtonProps) {
 	return (
 		<button
 			type="button"
@@ -18,6 +27,7 @@ export function IconButton({ icon, label, onClick, pressed, danger, className }:
 			title={label}
 			aria-label={label}
 			aria-pressed={pressed}
+			disabled={disabled}
 			onClick={onClick}
 		>
 			<Icon name={icon} />

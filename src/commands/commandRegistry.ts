@@ -24,6 +24,8 @@ export interface WorkbenchActions {
 	toggleSecondarySidebar: () => void;
 	togglePanel: () => void;
 	closeActiveEditor: () => void;
+	saveActiveEditor: () => void;
+	openFolder: (() => void) | undefined;
 	showAccessibilityHelp: () => void;
 }
 
@@ -34,7 +36,19 @@ export interface WorkbenchActions {
  * the Command shape stays the same either way, so the palette will not change.
  */
 export function buildCommands(actions: WorkbenchActions): readonly Command[] {
+	const { openFolder } = actions;
 	return [
+		// Omitted rather than shown-and-disabled: in the browser there is no
+		// folder to open, and an unrunnable palette entry is just noise.
+		...(openFolder
+			? [{ id: 'file.openFolder', category: 'File', title: 'Open Folder', run: openFolder }]
+			: []),
+		{
+			id: 'file.save',
+			category: 'File',
+			title: 'Save',
+			run: actions.saveActiveEditor,
+		},
 		{
 			id: 'view.togglePrimarySidebar',
 			category: 'View',

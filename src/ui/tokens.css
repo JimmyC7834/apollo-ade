@@ -26,6 +26,12 @@
 	--ide-focus: #0078d4;
 	--ide-focus-width: 1px;
 
+	/* Scrollbars — VS Code's translucent slider over the scrolled surface. */
+	--ide-scrollbar-size: 10px;
+	--ide-scrollbar-slider: rgb(121 121 121 / 40%);
+	--ide-scrollbar-slider-hover: rgb(100 100 100 / 70%);
+	--ide-scrollbar-slider-active: rgb(191 191 191 / 40%);
+
 	/* Spacing */
 	--ide-space-1: 2px;
 	--ide-space-2: 4px;

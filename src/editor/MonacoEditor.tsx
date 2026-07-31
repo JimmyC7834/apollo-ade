@@ -9,6 +9,7 @@ export interface MonacoEditorProps {
 	readonly content: string;
 	/** 1-based line to reveal and select when the file opens. */
 	readonly revealLine?: number;
+	readonly onChange?: (id: string, content: string) => void;
 }
 
 /**
@@ -19,12 +20,20 @@ export interface MonacoEditorProps {
  * the document. Monaco is not garbage collected for you: every model and the
  * editor itself must be disposed explicitly or the WebView leaks them.
  */
-export function MonacoEditor({ id, content, revealLine }: MonacoEditorProps) {
+export function MonacoEditor({ id, content, revealLine, onChange }: MonacoEditorProps) {
 	const hostRef = useRef<HTMLDivElement>(null);
 	const editorRef = useRef<monaco.editor.IStandaloneCodeEditor>(null);
 	const modelsRef = useRef(new Map<string, monaco.editor.ITextModel>());
 	const viewStatesRef = useRef(new Map<string, monaco.editor.ICodeEditorViewState | null>());
 	const previousIdRef = useRef<string>(null);
+
+	/*
+	 * The change listener is attached once, to the editor rather than to each
+	 * model, so it survives tab switches. It therefore has to read the current
+	 * id and callback from refs instead of closing over the render's values.
+	 */
+	const latest = useRef({ id, onChange });
+	latest.current = { id, onChange };
 
 	useEffect(() => {
 		const host = hostRef.current;
@@ -41,8 +50,14 @@ export function MonacoEditor({ id, content, revealLine }: MonacoEditorProps) {
 		});
 		editorRef.current = editor;
 
+		const subscription = editor.onDidChangeModelContent(() => {
+			const { id: currentId, onChange: notify } = latest.current;
+			notify?.(currentId, editor.getValue());
+		});
+
 		const models = modelsRef.current;
 		return () => {
+			subscription.dispose();
 			editor.dispose();
 			for (const model of models.values()) {
 				model.dispose();

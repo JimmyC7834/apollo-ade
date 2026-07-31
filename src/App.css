@@ -19,6 +19,37 @@ body {
 	outline-offset: -1px;
 }
 
+/*
+ * Scrollbars. The WebView is Chromium on every target, so the ::-webkit-*
+ * pseudo-elements are the accurate way to reproduce VS Code's overlay slider:
+ * no track, no arrow buttons, and no space stolen from the content until the
+ * pointer is near it. Monaco draws its own scrollbars and is unaffected.
+ */
+
+::-webkit-scrollbar {
+	width: var(--ide-scrollbar-size);
+	height: var(--ide-scrollbar-size);
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+	background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+	background: var(--ide-scrollbar-slider);
+	/* No radius, like VS Code's slider. */
+	border-radius: 0;
+}
+
+::-webkit-scrollbar-thumb:hover {
+	background: var(--ide-scrollbar-slider-hover);
+}
+
+::-webkit-scrollbar-thumb:active {
+	background: var(--ide-scrollbar-slider-active);
+}
+
 /* Workbench topology */
 
 .ide-workbench {
@@ -126,6 +157,15 @@ body {
 
 .ide-icon-button[aria-pressed='false'] {
 	color: var(--ide-fg-subtle);
+}
+
+.ide-icon-button:disabled {
+	color: var(--ide-fg-subtle);
+	cursor: default;
+}
+
+.ide-icon-button:disabled:hover {
+	background: transparent;
 }
 
 .ide-window-controls .ide-icon-button {
@@ -347,6 +387,32 @@ body {
 	background: var(--ide-bg-hover);
 }
 
+/* The unsaved marker takes the close button's place until the tab is hovered. */
+.ide-tab-dirty {
+	width: 8px;
+	height: 8px;
+	/* 8px dot + 6px either side = the close button's 20px, so swapping the two
+	   never shifts the tab's width. */
+	margin: 0 6px;
+	border-radius: 50%;
+	background: currentcolor;
+}
+
+/*
+ * Dot and close button occupy the same slot: the dot is the resting state of a
+ * dirty tab, and hovering or focusing it swaps in the close button. The
+ * opacity rules above already reveal the close button; these hide the one that
+ * should not be showing, so the tab never changes width.
+ */
+.ide-tab:hover .ide-tab-dirty,
+.ide-tab:focus-within .ide-tab-dirty {
+	display: none;
+}
+
+.ide-tab:not(:hover):not(:focus-within) .ide-tab-dirty ~ .ide-tab-close {
+	display: none;
+}
+
 /* Dialog */
 
 .ide-overlay {
@@ -369,6 +435,12 @@ body {
 	margin: 0 0 var(--ide-space-4);
 	font-size: var(--ide-font-size);
 	font-weight: 600;
+}
+
+.ide-dialog-actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: var(--ide-space-3);
 }
 
 .ide-visually-hidden {
