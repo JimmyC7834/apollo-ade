@@ -6,6 +6,8 @@ import { EditorWorkbench, isDirty, type EditorInput } from '../editor/EditorWork
 import { ChangesView } from '../features/changes/ChangesView';
 import { CommandCenter } from '../features/commandCenter/CommandCenter';
 import { ExplorerTree } from '../features/explorer/ExplorerTree';
+import { TerminalPanel } from '../features/terminal/TerminalPanel';
+import { createTerminalAdapter } from '../terminal';
 import { IconButton, Pane, ResizableSeparator } from '../ui';
 import {
 	createWorkspaceProvider,
@@ -45,6 +47,7 @@ export function WorkbenchShell() {
 	 */
 	const provider = useMemo(() => createWorkspaceProvider(), []);
 	const changesProvider = useMemo(() => createChangesProvider(), []);
+	const terminalAdapter = useMemo(() => createTerminalAdapter(), []);
 	const [selection, setSelection] = useState<WorkspaceSelection | undefined>(undefined);
 	const [entries, setEntries] = useState<readonly WorkspaceEntry[]>([]);
 	const [inputs, setInputs] = useState<readonly EditorInput[]>([]);
@@ -408,7 +411,12 @@ export function WorkbenchShell() {
 								data-region="panel"
 								style={{ height: panelHeight }}
 							>
-								<Pane title="Panel" />
+								<Pane title="Terminal">
+									<TerminalPanel
+										adapter={terminalAdapter}
+										cwd={selection?.path || undefined}
+									/>
+								</Pane>
 							</div>
 						</>
 					) : null}

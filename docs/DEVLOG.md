@@ -392,3 +392,81 @@ were extracted rather than guessed at:
 - The diff editor recreates its models on every input change instead of caching
   them like `MonacoEditor` — a diff has no edits or undo history worth keeping
   across tab switches.
+
+## Slice 6: Native Terminal Panel
+
+**User outcome**
+
+The bottom panel is a real terminal. New terminal starts a PowerShell session
+in the selected workspace root, typing reaches the shell, output comes back,
+dragging the sash resizes the PTY, and multiple shells live in their own tabs.
+Closing a tab kills its process. In the browser the same UI runs against an
+echo fallback, marked with an "Echo" badge so it is never mistaken for a shell.
+
+**Added**
+
+- `src-tauri/src/terminal.rs`: `terminal_create/write/resize/kill`, one
+  blocking reader thread per session, output and exit as Tauri events.
+- `TerminalAdapter` seam (`src/terminal.ts`) with native and echo
+  implementations.
+- `TerminalPanel` (tabs, action bar, exit and echo badges) and
+  `TerminalInstance` (one xterm.js instance bound to one session id).
+- `portable-pty` 0.9.0, `@xterm/xterm`, `@xterm/addon-fit`.
+
+**UI extracted / reused**
+
+- Reused `Tabs`, `ActionBar`, `Badge`, `Pane`, and the resizable bottom region
+  unchanged. Nothing new was extracted — which is the point: the primitives
+  from Slice 5 absorbed a third feature without moving.
+
+**Adapters and dependencies**
+
+- Rust owns every process handle. The frontend holds an opaque session id and
+  can only write, resize, and kill through the adapter.
+- Output and exit are events, not command results: a shell emits bytes when it
+  likes, not when it is asked.
+- Live terminal processes are deliberately not persisted (Slice 7 persists
+  stable user state, not runtime resources).
+
+**Security boundary**
+
+- The shell command is hardcoded, not composed from anything the frontend
+  sends. The only frontend-supplied values are the session id, the size, and
+  the cwd — which is the workspace root the user already chose.
+- `terminal_write` requires an existing session id; unknown ids are rejected
+  rather than created implicitly.
+
+**Accessibility behavior**
+
+- xterm claims Tab for the shell, which would trap keyboard focus in the panel.
+  Shift+Tab is handed back to the browser as the escape hatch, and is
+  documented in the keyboard help dialog.
+- Each instance is a labelled `role="group"`; exit state is a badge with a
+  full-word accessible name, not only a colour.
+
+**Validation performed**
+
+- `cargo build` and `cargo test` pass with the new PTY module.
+- `npm run build` and `npm run check` pass.
+
+**Not validated**
+
+- **No shell has ever been run.** Spawning, output, resize, kill, and exit are
+  compile-verified only. The echo fallback has not been exercised either — the
+  test WebView still cannot paint, so xterm has not been seen to render.
+- Terminal cleanup on application shutdown is untested.
+
+**Caveats and deviations**
+
+- The shell is hardcoded to `powershell.exe -NoLogo -NoProfile` on Windows and
+  `/bin/sh` elsewhere. Cross-platform shell discovery is not implemented.
+- The exit event carries no code: the reader thread detects EOF, and the exit
+  status is not collected from the child. The UI shows "Exited", not a status.
+- Killing a session drops it from the map immediately; the reader thread ends
+  on its own when the PTY closes. Cleanup and shutdown need production
+  hardening, as the guide notes.
+- Each `TerminalInstance` subscribes to the output stream and filters by its
+  own id, rather than the panel routing events. With a handful of terminals
+  this is cheaper than the bookkeeping it would replace.
+- The browser fallback echoes text and handles backspace. It is not a shell and
+  says so in its banner and its badge.

@@ -1,4 +1,5 @@
 @import './ui/tokens.css';
+@import '@xterm/xterm/css/xterm.css';
 
 * {
 	box-sizing: border-box;
@@ -492,6 +493,43 @@ body {
 }
 
 .ide-tab:not(:hover):not(:focus-within) .ide-tab-dirty ~ .ide-tab-close {
+	display: none;
+}
+
+/* Terminal */
+
+.ide-terminal-panel {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+}
+
+/* Tab strip and actions share one row; the strip takes the slack. */
+.ide-terminal-bar {
+	display: flex;
+	align-items: center;
+	flex: none;
+	gap: var(--ide-space-2);
+}
+
+.ide-terminal-bar .ide-tabs {
+	flex: 1;
+	min-width: 0;
+	border-bottom: none;
+}
+
+.ide-terminal-bar .ide-action-bar {
+	margin-left: auto;
+}
+
+.ide-terminal-instance {
+	flex: 1;
+	min-height: 0;
+	padding: var(--ide-space-2) var(--ide-space-3);
+}
+
+/* `hidden` alone loses to the flex display above. */
+.ide-terminal-instance[hidden] {
 	display: none;
 }
 

@@ -21,6 +21,8 @@ export function AccessibilityHelp({ open, onClose }: AccessibilityHelpProps) {
 				<dd>Resize to the smallest or largest allowed size.</dd>
 				<dt>Arrow keys in the file tree</dt>
 				<dd>Move between files; left and right collapse and expand folders.</dd>
+				<dt>Shift+Tab in the terminal</dt>
+				<dd>Leave the terminal. Tab itself is sent to the shell.</dd>
 				<dt>Escape</dt>
 				<dd>Close this dialog.</dd>
 			</dl>
