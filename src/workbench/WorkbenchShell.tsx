@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { createChangesProvider } from '../changes';
 import { buildCommands } from '../commands/commandRegistry';
 import { EditorWorkbench, isDirty, type EditorInput } from '../editor/EditorWorkbench';
+import { ChangesView } from '../features/changes/ChangesView';
 import { CommandCenter } from '../features/commandCenter/CommandCenter';
 import { ExplorerTree } from '../features/explorer/ExplorerTree';
 import { IconButton, Pane, ResizableSeparator } from '../ui';
@@ -42,6 +44,7 @@ export function WorkbenchShell() {
 	 * has made the shell too broad to change comfortably.
 	 */
 	const provider = useMemo(() => createWorkspaceProvider(), []);
+	const changesProvider = useMemo(() => createChangesProvider(), []);
 	const [selection, setSelection] = useState<WorkspaceSelection | undefined>(undefined);
 	const [entries, setEntries] = useState<readonly WorkspaceEntry[]>([]);
 	const [inputs, setInputs] = useState<readonly EditorInput[]>([]);
@@ -126,22 +129,58 @@ export function WorkbenchShell() {
 			setInputs((current) =>
 				current.some((input) => input.id === entry.id)
 					? current
-					: [...current, { id: file.id, name: file.name, content: file.content, saved: file.content }]
+							: [
+								...current,
+								{
+									kind: 'source',
+									id: file.id,
+									name: file.name,
+									content: file.content,
+									saved: file.content,
+								},
+							]
 			);
 		},
 		[inputs, provider]
 	);
 
+	// Diffs share the editor's tab strip but live in their own id space, so a
+	// file and its diff can be open at the same time without colliding.
+	const openDiff = useCallback(
+		async (id: string) => {
+			const diffId = `diff:${id}`;
+			setActiveEditorId(diffId);
+			const diff = await changesProvider.getDiff(id);
+			setInputs((current) =>
+				current.some((input) => input.id === diffId)
+					? current
+					: [
+							...current,
+							{
+								kind: 'diff',
+								id: diffId,
+								name: diff.name,
+								original: diff.original,
+								modified: diff.modified,
+							},
+						]
+			);
+		},
+		[changesProvider]
+	);
+
 	const editFile = useCallback((id: string, content: string) => {
 		setInputs((current) =>
-			current.map((input) => (input.id === id ? { ...input, content } : input))
+			current.map((input) =>
+				input.id === id && input.kind === 'source' ? { ...input, content } : input
+			)
 		);
 	}, []);
 
 	const saveFile = useCallback(
 		async (id: string) => {
 			const input = inputs.find((item) => item.id === id);
-			if (!input || !isDirty(input)) {
+			if (!input || input.kind !== 'source' || !isDirty(input)) {
 				return;
 			}
 			const { content } = input;
@@ -149,7 +188,9 @@ export function WorkbenchShell() {
 			// Mark the written text as the new baseline, not the text as it is
 			// now — the user may have typed more while the write was in flight.
 			setInputs((current) =>
-				current.map((item) => (item.id === id ? { ...item, saved: content } : item))
+					current.map((item) =>
+					item.id === id && item.kind === 'source' ? { ...item, saved: content } : item
+				)
 			);
 		},
 		[inputs, provider]
@@ -389,7 +430,15 @@ export function WorkbenchShell() {
 							data-region="secondarySidebar"
 							style={{ width: secondaryWidth }}
 						>
-							<Pane title="Changes" />
+							<Pane title="Changes">
+								<ChangesView
+									provider={changesProvider}
+									activeDiffId={
+										activeEditorId?.startsWith('diff:') ? activeEditorId : undefined
+									}
+									onOpenDiff={(id) => void openDiff(id)}
+								/>
+							</Pane>
 						</div>
 					</>
 				) : null}

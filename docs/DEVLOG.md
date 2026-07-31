@@ -304,3 +304,91 @@ fully usable, including editing and saving (in memory).
   change, so the alternative is silent data loss.
 - Scrollbars use `::-webkit-scrollbar`, which is accurate here because the
   WebView is Chromium on every target. Monaco draws its own and is unaffected.
+
+## Slice 5: Changes and Diff Workflow
+
+**User outcome**
+
+The secondary sidebar now holds a real Changes view: staged and unstaged
+groups, per-file status badges, a toolbar for stage-all/unstage-all, and a
+right-click menu to stage, unstage, or revert a file. Activating a change opens
+a side-by-side Monaco diff in the same tab strip as source files, so a file and
+its diff can be open at once.
+
+**Added**
+
+- `ChangesProvider` seam (`src/changes.ts`) with a deterministic in-memory
+  implementation: added/modified/deleted seeds, staging, revert, and a
+  `subscribe` signal.
+- `ChangesView` feature: grouped tree, badges, action bar, context menu, and a
+  confirmation dialog for revert.
+- `MonacoDiffEditor` — read-only, side-by-side, models created per input.
+- `EditorInput` became a discriminated union of `SourceInput | DiffInput`.
+
+**UI extracted / reused**
+
+This is where the UI library became intentional, exactly as the guide frames
+it. Explorer plus Changes made the shared contract visible, so four primitives
+were extracted rather than guessed at:
+
+- `WorkbenchTree` — expansion, selection, keyboard navigation, descriptions,
+  accessories, context menus. Explorer was rewritten onto it and shrank to
+  entry-to-node mapping; Slice 8's Search will be the third consumer.
+- `ActionBar`, `Badge`, `ContextMenu`.
+- `src/ui/index.ts` re-exports all of them.
+
+**Adapters and dependencies**
+
+- The Changes UI never learns whether the working tree is real. Slice 9 swaps in
+  a git-backed provider behind the same interface.
+- The tree speaks workspace ids; the editor speaks `diff:<path>` ids. The
+  translation happens at the shell/feature boundary, not inside either.
+
+**Security boundary**
+
+- Unchanged. The fixture changes provider mutates an in-memory object and
+  touches no repository and no disk.
+
+**Accessibility behavior**
+
+- `WorkbenchTree` keeps the Explorer's full keyboard model (arrows, Home/End,
+  Enter/Space, roving tabindex) and adds the `ContextMenu` key.
+- The context menu takes focus on open and returns it to the row on close, but
+  only if focus is still inside the menu — a click elsewhere has already put
+  focus where the user wanted it.
+- Badges are abbreviations ("M"), so each carries a full-word accessible name
+  ("Modified"). Group badges announce a count.
+- Revert is destructive and is confirmed in a dialog; Cancel takes focus first.
+
+**Validation performed**
+
+- `npm run build` (tsc + vite) passes.
+- `npm run check` passes, now including `WorkbenchTree.check.ts`: depth and
+  visibility over a nested tree, a grandchild staying hidden while an ancestor
+  is collapsed (the bug a one-level check would let through), flat lists, and a
+  dangling `parentId`.
+
+**Not validated**
+
+- Nothing was run: the diff editor has never been seen to paint, and the
+  context menu, badges, and confirmation dialog have not been exercised by hand
+  or with a pointer.
+- `cargo` was untouched this slice; no Rust changed.
+
+**Caveats and deviations**
+
+- The pure flattening logic lives in `src/ui/treeRows.ts` rather than inside
+  `WorkbenchTree.tsx`, because Node's type stripping cannot run JSX and the
+  self-check has to import it. `WorkbenchTree` re-exports the node type with a
+  `ReactNode` accessory.
+- `WorkbenchTree` owns expansion state internally, with only a
+  `defaultExpandedIds` prop. No consumer has needed to drive expansion from
+  outside; a controlled variant can be added without changing the signature.
+- `ActionBar` is `role="toolbar"` without arrow-key roving — these bars hold
+  two buttons and Tab matches every other button group in the workbench.
+- `createChangesProvider()` returns the fixture unconditionally. Unlike the
+  workspace there is no native counterpart to choose between yet; Slice 9 adds
+  the environment check with the git provider. Marked `ponytail:`.
+- The diff editor recreates its models on every input change instead of caching
+  them like `MonacoEditor` — a diff has no edits or undo history worth keeping
+  across tab switches.

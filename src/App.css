@@ -303,10 +303,92 @@ body {
 	text-overflow: ellipsis;
 }
 
+.ide-tree-description {
+	overflow: hidden;
+	color: var(--ide-fg-subtle);
+	font-size: var(--ide-font-size-small);
+	text-overflow: ellipsis;
+}
+
+.ide-tree-accessory {
+	display: inline-flex;
+	flex: none;
+	margin-left: auto;
+	padding-left: var(--ide-space-2);
+}
+
 .ide-tree-empty {
 	margin: 0;
 	padding: var(--ide-space-3);
 	color: var(--ide-fg-muted);
+}
+
+/* Badge, action bar, context menu */
+
+.ide-badge {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 16px;
+	height: 16px;
+	padding: 0 var(--ide-space-2);
+	border-radius: 8px;
+	background: var(--ide-bg-hover);
+	color: var(--ide-fg-muted);
+	font-size: var(--ide-font-size-small);
+	line-height: 1;
+}
+
+/* Status colours match VS Code's SCM decorations. */
+.ide-badge-added {
+	color: #81b88b;
+}
+
+.ide-badge-modified {
+	color: #e2c08d;
+}
+
+.ide-badge-deleted {
+	color: var(--ide-fg-danger);
+}
+
+.ide-action-bar {
+	display: flex;
+	gap: var(--ide-space-1);
+	padding: var(--ide-space-1) var(--ide-space-3);
+}
+
+.ide-context-menu {
+	position: fixed;
+	z-index: 10;
+	display: flex;
+	flex-direction: column;
+	min-width: 160px;
+	padding: var(--ide-space-1);
+	border: 1px solid var(--ide-border-strong);
+	border-radius: var(--ide-radius);
+	background: var(--ide-bg-overlay);
+	box-shadow: 0 2px 8px rgb(0 0 0 / 40%);
+}
+
+.ide-context-menu-item {
+	padding: var(--ide-space-2) var(--ide-space-3);
+	border: none;
+	border-radius: var(--ide-radius);
+	background: transparent;
+	color: var(--ide-fg);
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.ide-context-menu-item:hover {
+	background: var(--ide-bg-active);
+}
+
+.ide-context-menu-item-danger,
+.ide-button-danger {
+	color: var(--ide-fg-danger);
 }
 
 /* Editor */

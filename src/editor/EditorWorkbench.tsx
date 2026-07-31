@@ -1,17 +1,36 @@
 import { Tabs } from '../ui';
+import { MonacoDiffEditor } from './MonacoDiffEditor';
 import { MonacoEditor } from './MonacoEditor';
 
-export interface EditorInput {
+export interface SourceInput {
+	readonly kind: 'source';
 	readonly id: string;
 	readonly name: string;
 	readonly content: string;
 	/** Content as last read or written. `content !== saved` means dirty. */
 	readonly saved: string;
+	/** 1-based line to reveal when the file opens. */
 	readonly revealLine?: number;
 }
 
+export interface DiffInput {
+	readonly kind: 'diff';
+	/** Namespaced (`diff:<path>`) so a file and its diff can both be open. */
+	readonly id: string;
+	readonly name: string;
+	readonly original: string;
+	readonly modified: string;
+}
+
+/*
+ * A diff input is not an editable source input: it has two sides, no dirty
+ * state, and nothing to save. Keeping the union typed is what stops save and
+ * close paths from quietly assuming `content` exists.
+ */
+export type EditorInput = SourceInput | DiffInput;
+
 export function isDirty(input: EditorInput): boolean {
-	return input.content !== input.saved;
+	return input.kind === 'source' && input.content !== input.saved;
 }
 
 export interface EditorWorkbenchProps {
@@ -22,7 +41,7 @@ export interface EditorWorkbenchProps {
 	readonly onChange: (id: string, content: string) => void;
 }
 
-/** Tab strip plus the editor for the active input. */
+/** Tab strip plus the editor for the active input, source or diff. */
 export function EditorWorkbench({
 	inputs,
 	activeId,
@@ -46,7 +65,7 @@ export function EditorWorkbench({
 				label="Open editors"
 				items={inputs.map((input) => ({
 					id: input.id,
-					label: input.name,
+					label: input.kind === 'diff' ? `${input.name} (diff)` : input.name,
 					title: input.id,
 					dirty: isDirty(input),
 				}))}
@@ -54,7 +73,15 @@ export function EditorWorkbench({
 				onSelect={onSelect}
 				onClose={onClose}
 			/>
-			{active ? (
+			{active?.kind === 'diff' ? (
+				<MonacoDiffEditor
+					id={active.id}
+					name={active.name}
+					original={active.original}
+					modified={active.modified}
+				/>
+			) : null}
+			{active?.kind === 'source' ? (
 				<MonacoEditor
 					id={active.id}
 					content={active.content}
