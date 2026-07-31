@@ -15,6 +15,15 @@ export interface WorkspaceFile {
 	readonly content: string;
 }
 
+export interface SearchResult {
+	/** Root-relative path of the containing file. */
+	readonly id: string;
+	readonly name: string;
+	/** 1-based, so the editor can reveal it directly. */
+	readonly line: number;
+	readonly preview: string;
+}
+
 export interface WorkspaceSelection {
 	readonly label: string;
 	readonly path: string;
@@ -30,7 +39,11 @@ export interface WorkspaceProvider {
 	getFiles(): Promise<readonly WorkspaceEntry[]>;
 	readFile(id: string): Promise<WorkspaceFile>;
 	writeFile(id: string, content: string): Promise<void>;
+	/** Case-insensitive line search. The Search UI cannot tell which impl ran. */
+	search(query: string): Promise<readonly SearchResult[]>;
 }
+
+const MAX_RESULTS = 500;
 
 const FIXTURE: Record<string, string> = {
 	'README.md': '# Fixture workspace\n\nBrowser mode. Run `npm run tauri dev` to open a real folder.\n',
@@ -79,6 +92,31 @@ function fixtureProvider(): WorkspaceProvider {
 			}
 			contents[id] = content;
 		},
+		// Same rules as the native search: case-insensitive, line-oriented,
+		// capped. It searches the fixture's own (possibly edited) contents.
+		async search(query) {
+			const needle = query.trim().toLowerCase();
+			if (!needle) {
+				return [];
+			}
+			const results: SearchResult[] = [];
+			for (const entry of entries) {
+				for (const [index, line] of (contents[entry.id] ?? '').split('\n').entries()) {
+					if (results.length >= MAX_RESULTS) {
+						return results;
+					}
+					if (line.toLowerCase().includes(needle)) {
+						results.push({
+							id: entry.id,
+							name: entry.name,
+							line: index + 1,
+							preview: line.trim(),
+						});
+					}
+				}
+			}
+			return results;
+		},
 	};
 }
 
@@ -108,6 +146,9 @@ function tauriProvider(): WorkspaceProvider {
 		},
 		async writeFile(id, content) {
 			await (await core()).invoke('write_file', { id, content });
+		},
+		async search(query) {
+			return (await core()).invoke<SearchResult[]>('search_workspace', { query });
 		},
 	};
 }

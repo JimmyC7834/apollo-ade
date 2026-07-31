@@ -25,6 +25,8 @@ export interface WorkbenchActions {
 	togglePanel: () => void;
 	closeActiveEditor: () => void;
 	saveActiveEditor: () => void;
+	showExplorer: () => void;
+	showSearch: () => void;
 	openFolder: (() => void) | undefined;
 	showAccessibilityHelp: () => void;
 }
@@ -48,6 +50,18 @@ export function buildCommands(actions: WorkbenchActions): readonly Command[] {
 			category: 'File',
 			title: 'Save',
 			run: actions.saveActiveEditor,
+		},
+		{
+			id: 'view.showExplorer',
+			category: 'View',
+			title: 'Show Explorer',
+			run: actions.showExplorer,
+		},
+		{
+			id: 'view.showSearch',
+			category: 'View',
+			title: 'Show Search',
+			run: actions.showSearch,
 		},
 		{
 			id: 'view.togglePrimarySidebar',

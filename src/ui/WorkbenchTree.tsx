@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { Icon } from './Icon';
 import { visibleRows, type TreeNode as BaseTreeNode } from './treeRows';
@@ -16,7 +16,11 @@ export interface WorkbenchTreeProps {
 	readonly onActivate: (id: string) => void;
 	readonly onContextMenu?: (id: string, x: number, y: number) => void;
 	readonly emptyMessage?: string;
-	/** Expanded on first render only; later toggles belong to the user. */
+	/**
+	 * Ids that start expanded. Applied once per id, as it first appears — so
+	 * groups that arrive later (search results) open, while anything the user
+	 * has since collapsed stays collapsed.
+	 */
 	readonly defaultExpandedIds?: readonly string[];
 }
 
@@ -39,6 +43,18 @@ export function WorkbenchTree({
 	defaultExpandedIds,
 }: WorkbenchTreeProps) {
 	const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set(defaultExpandedIds));
+	const appliedDefaults = useRef(new Set(defaultExpandedIds));
+
+	useEffect(() => {
+		const fresh = defaultExpandedIds?.filter((id) => !appliedDefaults.current.has(id)) ?? [];
+		if (fresh.length === 0) {
+			return;
+		}
+		for (const id of fresh) {
+			appliedDefaults.current.add(id);
+		}
+		setExpanded((current) => new Set([...current, ...fresh]));
+	}, [defaultExpandedIds]);
 	const [focusedId, setFocusedId] = useState<string | undefined>(undefined);
 	const listRef = useRef<HTMLDivElement>(null);
 

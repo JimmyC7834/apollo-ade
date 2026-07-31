@@ -16,6 +16,10 @@ use serde::Serialize;
 const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_DEPTH: usize = 12;
 const IGNORED: [&str; 4] = [".git", "node_modules", "target", "dist"];
+const MAX_RESULTS: usize = 500;
+/// Long lines are truncated in the preview: a minified bundle would otherwise
+/// ship a megabyte of one line to the UI for a three-character match.
+const MAX_PREVIEW_CHARS: usize = 200;
 
 #[derive(Default)]
 pub struct WorkspaceState(Mutex<Option<PathBuf>>);
@@ -176,6 +180,71 @@ pub fn write_file(
         return Err("file is larger than 2 MiB".into());
     }
     fs::write(path, content).map_err(|e| e.to_string())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchResult {
+    /// Root-relative path of the containing file.
+    id: String,
+    name: String,
+    /// 1-based, so the editor can reveal it directly.
+    line: usize,
+    preview: String,
+}
+
+/// Case-insensitive line search across the workspace.
+///
+/// Reuses the tree walk, so it inherits its policy exactly: ignored
+/// directories, no symlinks, and the depth cap. Files that are too large or
+/// not UTF-8 are skipped rather than reported as errors — an unreadable file
+/// is not a search failure.
+#[tauri::command]
+pub fn search_workspace(
+    query: String,
+    state: tauri::State<'_, WorkspaceState>,
+) -> Result<Vec<SearchResult>, String> {
+    let root = root_of(&state)?;
+    let needle = query.trim().to_lowercase();
+    if needle.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut entries = Vec::new();
+    walk(&root, "", 0, &mut entries);
+
+    let mut results = Vec::new();
+    for entry in entries.iter().filter(|e| e.kind == "file") {
+        if results.len() >= MAX_RESULTS {
+            break;
+        }
+        let Ok(path) = resolve(&root, &entry.id) else {
+            continue; // Too large, vanished, or otherwise not readable.
+        };
+        let Ok(text) = fs::read_to_string(path) else {
+            continue; // Not UTF-8: skip, do not fail the whole search.
+        };
+        for (index, line) in text.lines().enumerate() {
+            if results.len() >= MAX_RESULTS {
+                break;
+            }
+            if !line.to_lowercase().contains(&needle) {
+                continue;
+            }
+            let trimmed = line.trim();
+            let preview = match trimmed.char_indices().nth(MAX_PREVIEW_CHARS) {
+                Some((cut, _)) => format!("{}…", &trimmed[..cut]),
+                None => trimmed.to_string(),
+            };
+            results.push(SearchResult {
+                id: entry.id.clone(),
+                name: entry.name.clone(),
+                line: index + 1,
+                preview,
+            });
+        }
+    }
+    Ok(results)
 }
 
 #[cfg(test)]

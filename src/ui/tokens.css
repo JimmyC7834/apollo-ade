@@ -64,6 +64,12 @@
 	--ide-scrollbar-slider-hover: rgb(100 100 100 / 70%);
 	--ide-scrollbar-slider-active: rgb(191 191 191 / 40%);
 
+	/* Inputs — VS Code `input.*` from dark_modern. */
+	--ide-input-bg: #313131;
+	--ide-input-border: #3c3c3c;
+	--ide-input-fg: #cccccc;
+	--ide-input-placeholder: #989898;
+
 	/* Spacing */
 	--ide-space-1: 2px;
 	--ide-space-2: 4px;

@@ -501,3 +501,94 @@ Code source in `../`, so the values are quoted, not eyeballed.
 
 - Still nothing rendered. These are corrections to values and structure, not
   observations of pixels.
+
+## Slices 7 and 8: Persistence and Workspace Search
+
+**User outcome**
+
+The workbench resumes where it was left: layout visibility and sizes, the
+selected folder, which primary view was showing, the open editors, the active
+tab, and any unsaved text. A new Search view in the primary sidebar searches
+the whole workspace, groups matches by file with a per-file count, and opens a
+result at its matching line.
+
+**Added**
+
+- `PersistenceAdapter` (`src/persistence.ts`): versioned localStorage, read
+  once synchronously at mount, written on every change to persisted state.
+- Rust `search_workspace`: case-insensitive line search reusing the tree walk.
+- `WorkspaceProvider.search`, completing the guide's Slice 4 interface, with a
+  fixture implementation over the fixture's own (possibly edited) contents.
+- `SearchView`: debounced query, status line, results grouped by file.
+- Explorer/Search switching, in the pane's `ActionBar` and as
+  `View: Show Explorer` / `View: Show Search` commands.
+- `openFile` takes an optional line, so opening an already-open file from a
+  search result still moves the cursor.
+
+**UI extracted / reused**
+
+- Search results render through `WorkbenchTree` — its third consumer, and the
+  one the guide predicted. Reused `Badge` for per-file match counts and
+  `ActionBar` for the view switcher. Nothing new was extracted.
+- `WorkbenchTree.defaultExpandedIds` now applies per id as it first appears,
+  rather than only on first render: search groups arrive after the query
+  resolves, and would otherwise all be collapsed. Ids the user has since
+  collapsed stay collapsed.
+
+**Adapters and dependencies**
+
+- Search belongs to `WorkspaceProvider`. The Search UI cannot tell whether
+  results came from Rust or from the fixture.
+- Persistence is its own adapter, so the shell never touches localStorage.
+
+**Security boundary**
+
+- `search_workspace` reuses `walk` and `resolve`, so it inherits the existing
+  policy exactly: root confinement, ignored directories, no symlinks, the depth
+  cap, and the 2 MiB limit. Nothing new was granted.
+- Files that are too large or not UTF-8 are skipped, not reported as errors —
+  an unreadable file is not a search failure.
+- Results are capped at 500 and previews at 200 characters, so a minified
+  bundle cannot ship a megabyte per match.
+- Persisted state is untrusted input: an unknown version, a missing version,
+  corrupt JSON, or a non-object payload all load as `undefined` rather than
+  being partially read or migrated by guesswork.
+
+**Accessibility behavior**
+
+- The search field has a real (visually hidden) label.
+- The result count is `role="status"`, so it is announced — it is the only
+  feedback that a search finished at all. Its line is reserved even when empty,
+  so results do not jump.
+- Both view-switcher buttons expose pressed state.
+
+**Validation performed**
+
+- `cargo test` passes (search compiles; root confinement still green).
+- `npm run build` passes.
+- `npm run check` passes, now including `persistence.check.ts`: round trip,
+  unknown version, missing version, corrupt JSON, non-object payload, and a
+  localStorage that throws on both read and write.
+
+**Not validated**
+
+- No search has ever been run against a real workspace, and no session has been
+  restored — the persistence path is covered by its self-check, not by an
+  actual restart.
+- Debounce timing, the status line, and result grouping have not been seen.
+
+**Caveats and deviations**
+
+- Search is plain case-insensitive substring matching: no regex, no
+  include/exclude globs, no cancellation of an in-flight native search, and no
+  index. A superseded result set is discarded rather than the work being
+  stopped.
+- The 500-result cap is applied while walking, so results are the first 500 in
+  tree order, not the best 500.
+- Restoring an editor re-reads the file for its `saved` baseline and keeps the
+  persisted text as `content`, so a file changed on disk between sessions
+  correctly shows as dirty. Files that have disappeared are dropped silently.
+- Live PTY sessions, modal visibility, and focus are deliberately not
+  persisted, per the guide's persistence policy.
+- Layout state is read synchronously at mount rather than in an effect;
+  applying it after the first paint would show the default and then snap.

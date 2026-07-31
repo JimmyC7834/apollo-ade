@@ -12,6 +12,7 @@ pub fn run() {
             workspace::list_tree,
             workspace::read_file,
             workspace::write_file,
+            workspace::search_workspace,
             terminal::terminal_create,
             terminal::terminal_write,
             terminal::terminal_resize,

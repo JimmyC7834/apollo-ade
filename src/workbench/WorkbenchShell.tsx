@@ -6,9 +6,11 @@ import { EditorWorkbench, isDirty, type EditorInput } from '../editor/EditorWork
 import { ChangesView } from '../features/changes/ChangesView';
 import { CommandCenter } from '../features/commandCenter/CommandCenter';
 import { ExplorerTree } from '../features/explorer/ExplorerTree';
+import { SearchView } from '../features/search/SearchView';
 import { TerminalPanel } from '../features/terminal/TerminalPanel';
+import { createPersistenceAdapter, type PersistedState, type PrimaryView } from '../persistence';
 import { createTerminalAdapter } from '../terminal';
-import { IconButton, Pane, ResizableSeparator } from '../ui';
+import { ActionBar, IconButton, Pane, ResizableSeparator } from '../ui';
 import {
 	createWorkspaceProvider,
 	type WorkspaceEntry,
@@ -22,7 +24,6 @@ import { useWindowControls } from './useWindowControls';
 const MIN = 170;
 const MAX_SIDEBAR = 600;
 const MAX_PANEL = 600;
-const WORKSPACE_KEY = 'ade.workspace.path';
 
 type Region = 'primarySidebar' | 'secondarySidebar' | 'panel';
 
@@ -30,14 +31,22 @@ export function WorkbenchShell() {
 	const controls = useWindowControls();
 	const mainRef = useRef<HTMLDivElement>(null);
 
-	const [visible, setVisible] = useState<Record<Region, boolean>>({
-		primarySidebar: true,
-		secondarySidebar: true,
-		panel: true,
-	});
-	const [primaryWidth, setPrimaryWidth] = useState(260);
-	const [secondaryWidth, setSecondaryWidth] = useState(260);
-	const [panelHeight, setPanelHeight] = useState(220);
+	// Read once, synchronously: layout that arrives after the first paint
+	// shows the user the default and then snaps, which reads as a glitch.
+	const persistence = useMemo(() => createPersistenceAdapter(), []);
+	const restored = useMemo(() => persistence.load(), [persistence]);
+
+	const [visible, setVisible] = useState<Record<Region, boolean>>(
+		restored?.visible ?? {
+			primarySidebar: true,
+			secondarySidebar: true,
+			panel: true,
+		}
+	);
+	const [primaryWidth, setPrimaryWidth] = useState(restored?.primaryWidth ?? 260);
+	const [secondaryWidth, setSecondaryWidth] = useState(restored?.secondaryWidth ?? 260);
+	const [panelHeight, setPanelHeight] = useState(restored?.panelHeight ?? 220);
+	const [primaryView, setPrimaryView] = useState<PrimaryView>(restored?.primaryView ?? 'explorer');
 	const [helpOpen, setHelpOpen] = useState(false);
 
 	/*
@@ -55,11 +64,11 @@ export function WorkbenchShell() {
 	const [pendingCloseId, setPendingCloseId] = useState<string | undefined>(undefined);
 
 	/*
-	 * Restore the last root on start.
-	 *
-	 * ponytail: one raw localStorage key, not the versioned persistence schema.
-	 * Slice 7 replaces this with PersistenceAdapter, which also restores layout
-	 * and open editors; the workspace path is the only piece Slice 4 needs.
+	 * Restore the workspace, then the editors that lived in it. The order
+	 * matters: reading a file needs the root to be selected first. A file that
+	 * has since moved or been deleted is dropped rather than failing the whole
+	 * restore, and a dirty editor keeps its unsaved text while its `saved`
+	 * baseline comes from what is on disk now.
 	 */
 	useEffect(() => {
 		let cancelled = false;
@@ -67,27 +76,50 @@ export function WorkbenchShell() {
 			if (!provider.canChooseWorkspace) {
 				// Browser mode: the fixture workspace is always "selected".
 				setSelection({ label: 'Fixture', path: '' });
-				return;
-			}
-			const saved = localStorage.getItem(WORKSPACE_KEY);
-			if (!saved) {
-				return;
-			}
-			try {
-				const restored = await provider.restoreWorkspace(saved);
-				if (!cancelled) {
-					setSelection(restored);
+			} else if (restored?.workspace) {
+				try {
+					const workspace = await provider.restoreWorkspace(restored.workspace.path);
+					if (cancelled) {
+						return;
+					}
+					setSelection(workspace);
+				} catch {
+					return; // The folder moved or is gone; start with none.
 				}
-			} catch {
-				// The folder moved or is gone; forget it rather than retrying.
-				localStorage.removeItem(WORKSPACE_KEY);
+			} else {
+				return;
 			}
+
+			const reopened: EditorInput[] = [];
+			for (const editor of restored?.editors ?? []) {
+				try {
+					const file = await provider.readFile(editor.id);
+					reopened.push({
+						kind: 'source',
+						id: file.id,
+						name: file.name,
+						content: editor.content ?? file.content,
+						saved: file.content,
+					});
+				} catch {
+					// Gone since last session.
+				}
+			}
+			if (cancelled) {
+				return;
+			}
+			setInputs(reopened);
+			setActiveEditorId(
+				reopened.some((input) => input.id === restored?.activeEditorId)
+					? restored?.activeEditorId
+					: reopened[0]?.id
+			);
 		}
 		void start();
 		return () => {
 			cancelled = true;
 		};
-	}, [provider]);
+	}, [provider, restored]);
 
 	// The tree belongs to the selected root, so it is reloaded with it.
 	useEffect(() => {
@@ -113,7 +145,6 @@ export function WorkbenchShell() {
 		if (!chosen) {
 			return;
 		}
-		localStorage.setItem(WORKSPACE_KEY, chosen.path);
 		// Editor ids are relative to the old root, so they cannot survive.
 		// Switching is blocked while anything is dirty, so nothing is lost.
 		setInputs([]);
@@ -122,26 +153,35 @@ export function WorkbenchShell() {
 	}, [provider]);
 
 	const openFile = useCallback(
-		async (entry: WorkspaceEntry) => {
-			setActiveEditorId(entry.id);
-			// Already open: just focus the tab, and keep any unsaved edits.
-			if (inputs.some((input) => input.id === entry.id)) {
+		async (id: string, revealLine?: number) => {
+			setActiveEditorId(id);
+			// Already open: keep any unsaved edits, but honour a new target
+			// line — that is the whole point of opening a search result.
+			if (inputs.some((input) => input.id === id)) {
+				if (revealLine !== undefined) {
+					setInputs((current) =>
+						current.map((input) =>
+							input.id === id && input.kind === 'source' ? { ...input, revealLine } : input
+						)
+					);
+				}
 				return;
 			}
-			const file = await provider.readFile(entry.id);
+			const file = await provider.readFile(id);
 			setInputs((current) =>
-				current.some((input) => input.id === entry.id)
+				current.some((input) => input.id === id)
 					? current
-							: [
-								...current,
-								{
-									kind: 'source',
-									id: file.id,
-									name: file.name,
-									content: file.content,
-									saved: file.content,
-								},
-							]
+					: [
+							...current,
+							{
+								kind: 'source',
+								id: file.id,
+								name: file.name,
+								content: file.content,
+								saved: file.content,
+								revealLine,
+							},
+						]
 			);
 		},
 		[inputs, provider]
@@ -223,6 +263,43 @@ export function WorkbenchShell() {
 		[inputs, forceCloseEditor]
 	);
 
+	/*
+	 * Persist stable user state on every change. Dirty text is written out;
+	 * clean editors keep only their identity, since the file itself is the
+	 * record. Live terminals, modal visibility, and focus are deliberately
+	 * absent — restoring their shape without their substance is worse than
+	 * starting fresh.
+	 */
+	useEffect(() => {
+		const state: PersistedState = {
+			visible,
+			primaryWidth,
+			secondaryWidth,
+			panelHeight,
+			primaryView,
+			workspace: selection,
+			editors: inputs
+				.filter((input) => input.kind === 'source')
+				.map((input) => ({
+					id: input.id,
+					name: input.name,
+					...(isDirty(input) ? { content: input.content } : {}),
+				})),
+			activeEditorId,
+		};
+		persistence.save(state);
+	}, [
+		persistence,
+		visible,
+		primaryWidth,
+		secondaryWidth,
+		panelHeight,
+		primaryView,
+		selection,
+		inputs,
+		activeEditorId,
+	]);
+
 	const toggle = useCallback((region: Region) => {
 		setVisible((current) => ({ ...current, [region]: !current[region] }));
 	}, []);
@@ -260,6 +337,14 @@ export function WorkbenchShell() {
 					if (activeEditorId) {
 						void saveFile(activeEditorId);
 					}
+				},
+				showExplorer: () => {
+					setPrimaryView('explorer');
+					setVisible((current) => ({ ...current, primarySidebar: true }));
+				},
+				showSearch: () => {
+					setPrimaryView('search');
+					setVisible((current) => ({ ...current, primarySidebar: true }));
 				},
 				openFolder: provider.canChooseWorkspace && !dirty ? () => void openFolder() : undefined,
 				showAccessibilityHelp: () => setHelpOpen(true),
@@ -343,27 +428,54 @@ export function WorkbenchShell() {
 							style={{ width: primaryWidth }}
 						>
 							<Pane
-								title={selection ? `Explorer — ${selection.label}` : 'Explorer'}
+								title={
+									primaryView === 'search'
+										? 'Search'
+										: selection
+											? `Explorer — ${selection.label}`
+											: 'Explorer'
+								}
 								actions={
-									provider.canChooseWorkspace ? (
+									<ActionBar label="Primary sidebar views">
 										<IconButton
-											icon="folder-opened"
-											label={
-												dirty
-													? 'Open folder (save your changes first)'
-													: 'Open folder'
-											}
-											disabled={dirty}
-											onClick={() => void openFolder()}
+											icon="files"
+											label="Show Explorer"
+											pressed={primaryView === 'explorer'}
+											onClick={() => setPrimaryView('explorer')}
 										/>
-									) : null
+										<IconButton
+											icon="search"
+											label="Show Search"
+											pressed={primaryView === 'search'}
+											onClick={() => setPrimaryView('search')}
+										/>
+										{provider.canChooseWorkspace ? (
+											<IconButton
+												icon="folder-opened"
+												label={
+													dirty
+														? 'Open folder (save your changes first)'
+														: 'Open folder'
+												}
+												disabled={dirty}
+												onClick={() => void openFolder()}
+											/>
+										) : null}
+									</ActionBar>
 								}
 							>
-								<ExplorerTree
-									entries={entries}
-									activeId={activeEditorId}
-									onOpenFile={(entry) => void openFile(entry)}
-								/>
+								{primaryView === 'search' ? (
+									<SearchView
+										provider={provider}
+										onOpenResult={(id, line) => void openFile(id, line)}
+									/>
+								) : (
+									<ExplorerTree
+										entries={entries}
+										activeId={activeEditorId}
+										onOpenFile={(entry) => void openFile(entry.id)}
+									/>
+								)}
 							</Pane>
 						</div>
 						<ResizableSeparator
@@ -454,7 +566,7 @@ export function WorkbenchShell() {
 				open={commandCenterOpen}
 				commands={commands}
 				files={entries}
-				onOpenFile={(entry) => void openFile(entry)}
+				onOpenFile={(entry) => void openFile(entry.id)}
 				onClose={closeCommandCenter}
 			/>
 			<ConfirmDiscard

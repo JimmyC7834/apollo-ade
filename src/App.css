@@ -324,6 +324,50 @@ body {
 	color: var(--ide-fg-muted);
 }
 
+/* Search */
+
+.ide-search {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+}
+
+.ide-search-field {
+	flex: none;
+	padding: var(--ide-space-2) var(--ide-space-3);
+}
+
+.ide-search-input {
+	width: 100%;
+	padding: var(--ide-space-2) var(--ide-space-3);
+	border: 1px solid var(--ide-input-border);
+	border-radius: var(--ide-radius);
+	background: var(--ide-input-bg);
+	color: var(--ide-input-fg);
+	font: inherit;
+}
+
+.ide-search-input::placeholder {
+	color: var(--ide-input-placeholder);
+}
+
+.ide-search-status {
+	flex: none;
+	/* Reserves its line even when empty, so results do not jump on the first
+	   search. */
+	min-height: var(--ide-row-height);
+	margin: 0;
+	padding: 0 var(--ide-space-3);
+	color: var(--ide-fg-muted);
+	font-size: var(--ide-font-size-small);
+}
+
+.ide-search .ide-tree {
+	flex: 1;
+	min-height: 0;
+	overflow: auto;
+}
+
 /* Badge, action bar, context menu */
 
 .ide-badge {
