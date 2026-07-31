@@ -225,6 +225,128 @@ body {
 	}
 }
 
+/* Explorer tree */
+
+.ide-tree {
+	padding: var(--ide-space-1) 0;
+}
+
+.ide-tree-row {
+	display: flex;
+	align-items: center;
+	gap: var(--ide-space-2);
+	height: var(--ide-row-height);
+	padding-right: var(--ide-space-3);
+	white-space: nowrap;
+	cursor: pointer;
+	user-select: none;
+}
+
+.ide-tree-row:hover {
+	background: var(--ide-bg-hover);
+}
+
+.ide-tree-row-active {
+	background: var(--ide-bg-active);
+}
+
+.ide-tree-twistie {
+	display: inline-flex;
+	justify-content: center;
+	width: 16px;
+	flex: none;
+	color: var(--ide-fg-muted);
+}
+
+.ide-tree-label {
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.ide-tree-empty {
+	margin: 0;
+	padding: var(--ide-space-3);
+	color: var(--ide-fg-muted);
+}
+
+/* Editor */
+
+.ide-editor-workbench {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+}
+
+.ide-editor {
+	flex: 1;
+	min-height: 0;
+}
+
+.ide-editor-empty {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	height: 100%;
+	color: var(--ide-fg-subtle);
+}
+
+/* Tabs */
+
+.ide-tabs {
+	display: flex;
+	flex: none;
+	overflow-x: auto;
+	background: var(--ide-bg-titlebar);
+	border-bottom: 1px solid var(--ide-border);
+}
+
+.ide-tab {
+	display: flex;
+	align-items: center;
+	gap: var(--ide-space-2);
+	flex: none;
+	height: var(--ide-pane-header-height);
+	padding: 0 var(--ide-space-3);
+	border-right: 1px solid var(--ide-border);
+	color: var(--ide-fg-muted);
+	cursor: pointer;
+	user-select: none;
+}
+
+.ide-tab-active {
+	background: var(--ide-bg);
+	color: var(--ide-fg);
+}
+
+.ide-tab-label {
+	white-space: nowrap;
+}
+
+.ide-tab-close {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 20px;
+	height: 20px;
+	padding: 0;
+	border: none;
+	border-radius: var(--ide-radius);
+	background: transparent;
+	color: inherit;
+	cursor: pointer;
+	opacity: 0;
+}
+
+.ide-tab:hover .ide-tab-close,
+.ide-tab-active .ide-tab-close,
+.ide-tab-close:focus-visible {
+	opacity: 1;
+}
+
+.ide-tab-close:hover {
+	background: var(--ide-bg-hover);
+}
+
 /* Dialog */
 
 .ide-dialog {

@@ -1,6 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { EditorWorkbench, type EditorInput } from '../editor/EditorWorkbench';
+import { ExplorerTree } from '../features/explorer/ExplorerTree';
 import { IconButton, Pane, ResizableSeparator } from '../ui';
+import { createWorkspaceProvider, type WorkspaceEntry } from '../workspace';
 import { AccessibilityHelp } from './AccessibilityHelp';
 import { Titlebar } from './Titlebar';
 import { useWindowControls } from './useWindowControls';
@@ -24,6 +27,57 @@ export function WorkbenchShell() {
 	const [secondaryWidth, setSecondaryWidth] = useState(260);
 	const [panelHeight, setPanelHeight] = useState(220);
 	const [helpOpen, setHelpOpen] = useState(false);
+
+	/*
+	 * Workspace and editor state live here for now. The guide splits this into
+	 * WorkbenchController and WorkbenchLayout in Slice 10, once feature growth
+	 * has made the shell too broad to change comfortably.
+	 */
+	const provider = useMemo(() => createWorkspaceProvider(), []);
+	const [entries, setEntries] = useState<readonly WorkspaceEntry[]>([]);
+	const [inputs, setInputs] = useState<readonly EditorInput[]>([]);
+	const [activeEditorId, setActiveEditorId] = useState<string | undefined>(undefined);
+
+	useEffect(() => {
+		let cancelled = false;
+		void provider.getTree().then((tree) => {
+			if (!cancelled) {
+				setEntries(tree);
+			}
+		});
+		return () => {
+			cancelled = true;
+		};
+	}, [provider]);
+
+	const openFile = useCallback(
+		async (entry: WorkspaceEntry) => {
+			setActiveEditorId(entry.id);
+			// Already open: just focus the tab, and keep any unsaved edits.
+			if (inputs.some((input) => input.id === entry.id)) {
+				return;
+			}
+			const content = await provider.readFile(entry.id);
+			setInputs((current) =>
+				current.some((input) => input.id === entry.id)
+					? current
+					: [...current, { id: entry.id, name: entry.name, content }]
+			);
+		},
+		[inputs, provider]
+	);
+
+	const closeEditor = useCallback((id: string) => {
+		setInputs((current) => {
+			const index = current.findIndex((input) => input.id === id);
+			const next = current.filter((input) => input.id !== id);
+			// Closing the active tab selects its neighbour rather than nothing.
+			setActiveEditorId((active) =>
+				active === id ? (next[index] ?? next[index - 1])?.id : active
+			);
+			return next;
+		});
+	}, []);
 
 	const toggle = useCallback((region: Region) => {
 		setVisible((current) => ({ ...current, [region]: !current[region] }));
@@ -88,7 +142,13 @@ export function WorkbenchShell() {
 							data-region="primarySidebar"
 							style={{ width: primaryWidth }}
 						>
-							<Pane title="Explorer" />
+							<Pane title="Explorer">
+								<ExplorerTree
+									entries={entries}
+									activeId={activeEditorId}
+									onOpenFile={(entry) => void openFile(entry)}
+								/>
+							</Pane>
 						</div>
 						<ResizableSeparator
 							label="Resize primary sidebar"
@@ -109,7 +169,14 @@ export function WorkbenchShell() {
 						tabIndex={-1}
 						role="main"
 						aria-label="Main"
-					/>
+					>
+						<EditorWorkbench
+							inputs={inputs}
+							activeId={activeEditorId}
+							onSelect={setActiveEditorId}
+							onClose={closeEditor}
+						/>
+					</div>
 
 					{visible.panel ? (
 						<>
