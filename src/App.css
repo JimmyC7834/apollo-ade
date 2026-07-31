@@ -1,0 +1,270 @@
+@import './ui/tokens.css';
+
+* {
+	box-sizing: border-box;
+}
+
+body {
+	margin: 0;
+	height: 100vh;
+	overflow: hidden;
+	background: var(--ide-bg);
+	color: var(--ide-fg);
+	font-family: var(--ide-font-family);
+	font-size: var(--ide-font-size);
+}
+
+:focus-visible {
+	outline: var(--ide-focus-width) solid var(--ide-focus);
+	outline-offset: -1px;
+}
+
+/* Workbench topology */
+
+.ide-workbench {
+	display: flex;
+	flex-direction: column;
+	height: 100vh;
+}
+
+.ide-body {
+	display: flex;
+	flex: 1;
+	min-height: 0;
+}
+
+.ide-center {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	min-width: 0;
+	min-height: 0;
+}
+
+.ide-region {
+	min-width: 0;
+	min-height: 0;
+	overflow: hidden;
+}
+
+.ide-region-sidebar {
+	flex: none;
+	background: var(--ide-bg-sidebar);
+}
+
+.ide-region-main {
+	flex: 1;
+	background: var(--ide-bg);
+}
+
+.ide-region-main:focus {
+	outline: none;
+}
+
+.ide-region-panel {
+	flex: none;
+	background: var(--ide-bg-panel);
+}
+
+/* Titlebar */
+
+.ide-titlebar {
+	display: flex;
+	align-items: center;
+	flex: none;
+	height: var(--ide-titlebar-height);
+	background: var(--ide-bg-titlebar);
+	border-bottom: 1px solid var(--ide-border);
+}
+
+.ide-titlebar-drag {
+	flex: 1;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	height: 100%;
+	min-width: 0;
+}
+
+.ide-titlebar-title {
+	color: var(--ide-fg-muted);
+	font-size: var(--ide-font-size-small);
+	user-select: none;
+}
+
+.ide-titlebar-actions,
+.ide-window-controls {
+	display: flex;
+	align-items: center;
+	flex: none;
+}
+
+.ide-titlebar-actions {
+	gap: var(--ide-space-1);
+	padding: 0 var(--ide-space-3);
+}
+
+/* Controls */
+
+.ide-icon-button {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: var(--ide-control-size);
+	height: var(--ide-control-size);
+	padding: 0;
+	border: none;
+	border-radius: var(--ide-radius);
+	background: transparent;
+	color: var(--ide-fg);
+	cursor: pointer;
+}
+
+.ide-icon-button:hover {
+	background: var(--ide-bg-hover);
+}
+
+.ide-icon-button[aria-pressed='false'] {
+	color: var(--ide-fg-subtle);
+}
+
+.ide-window-controls .ide-icon-button {
+	width: 46px;
+	height: var(--ide-titlebar-height);
+	border-radius: 0;
+}
+
+.ide-icon-button-danger:hover {
+	background: var(--ide-fg-danger);
+	color: #ffffff;
+}
+
+.ide-button {
+	padding: var(--ide-space-2) var(--ide-space-4);
+	border: 1px solid var(--ide-border-strong);
+	border-radius: var(--ide-radius);
+	background: transparent;
+	color: var(--ide-fg);
+	font: inherit;
+	cursor: pointer;
+}
+
+.ide-button:hover {
+	background: var(--ide-bg-hover);
+}
+
+/* Pane */
+
+.ide-pane {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+}
+
+.ide-pane-header {
+	display: flex;
+	align-items: center;
+	flex: none;
+	gap: var(--ide-space-2);
+	height: var(--ide-pane-header-height);
+	padding: 0 var(--ide-space-3);
+}
+
+.ide-pane-title {
+	flex: 1;
+	margin: 0;
+	color: var(--ide-fg-muted);
+	font-size: var(--ide-font-size-small);
+	font-weight: 400;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.ide-pane-actions {
+	display: flex;
+	flex: none;
+	gap: var(--ide-space-1);
+}
+
+.ide-pane-body {
+	flex: 1;
+	min-height: 0;
+	overflow: auto;
+}
+
+/* Sashes — quiet at rest, visible on hover and focus. */
+
+.ide-sash {
+	flex: none;
+	background: transparent;
+	transition: background 80ms linear;
+}
+
+.ide-sash-vertical {
+	width: var(--ide-sash-size);
+	cursor: col-resize;
+}
+
+.ide-sash-horizontal {
+	height: var(--ide-sash-size);
+	cursor: row-resize;
+}
+
+.ide-sash:hover,
+.ide-sash:focus-visible {
+	background: var(--ide-focus);
+	outline: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.ide-sash {
+		transition: none;
+	}
+}
+
+/* Dialog */
+
+.ide-dialog {
+	min-width: 320px;
+	max-width: 480px;
+	padding: var(--ide-space-5);
+	border: 1px solid var(--ide-border-strong);
+	border-radius: var(--ide-radius);
+	background: var(--ide-bg-overlay);
+	color: var(--ide-fg);
+}
+
+.ide-dialog::backdrop {
+	background: rgb(0 0 0 / 40%);
+}
+
+.ide-dialog h2 {
+	margin: 0 0 var(--ide-space-4);
+	font-size: var(--ide-font-size);
+	font-weight: 600;
+}
+
+.ide-help-list {
+	display: grid;
+	grid-template-columns: auto 1fr;
+	gap: var(--ide-space-2) var(--ide-space-4);
+	margin: 0 0 var(--ide-space-4);
+}
+
+.ide-help-list dt {
+	color: var(--ide-fg);
+	white-space: nowrap;
+}
+
+.ide-help-list dd {
+	margin: 0;
+	color: var(--ide-fg-muted);
+}
+
+.ide-help-note {
+	margin: 0 0 var(--ide-space-4);
+	color: var(--ide-fg-muted);
+}

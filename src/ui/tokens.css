@@ -1,0 +1,55 @@
+/*
+ * The central styling contract. Feature CSS uses --ide-* tokens rather than
+ * inventing isolated values, so a semantic role always renders the same way.
+ * Values follow VS Code's dark theme.
+ */
+
+:root {
+	/* Surfaces */
+	--ide-bg: #1f1f1f;
+	--ide-bg-titlebar: #181818;
+	--ide-bg-sidebar: #181818;
+	--ide-bg-panel: #181818;
+	--ide-bg-overlay: #202020;
+	--ide-bg-hover: #2a2d2e;
+	--ide-bg-active: #04395e;
+
+	/* Foreground hierarchy */
+	--ide-fg: #cccccc;
+	--ide-fg-muted: #9d9d9d;
+	--ide-fg-subtle: #6e6e6e;
+	--ide-fg-danger: #f14c4c;
+
+	/* Borders and focus */
+	--ide-border: #2b2b2b;
+	--ide-border-strong: #454545;
+	--ide-focus: #0078d4;
+	--ide-focus-width: 1px;
+
+	/* Spacing */
+	--ide-space-1: 2px;
+	--ide-space-2: 4px;
+	--ide-space-3: 8px;
+	--ide-space-4: 12px;
+	--ide-space-5: 16px;
+
+	/* Typography */
+	--ide-font-family: "Segoe UI", system-ui, sans-serif;
+	--ide-font-family-mono: "Cascadia Mono", Consolas, monospace;
+	--ide-font-size: 13px;
+	--ide-font-size-small: 11px;
+	--ide-line-height: 22px;
+
+	/* Radii */
+	--ide-radius: 4px;
+
+	/* Pane and control dimensions */
+	--ide-titlebar-height: 35px;
+	--ide-pane-header-height: 35px;
+	--ide-row-height: 22px;
+	--ide-control-size: 24px;
+	--ide-sash-size: 4px;
+	--ide-sidebar-width: 260px;
+	--ide-panel-height: 220px;
+	--ide-region-min: 170px;
+}
