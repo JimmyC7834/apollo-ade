@@ -993,3 +993,74 @@ files. Every one of those is first-run code.
   against faking native capability still holds for those.
 - The policy constants are duplicated between `workspace.rs` and
   `workspace.ts` with only a comment tying them together.
+
+## Slice 11: Agent Chat
+
+**User outcome.** Agent Chat is now the workbench's primary mode and owns the
+main region on boot. A prompt is sent with Enter (Shift+Enter for a newline),
+the reply streams in, tool activity appears as compact secondary rows, and the
+run stops at an approval request that does nothing until Continue or Skip is
+answered. Stop cancels a run at any point. Opening a file or a diff brings the
+editor forward; the titlebar and two commands switch between the two.
+
+**Added.** `src/agent.ts` — the `AgentProvider` / `AgentRun` / `AgentEvent`
+seam plus the deterministic provider. `src/agent.check.ts` — the runnable
+check. `src/features/agent/AgentChat.tsx` — transcript, composer, approval, and
+the plain-text transcript dialog. Agent CSS in `App.css`.
+
+**UI extracted/reused.** Nothing new was extracted. `Overlay` carries the
+plain-text transcript dialog, `Icon` the activity rows, `ActionBar` +
+`IconButton` the mode switch, and `.ide-button` the composer and approval
+controls. That is now a fifth hand-written `.ide-button` consumer; the
+extraction question raised in Slice 10 is still open and still unanswered.
+
+**Adapters and dependencies.** One new adapter, `AgentProvider`. It has a
+single deterministic implementation and no mode branch: there is no native
+agent to fall back from, so `createAgentProvider()` returns the same object in
+both modes. No new dependency. Persistence is untouched — no schema change.
+
+**Security boundary.** None crossed. The provider reaches no network, no
+filesystem, and no Tauri command; the approval flow is the mechanism that will
+gate real tool calls later, and proving it now is the point of the slice.
+
+**Accessibility behavior.** The transcript is `role="log"` with
+`aria-live="polite"`, as the guide specifies. Approvals are a labelled `group`.
+Every control has a descriptive name. Ending a run — completed or cancelled —
+returns focus to the prompt. Approval required, approved, skipped, finished and
+stopped are announced through the workbench live region; announcements carry a
+sequence number so that two identical messages are still two announcements
+rather than one silent no-op. The plain-text transcript dialog goes through
+`Overlay`, which already has the focus trap and focus restoration the guide's
+Slice 11 caveat asks for, so that caveat does not apply here. Agent-specific
+rows were added to the keyboard help.
+
+**Validation performed.** `npx tsc --noEmit`, `npm run check` (5 checks
+including the new one), and `npm run build` all clean. Driven live in the
+browser at :5190 through the DOM: a full approved run (streamed text
+reassembles byte-for-byte, two activity rows, approval group, Continue →
+`Approved` + the apply activity appearing only afterwards + completion text +
+`Agent finished` + focus back on the prompt); a cancelled run (transcript
+frozen after Stop, `Stopped.`, `Agent stopped`, Send restored); the transcript
+dialog (opens with focus inside, contains tool/approval/cancelled markers,
+Escape closes); the mode switch (agent stays mounted with both turns intact
+while hidden); opening a file bringing the editor forward; both new palette
+entries present. No console errors.
+
+**Not validated.** Nothing was exercised in the native window — as with every
+slice since 9, the running Tauri webview cannot be inspected from here. No
+screen reader was run, so the announcement and `role="log"` behavior is
+verified structurally, not audibly. The skip path was checked only in
+`agent.check.ts`, not through the UI.
+
+**Caveats and deviations.** No deviation from the guide's Slice 11 contract.
+One judgment call worth recording: the guide's caveat says the provider "uses
+animation frames", and the first implementation did so exclusively. Measured in
+a hidden tab, that produced zero frames in 500 ms and the run stalled
+mid-stream — which contradicts the guide's own design decision that provider
+lifecycle is independent from rendering. Pacing now uses animation frames when
+the document is visible and a timer when it is not, so a run in a background
+window continues (slowly, under the browser's background throttling) instead of
+freezing. Streaming into a `role="log"` region word by word is noisy for a
+screen reader; the guide specifies it, so it stands, and the plain-text
+transcript is the intended mitigation. Conversations and the selected mode are
+deliberately not persisted, per the guide's caveats.

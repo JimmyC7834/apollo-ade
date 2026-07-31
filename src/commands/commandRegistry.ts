@@ -34,6 +34,8 @@ export interface WorkbenchActions {
 	saveActiveEditor: () => void;
 	showExplorer: () => void;
 	showSearch: () => void;
+	showAgent: () => void;
+	showEditor: () => void;
 	/** Undefined where the capability does not exist at all, as in the browser. */
 	openFolder: (() => void) | undefined;
 	/** Set when a folder could be opened but not right now. */
@@ -69,6 +71,18 @@ export function buildCommands(actions: WorkbenchActions): readonly Command[] {
 			category: 'File',
 			title: 'Save',
 			run: actions.saveActiveEditor,
+		},
+		{
+			id: 'view.showAgent',
+			category: 'View',
+			title: 'Show Agent',
+			run: actions.showAgent,
+		},
+		{
+			id: 'view.showEditor',
+			category: 'View',
+			title: 'Show Editor',
+			run: actions.showEditor,
 		},
 		{
 			id: 'view.showExplorer',

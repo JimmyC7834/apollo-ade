@@ -16,6 +16,8 @@ const base: WorkbenchActions = {
 	saveActiveEditor: noop,
 	showExplorer: noop,
 	showSearch: noop,
+	showAgent: noop,
+	showEditor: noop,
 	openFolder: undefined,
 	showAccessibilityHelp: noop,
 };

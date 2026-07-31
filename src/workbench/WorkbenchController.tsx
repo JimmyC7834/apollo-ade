@@ -4,9 +4,11 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import { createAgentProvider } from '../agent';
 import { createChangesProvider } from '../changes';
 import { buildCommands } from '../commands/commandRegistry';
 import { EditorWorkbench, isDirty, type EditorInput } from '../editor/EditorWorkbench';
+import { AgentChat } from '../features/agent/AgentChat';
 import { ChangesView } from '../features/changes/ChangesView';
 import { CommandCenter } from '../features/commandCenter/CommandCenter';
 import { ExplorerTree } from '../features/explorer/ExplorerTree';
@@ -54,8 +56,27 @@ export function WorkbenchController() {
 	const [primaryView, setPrimaryView] = useState<PrimaryView>(restored?.primaryView ?? 'explorer');
 	const [helpOpen, setHelpOpen] = useState(false);
 	const [commandCenterOpen, setCommandCenterOpen] = useState(false);
+	/*
+	 * Which mode owns the main region. Agent leads, so it is the boot state and
+	 * deliberately not restored: a conversation is not persisted, and coming
+	 * back to an empty Agent view someone did not ask for is worse than the
+	 * consistent default. Slice 12 replaces this switch with an editor modal.
+	 */
+	const [mainView, setMainView] = useState<'agent' | 'editor'>('agent');
+	/*
+	 * Announcements carry a sequence number because a live region only reacts to
+	 * a mutation: two runs that both end in "Agent finished" would set identical
+	 * text, and the second would be announced to nobody. The counter replaces the
+	 * node instead of rewriting it.
+	 */
+	const [announcement, setAnnouncement] = useState({ seq: 0, message: '' });
+	const announce = useCallback(
+		(message: string) => setAnnouncement((current) => ({ seq: current.seq + 1, message })),
+		[]
+	);
 
 	const provider = useMemo(() => createWorkspaceProvider(), []);
+	const agentProvider = useMemo(() => createAgentProvider(), []);
 	const changesProvider = useMemo(() => createChangesProvider(), []);
 	const terminalAdapter = useMemo(() => createTerminalAdapter(), []);
 	const [selection, setSelection] = useState<WorkspaceSelection | undefined>(undefined);
@@ -167,6 +188,9 @@ export function WorkbenchController() {
 
 	const openFile = useCallback(
 		async (id: string, revealLine?: number) => {
+			// Opening a file is a request to look at it, so it brings the editor
+			// forward. Nothing else moves the main region on its own.
+			setMainView('editor');
 			setActiveEditorId(id);
 			// Already open: keep any unsaved edits, but honour a new target
 			// line — that is the whole point of opening a search result.
@@ -205,6 +229,7 @@ export function WorkbenchController() {
 	const openDiff = useCallback(
 		async (id: string) => {
 			const diffId = `diff:${id}`;
+			setMainView('editor');
 			setActiveEditorId(diffId);
 			const diff = await changesProvider.getDiff(id);
 			const input: EditorInput = {
@@ -341,6 +366,8 @@ export function WorkbenchController() {
 				},
 				showExplorer: () => showPrimaryView('explorer'),
 				showSearch: () => showPrimaryView('search'),
+				showAgent: () => setMainView('agent'),
+				showEditor: () => setMainView('editor'),
 				// The command exists wherever the capability does. Unsaved work
 				// blocks it — switching roots drops every editor — but it stays
 				// in the palette saying so rather than disappearing.
@@ -403,6 +430,20 @@ export function WorkbenchController() {
 					controls={controls}
 					actions={
 						<>
+							<ActionBar label="Main region mode">
+								<IconButton
+									icon="comment-discussion"
+									label="Show Agent"
+									pressed={mainView === 'agent'}
+									onClick={() => setMainView('agent')}
+								/>
+								<IconButton
+									icon="edit"
+									label="Show Editor"
+									pressed={mainView === 'editor'}
+									onClick={() => setMainView('editor')}
+								/>
+							</ActionBar>
 							<IconButton
 								icon="layout-sidebar-left"
 								label="Toggle primary sidebar"
@@ -484,14 +525,28 @@ export function WorkbenchController() {
 				</Pane>
 			}
 			main={
-				<EditorWorkbench
-					inputs={inputs}
-					activeId={activeEditorId}
-					onSelect={setActiveEditorId}
-					onClose={closeEditor}
-					onChange={editFile}
-				/>
+				/*
+				 * Both modes stay mounted and the inactive one is `hidden`, which
+				 * takes it out of the layout and out of the accessibility tree.
+				 * Unmounting instead would discard the conversation and every
+				 * Monaco model on a switch that reads as purely visual.
+				 */
+				<div className="ide-main-stack">
+					<div className="ide-main-view" hidden={mainView !== 'agent'}>
+						<AgentChat provider={agentProvider} onAnnounce={announce} />
+					</div>
+					<div className="ide-main-view" hidden={mainView !== 'editor'}>
+						<EditorWorkbench
+							inputs={inputs}
+							activeId={activeEditorId}
+							onSelect={setActiveEditorId}
+							onClose={closeEditor}
+							onChange={editFile}
+						/>
+					</div>
+				</div>
 			}
+			announcement={<span key={announcement.seq}>{announcement.message}</span>}
 			secondarySidebar={
 				<Pane title="Changes">
 					<ChangesView

@@ -786,3 +786,166 @@ body {
 	margin: 0 0 var(--ide-space-4);
 	color: var(--ide-fg-muted);
 }
+
+/* Agent chat — the primary mode. Chat content leads; tool activity recedes. */
+
+.ide-main-stack {
+	display: flex;
+	height: 100%;
+}
+
+.ide-main-view {
+	flex: 1;
+	min-width: 0;
+}
+
+/* `hidden` alone loses to the `display: flex` above. */
+.ide-main-view[hidden] {
+	display: none;
+}
+
+.ide-agent {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+}
+
+.ide-agent-log {
+	flex: 1;
+	min-height: 0;
+	padding: var(--ide-space-5);
+	overflow-y: auto;
+	line-height: var(--ide-line-height);
+}
+
+.ide-agent-log:focus {
+	outline: none;
+}
+
+.ide-agent-placeholder,
+.ide-agent-status {
+	margin: 0;
+	color: var(--ide-fg-muted);
+}
+
+.ide-agent-turn + .ide-agent-turn {
+	margin-top: var(--ide-space-5);
+	padding-top: var(--ide-space-5);
+	border-top: 1px solid var(--ide-border);
+}
+
+.ide-agent-prompt {
+	margin: 0 0 var(--ide-space-4);
+	padding: var(--ide-space-3) var(--ide-space-4);
+	border-radius: var(--ide-radius);
+	background: var(--ide-bg-hover);
+	white-space: pre-wrap;
+}
+
+.ide-agent-text {
+	margin: 0 0 var(--ide-space-3);
+	/* Streamed chunks arrive with their own newlines and spacing. */
+	white-space: pre-wrap;
+}
+
+/* Secondary by construction: smaller, muted, and never full width emphasis. */
+.ide-agent-activity {
+	display: flex;
+	align-items: center;
+	gap: var(--ide-space-2);
+	margin: 0 0 var(--ide-space-2);
+	color: var(--ide-fg-muted);
+	font-size: var(--ide-font-size-small);
+}
+
+.ide-agent-activity-detail {
+	color: var(--ide-fg-subtle);
+	font-family: var(--ide-font-family-mono);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* Approval is the one thing in the transcript that stops the user. */
+.ide-agent-approval {
+	margin: var(--ide-space-3) 0;
+	padding: var(--ide-space-4);
+	border: 1px solid var(--ide-border-strong);
+	border-left: 2px solid var(--ide-focus);
+	border-radius: var(--ide-radius);
+	background: var(--ide-bg-overlay);
+}
+
+.ide-agent-approval-title {
+	margin: 0;
+	font-weight: 600;
+}
+
+.ide-agent-approval-detail {
+	margin: var(--ide-space-2) 0 0;
+	color: var(--ide-fg-muted);
+	font-family: var(--ide-font-family-mono);
+	font-size: var(--ide-font-size-small);
+}
+
+.ide-agent-approval-actions {
+	display: flex;
+	gap: var(--ide-space-3);
+	margin-top: var(--ide-space-4);
+}
+
+.ide-agent-approval-state {
+	margin: var(--ide-space-3) 0 0;
+	color: var(--ide-fg-muted);
+	font-size: var(--ide-font-size-small);
+}
+
+/* The composer is an elevated outer-tier surface, not part of the transcript. */
+.ide-agent-composer {
+	flex: none;
+	padding: var(--ide-space-4) var(--ide-space-5);
+	border-top: 1px solid var(--ide-border);
+	background: var(--ide-bg-panel);
+}
+
+.ide-agent-input {
+	display: block;
+	width: 100%;
+	padding: var(--ide-space-3);
+	border: 1px solid var(--ide-input-border);
+	border-radius: var(--ide-radius);
+	background: var(--ide-input-bg);
+	color: var(--ide-input-fg);
+	font: inherit;
+	resize: none;
+}
+
+.ide-agent-input::placeholder {
+	color: var(--ide-input-placeholder);
+}
+
+.ide-agent-composer-actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: var(--ide-space-3);
+	margin-top: var(--ide-space-3);
+}
+
+.ide-agent-composer-actions .ide-button:disabled {
+	color: var(--ide-fg-subtle);
+	cursor: default;
+}
+
+.ide-agent-composer-actions .ide-button:disabled:hover {
+	background: transparent;
+}
+
+.ide-agent-plain {
+	max-width: 70ch;
+	max-height: 50vh;
+	margin: 0 0 var(--ide-space-4);
+	overflow: auto;
+	font-family: var(--ide-font-family-mono);
+	font-size: var(--ide-font-size-small);
+	white-space: pre-wrap;
+}
