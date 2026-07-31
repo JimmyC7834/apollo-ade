@@ -34,8 +34,10 @@ export interface WorkbenchActions {
 	saveActiveEditor: () => void;
 	showExplorer: () => void;
 	showSearch: () => void;
-	showAgent: () => void;
+	/** Raise the editor dialog over the workbench. */
 	showEditor: () => void;
+	/** Set when the editor could be raised but has nothing to show. */
+	showEditorDisabled?: string;
 	/** Undefined where the capability does not exist at all, as in the browser. */
 	openFolder: (() => void) | undefined;
 	/** Set when a folder could be opened but not right now. */
@@ -73,15 +75,10 @@ export function buildCommands(actions: WorkbenchActions): readonly Command[] {
 			run: actions.saveActiveEditor,
 		},
 		{
-			id: 'view.showAgent',
-			category: 'View',
-			title: 'Show Agent',
-			run: actions.showAgent,
-		},
-		{
 			id: 'view.showEditor',
 			category: 'View',
 			title: 'Show Editor',
+			disabled: actions.showEditorDisabled,
 			run: actions.showEditor,
 		},
 		{

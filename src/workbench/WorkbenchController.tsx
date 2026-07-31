@@ -7,7 +7,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createAgentProvider } from '../agent';
 import { createChangesProvider } from '../changes';
 import { buildCommands } from '../commands/commandRegistry';
-import { EditorWorkbench, isDirty, type EditorInput } from '../editor/EditorWorkbench';
+import { EditorDialog } from '../editor/EditorDialog';
+import { isDirty, type EditorInput } from '../editor/EditorWorkbench';
 import { AgentChat } from '../features/agent/AgentChat';
 import { ChangesView } from '../features/changes/ChangesView';
 import { CommandCenter } from '../features/commandCenter/CommandCenter';
@@ -57,12 +58,12 @@ export function WorkbenchController() {
 	const [helpOpen, setHelpOpen] = useState(false);
 	const [commandCenterOpen, setCommandCenterOpen] = useState(false);
 	/*
-	 * Which mode owns the main region. Agent leads, so it is the boot state and
-	 * deliberately not restored: a conversation is not persisted, and coming
-	 * back to an empty Agent view someone did not ask for is worse than the
-	 * consistent default. Slice 12 replaces this switch with an editor modal.
+	 * The editor is a transient surface over the workbench, not a region and not
+	 * layout: it is never persisted, so a session always reopens on Agent Chat
+	 * with the editor closed. The tabs behind it are persisted as they always
+	 * were, so dismissing loses nothing.
 	 */
-	const [mainView, setMainView] = useState<'agent' | 'editor'>('agent');
+	const [editorOpen, setEditorOpen] = useState(false);
 	/*
 	 * Announcements carry a sequence number because a live region only reacts to
 	 * a mutation: two runs that both end in "Agent finished" would set identical
@@ -168,6 +169,14 @@ export function WorkbenchController() {
 
 	const dirty = inputs.some(isDirty);
 
+	// Closing the last tab leaves the dialog with nothing to show, so it is
+	// dismissed rather than left sitting empty over the agent.
+	useEffect(() => {
+		if (inputs.length === 0) {
+			setEditorOpen(false);
+		}
+	}, [inputs.length]);
+
 	const openFolder = useCallback(async () => {
 		// Switching roots discards every editor, so the guard lives here and not
 		// only on the controls that offer it. Callers may be disabled; this is
@@ -188,13 +197,11 @@ export function WorkbenchController() {
 
 	const openFile = useCallback(
 		async (id: string, revealLine?: number) => {
-			// Opening a file is a request to look at it, so it brings the editor
-			// forward. Nothing else moves the main region on its own.
-			setMainView('editor');
 			setActiveEditorId(id);
 			// Already open: keep any unsaved edits, but honour a new target
 			// line — that is the whole point of opening a search result.
 			if (inputs.some((input) => input.id === id)) {
+				setEditorOpen(true);
 				if (revealLine !== undefined) {
 					setInputs((current) =>
 						current.map((input) =>
@@ -220,6 +227,13 @@ export function WorkbenchController() {
 							},
 						]
 			);
+			/*
+			 * Raised only once the file is in state. Opening first would put the
+			 * dialog over an empty editor for a frame, and the overlay's initial
+			 * focus resolves on the open transition — so focus would land on the
+			 * close button instead of Monaco, which is not yet mounted.
+			 */
+			setEditorOpen(true);
 		},
 		[inputs, provider]
 	);
@@ -229,7 +243,6 @@ export function WorkbenchController() {
 	const openDiff = useCallback(
 		async (id: string) => {
 			const diffId = `diff:${id}`;
-			setMainView('editor');
 			setActiveEditorId(diffId);
 			const diff = await changesProvider.getDiff(id);
 			const input: EditorInput = {
@@ -246,6 +259,7 @@ export function WorkbenchController() {
 					? current.map((existing) => (existing.id === diffId ? input : existing))
 					: [...current, input]
 			);
+			setEditorOpen(true);
 		},
 		[changesProvider]
 	);
@@ -366,8 +380,10 @@ export function WorkbenchController() {
 				},
 				showExplorer: () => showPrimaryView('explorer'),
 				showSearch: () => showPrimaryView('search'),
-				showAgent: () => setMainView('agent'),
-				showEditor: () => setMainView('editor'),
+				// Reopening is only meaningful with something to reopen, and an
+				// empty modal over the agent is worse than no modal.
+				showEditor: () => setEditorOpen(true),
+				showEditorDisabled: inputs.length === 0 ? 'No open editors' : undefined,
 				// The command exists wherever the capability does. Unsaved work
 				// blocks it — switching roots drops every editor — but it stays
 				// in the palette saying so rather than disappearing.
@@ -381,6 +397,7 @@ export function WorkbenchController() {
 			closeEditor,
 			saveFile,
 			activeEditorId,
+			inputs,
 			provider,
 			dirty,
 			openFolder,
@@ -430,20 +447,12 @@ export function WorkbenchController() {
 					controls={controls}
 					actions={
 						<>
-							<ActionBar label="Main region mode">
-								<IconButton
-									icon="comment-discussion"
-									label="Show Agent"
-									pressed={mainView === 'agent'}
-									onClick={() => setMainView('agent')}
-								/>
-								<IconButton
-									icon="edit"
-									label="Show Editor"
-									pressed={mainView === 'editor'}
-									onClick={() => setMainView('editor')}
-								/>
-							</ActionBar>
+							<IconButton
+								icon="edit"
+								label={inputs.length === 0 ? 'Show editor (no open editors)' : 'Show editor'}
+								disabled={inputs.length === 0}
+								onClick={() => setEditorOpen(true)}
+							/>
 							<IconButton
 								icon="layout-sidebar-left"
 								label="Toggle primary sidebar"
@@ -524,28 +533,7 @@ export function WorkbenchController() {
 					)}
 				</Pane>
 			}
-			main={
-				/*
-				 * Both modes stay mounted and the inactive one is `hidden`, which
-				 * takes it out of the layout and out of the accessibility tree.
-				 * Unmounting instead would discard the conversation and every
-				 * Monaco model on a switch that reads as purely visual.
-				 */
-				<div className="ide-main-stack">
-					<div className="ide-main-view" hidden={mainView !== 'agent'}>
-						<AgentChat provider={agentProvider} onAnnounce={announce} />
-					</div>
-					<div className="ide-main-view" hidden={mainView !== 'editor'}>
-						<EditorWorkbench
-							inputs={inputs}
-							activeId={activeEditorId}
-							onSelect={setActiveEditorId}
-							onClose={closeEditor}
-							onChange={editFile}
-						/>
-					</div>
-				</div>
-			}
+			main={<AgentChat provider={agentProvider} onAnnounce={announce} />}
 			announcement={<span key={announcement.seq}>{announcement.message}</span>}
 			secondarySidebar={
 				<Pane title="Changes">
@@ -559,6 +547,15 @@ export function WorkbenchController() {
 			panel={<TerminalPanel adapter={terminalAdapter} cwd={selection?.path || undefined} />}
 			overlays={
 				<>
+					<EditorDialog
+						open={editorOpen}
+						inputs={inputs}
+						activeId={activeEditorId}
+						onSelect={setActiveEditorId}
+						onCloseEditor={closeEditor}
+						onChange={editFile}
+						onDismiss={() => setEditorOpen(false)}
+					/>
 					<CommandCenter
 						open={commandCenterOpen}
 						commands={commands}

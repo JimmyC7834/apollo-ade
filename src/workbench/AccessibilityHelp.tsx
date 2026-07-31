@@ -32,7 +32,10 @@ export function AccessibilityHelp({ open, onClose }: AccessibilityHelpProps) {
 				<dt>Shift+Tab in the terminal</dt>
 				<dd>Leave the terminal. Tab itself is sent to the shell.</dd>
 				<dt>Escape</dt>
-				<dd>Close this dialog.</dd>
+				<dd>
+					Close this dialog. In the editor it dismisses the editor; open tabs and unsaved
+					edits are kept.
+				</dd>
 			</dl>
 			<p className="ide-help-note">
 				Hiding a region that contains the keyboard focus moves focus to the main region.

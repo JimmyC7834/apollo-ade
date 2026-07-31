@@ -1,9 +1,12 @@
 import * as monaco from 'monaco-editor';
-import { useEffect, useRef } from 'react';
+import { useEffect, useImperativeHandle, useRef, type Ref } from 'react';
 
+import type { EditorHandle } from './EditorHandle';
+import { focusEditor } from './focusEditor';
 import { languageForPath } from './monacoEnvironment';
 
 export interface MonacoEditorProps {
+	readonly ref?: Ref<EditorHandle>;
 	/** Stable id for the open file; also the model key. */
 	readonly id: string;
 	readonly content: string;
@@ -20,7 +23,7 @@ export interface MonacoEditorProps {
  * the document. Monaco is not garbage collected for you: every model and the
  * editor itself must be disposed explicitly or the WebView leaks them.
  */
-export function MonacoEditor({ id, content, revealLine, onChange }: MonacoEditorProps) {
+export function MonacoEditor({ ref, id, content, revealLine, onChange }: MonacoEditorProps) {
 	const hostRef = useRef<HTMLDivElement>(null);
 	const editorRef = useRef<monaco.editor.IStandaloneCodeEditor>(null);
 	const modelsRef = useRef(new Map<string, monaco.editor.ITextModel>());
@@ -34,6 +37,22 @@ export function MonacoEditor({ id, content, revealLine, onChange }: MonacoEditor
 	 */
 	const latest = useRef({ id, onChange });
 	latest.current = { id, onChange };
+
+	const cancelFocusRef = useRef<() => void>(null);
+	useImperativeHandle(
+		ref,
+		() => ({
+			focus() {
+				const editor = editorRef.current;
+				if (!editor) {
+					return;
+				}
+				cancelFocusRef.current?.();
+				cancelFocusRef.current = focusEditor(editor);
+			},
+		}),
+		[]
+	);
 
 	useEffect(() => {
 		const host = hostRef.current;
@@ -57,6 +76,9 @@ export function MonacoEditor({ id, content, revealLine, onChange }: MonacoEditor
 
 		const models = modelsRef.current;
 		return () => {
+			// A focus request still retrying must not outlive the editor.
+			cancelFocusRef.current?.();
+			cancelFocusRef.current = null;
 			subscription.dispose();
 			editor.dispose();
 			for (const model of models.values()) {

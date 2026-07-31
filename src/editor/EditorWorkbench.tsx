@@ -1,4 +1,7 @@
+import type { Ref } from 'react';
+
 import { Tabs } from '../ui';
+import type { EditorHandle } from './EditorHandle';
 import { MonacoDiffEditor } from './MonacoDiffEditor';
 import { MonacoEditor } from './MonacoEditor';
 
@@ -39,6 +42,8 @@ export interface EditorWorkbenchProps {
 	readonly onSelect: (id: string) => void;
 	readonly onClose: (id: string) => void;
 	readonly onChange: (id: string, content: string) => void;
+	/** Handle to whichever editor is active, so a container can focus it. */
+	readonly editorRef?: Ref<EditorHandle>;
 }
 
 /** Tab strip plus the editor for the active input, source or diff. */
@@ -48,6 +53,7 @@ export function EditorWorkbench({
 	onSelect,
 	onClose,
 	onChange,
+	editorRef,
 }: EditorWorkbenchProps) {
 	const active = inputs.find((input) => input.id === activeId);
 
@@ -75,6 +81,7 @@ export function EditorWorkbench({
 			/>
 			{active?.kind === 'diff' ? (
 				<MonacoDiffEditor
+					ref={editorRef}
 					id={active.id}
 					name={active.name}
 					original={active.original}
@@ -83,6 +90,7 @@ export function EditorWorkbench({
 			) : null}
 			{active?.kind === 'source' ? (
 				<MonacoEditor
+					ref={editorRef}
 					id={active.id}
 					content={active.content}
 					revealLine={active.revealLine}

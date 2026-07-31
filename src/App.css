@@ -799,21 +799,6 @@ body {
 
 /* Agent chat — the primary mode. Chat content leads; tool activity recedes. */
 
-.ide-main-stack {
-	display: flex;
-	height: 100%;
-}
-
-.ide-main-view {
-	flex: 1;
-	min-width: 0;
-}
-
-/* `hidden` alone loses to the `display: flex` above. */
-.ide-main-view[hidden] {
-	display: none;
-}
-
 .ide-agent {
 	display: flex;
 	flex-direction: column;
@@ -949,4 +934,41 @@ body {
 	font-family: var(--ide-font-family-mono);
 	font-size: var(--ide-font-size-small);
 	white-space: pre-wrap;
+}
+
+/*
+ * The editor modal. An outer-tier surface over the workbench, not a region:
+ * Agent Chat stays visible and legible beneath the backdrop.
+ *
+ * Sized in viewport units with a pixel ceiling so it stays usable at the Tauri
+ * minimum window (900x560): there it becomes 828x482 rather than overflowing.
+ * `max-width` is reset because the shared overlay caps at 480px, which is right
+ * for a confirmation and far too narrow for code.
+ */
+.ide-overlay-editor {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	width: min(1100px, 92vw);
+	max-width: none;
+	height: min(760px, 86vh);
+	padding: 0;
+}
+
+.ide-overlay-editor .ide-overlay-title {
+	flex: none;
+	margin: 0;
+	padding: var(--ide-space-3) var(--ide-space-5);
+	border-bottom: 1px solid var(--ide-border);
+}
+
+.ide-overlay-editor .ide-editor-workbench {
+	flex: 1;
+	min-height: 0;
+}
+
+.ide-editor-dialog-close {
+	position: absolute;
+	top: var(--ide-space-2);
+	right: var(--ide-space-3);
 }

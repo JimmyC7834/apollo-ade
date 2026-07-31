@@ -42,30 +42,56 @@ export function Overlay({
 			return;
 		}
 
-		if (open && !dialog.open) {
-			// Capture the opener before focus moves into the dialog.
+		if (!open) {
+			if (dialog.open) {
+				dialog.close();
+				const opener = openerRef.current;
+				openerRef.current = null;
+				// Only restore if the opener is still in the document.
+				if (opener?.isConnected) {
+					opener.focus();
+				}
+			}
+			return;
+		}
+		/*
+		 * Everything below has to be safe to run twice: React re-runs an effect
+		 * after its cleanup, and an early `return dialog.open` here would drop
+		 * the observer set up on the first pass and never replace it. So the
+		 * one-time parts are guarded and the focus work simply repeats.
+		 */
+		if (!dialog.open) {
+			// Capture the opener before focus moves into the dialog. Skipped on a
+			// repeat pass, where the active element is already inside the dialog.
 			openerRef.current = document.activeElement as HTMLElement | null;
 			dialog.showModal();
-			// Prefer the first field or control; fall back to the dialog itself.
-			const target = dialog.querySelector<HTMLElement>(
-				'input, textarea, select, button, [tabindex]:not([tabindex="-1"])'
-			);
-			(target ?? dialog).focus();
-		} else if (!open && dialog.open) {
-			dialog.close();
-			const opener = openerRef.current;
-			openerRef.current = null;
-			// Only restore if the opener is still in the document.
-			if (opener?.isConnected) {
-				opener.focus();
-			}
 		}
+
+		/*
+		 * Focus the first field or control, else the dialog itself — never
+		 * nothing, which would strand the keyboard inside a modal it cannot tab
+		 * out of. A dialog whose real subject is not its first control focuses
+		 * that subject itself, from an effect of its own that runs after this
+		 * one; see `EditorDialog`.
+		 */
+		const target = dialog.querySelector<HTMLElement>(
+			'input, textarea, select, button, [tabindex]:not([tabindex="-1"])'
+		);
+		(target ?? dialog).focus();
 	}, [open]);
 
 	return (
 		<dialog
 			ref={ref}
 			className={`ide-overlay${className ? ` ${className}` : ''}`}
+			/*
+			 * `<dialog>` + `showModal()` implies both of these, but they are
+			 * stated anyway: the implicit mapping is what varies between older
+			 * assistive technology and engines, and this is the one place that
+			 * settles it for every overlay in the workbench.
+			 */
+			role="dialog"
+			aria-modal="true"
 			aria-labelledby={titleId}
 			onCancel={(event) => {
 				event.preventDefault();

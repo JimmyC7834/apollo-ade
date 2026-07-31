@@ -16,7 +16,6 @@ const base: WorkbenchActions = {
 	saveActiveEditor: noop,
 	showExplorer: noop,
 	showSearch: noop,
-	showAgent: noop,
 	showEditor: noop,
 	openFolder: undefined,
 	showAccessibilityHelp: noop,
@@ -50,6 +49,13 @@ assert.equal(blocked.disabled, 'Save your changes first');
 assert.equal(find({ ...base, openFolderDisabled: 'Save your changes first' }), undefined);
 
 assert.equal(commandLabel(blocked), 'File: Open Folder');
+
+// The editor command uses the same blocked-not-hidden rule: it always exists,
+// and says why when there is nothing to show.
+const editor = (actions: WorkbenchActions) =>
+	buildCommands(actions).find((command) => command.id === 'view.showEditor');
+assert.equal(editor(base)?.disabled, undefined);
+assert.equal(editor({ ...base, showEditorDisabled: 'No open editors' })?.disabled, 'No open editors');
 // Every command is addressable and uniquely identified.
 const ids = buildCommands({ ...base, openFolder: noop }).map((command) => command.id);
 assert.equal(new Set(ids).size, ids.length);

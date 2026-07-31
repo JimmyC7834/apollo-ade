@@ -1109,3 +1109,72 @@ is listed for "Explorer/Changes workflows" but only Changes uses it, and
 `ResizableSeparator` has a single consumer now that Slice 10 moved all sash
 ownership into `WorkbenchLayout`. Both are guide-sanctioned primitives, so
 neither is a candidate for removal.
+
+## Slice 12: Centered File and Diff Editor Modal
+
+**User outcome.** Agent Chat is now the only occupant of the main region. Files
+and diffs open in a centered dialog over the workbench, with the agent visible
+beneath a subdued backdrop. Escape or the close button dismisses it; tabs and
+unsaved edits survive dismissal, and the titlebar control or `View: Show
+Editor` brings them back. The Slice 11 Agent/Editor mode switch is gone —
+replaced, as the guide intends.
+
+**Added.** `src/editor/EditorDialog.tsx` — the extracted dialog the guide names.
+`src/editor/EditorHandle.ts` — the imperative surface an editor exposes to its
+container. `src/editor/focusEditor.ts` — the shared focus-retry used by both
+Monaco wrappers. Editor-dialog CSS; `.ide-main-stack` CSS deleted.
+
+**UI extracted/reused.** `EditorDialog` composes `Overlay` + the existing
+`EditorWorkbench` rather than reimplementing an editor, so source, diff, tabs
+and dirty tracking are unchanged. `Overlay` gained the guide's "improved
+dialog focus behavior": explicit `role="dialog"` and `aria-modal="true"` for
+every overlay, and an effect that is now safe to run twice. Still ten
+primitives; nothing new entered `src/ui`.
+
+**Adapters and dependencies.** None added or changed. No new dependency.
+
+**Security boundary.** Untouched.
+
+**Accessibility behavior.** Against the guide's contract: `role="dialog"` and
+`aria-modal="true"` are now explicit (previously only implied by `<dialog>` +
+`showModal()`); the title is connected by `aria-labelledby`; focus enters on
+open and lands in Monaco rather than on the tab strip; focus cannot reach the
+workbench behind the modal; Escape closes; focus returns to the Explorer or
+Changes row that opened it. Focus is never left nowhere — the overlay always
+places it inside the dialog first, and the editor upgrades it from there.
+
+**Validation performed.** `tsc`, `npm run check` (5), `npm run build` clean.
+Driven live in the browser through the DOM: boot lands on Agent with no dialog
+and a disabled Show-editor control; opening `README.md` from the Explorer gives
+a dialog titled `README.md` with `role`/`aria-modal`/`aria-labelledby` correct,
+sized 1100x760, agent still mounted beneath; focus verified to land on
+`.native-edit-context` inside `.monaco-editor` (ancestry checked explicitly,
+not inferred); Escape dismisses and returns focus to the exact opener row;
+reopening from the titlebar restores the same tabs; diffs open with focus on
+the modified side, confirmed 9/9 across repeated trials including the
+deleted-file case; focus containment confirmed by failing to focus the agent's
+prompt behind the modal; persisted state contains no modal field.
+
+**Not validated.** Typing into Monaco, and therefore dirty-state-survives-
+dismissal end to end. Monaco renders no view lines and accepts no synthetic
+text input in this environment, so unsaved content surviving dismissal is
+verified structurally — `EditorDialog` holds no content state and the inputs
+live in the controller — but not by editing a file. Nothing was exercised in
+the native window. No screen reader was run.
+
+**Caveats and deviations.** No deviation from the guide's Slice 12 contract.
+Backdrop-click dismissal was deliberately not added, per the guide's caveat.
+
+One honest note on `focusEditor`. Monaco does not reliably accept focus at the
+moment the dialog opens: its real input is built during layout, and it was
+measured absent at the instant the overlay resolves focus. The retry is bounded
+(8 attempts, 16ms apart) and stops early once focus is inside the editor or
+once anything else has claimed it. The retry budget is empirical, and the
+environment available for testing works against measuring it well — the browser
+pane never composites, so it serves no animation frames and Chrome throttles
+its timers to roughly one second, which stretches a ~128ms sequence into
+several seconds and makes timing observations there unrepresentative. Several
+apparent failures during this slice turned out to be that, not the code. The
+degraded case is safe rather than broken: focus stays on the dialog's close
+button, inside the modal. This is the first thing to re-check on a real
+window.
