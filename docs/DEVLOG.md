@@ -1178,3 +1178,48 @@ apparent failures during this slice turned out to be that, not the code. The
 degraded case is safe rather than broken: focus stays on the dialog's close
 button, inside the modal. This is the first thing to re-check on a real
 window.
+
+## Slice 12a: The closed editor dialog was still in the layout (follow-up)
+
+**User outcome.** Fixes a regression introduced by Slice 12 and reported from a
+screenshot: the workbench was crushed into a ~240px strip at the top of the
+window, and the editor, when open, sat off-centre instead of over the middle.
+
+**Added.** Nothing. Two CSS declarations removed, one selector narrowed.
+
+**What was wrong.** `.ide-overlay-editor` set `display: flex` unconditionally.
+An author rule outranks the UA rule that hides a closed `<dialog>`, so the
+dialog stayed in the workbench's flex column at its full 760px height whether
+or not it was open — permanently stealing that space from every region above
+it. Measured with the dialog closed: `.ide-body` was 205px inside a 1000px
+workbench, and the closed dialog reported `display: flex; height: 760`. The
+same rule also set `position: relative`, overriding the `position: fixed` with
+auto margins that the UA gives an open modal — which is what centres it — and
+dropping the dialog back into normal flow. `display: flex` now applies only to
+`[open]`, and no `position` is set at all; the close button still anchors
+correctly because a fixed element is a containing block for absolute children.
+
+**UI extracted/reused.** Nothing.
+
+**Adapters and dependencies.** Unchanged.
+
+**Security boundary.** Untouched.
+
+**Accessibility behavior.** Unchanged in intent, restored in practice: an
+off-centre dialog overlapping a crushed workbench is a usability defect for
+everyone, and the modal now covers the workbench as designed.
+
+**Validation performed.** `tsc`, `npm run check` (5), `npm run build` clean.
+Measured from the live DOM. Closed: the dialog computes `display: none`,
+`.ide-body` is 965px in a 1000px workbench, main 723px, panel 238px matching
+the persisted value. Open at 1400x1000: `position: fixed`, 1100x760 at
+(150,120) — centred exactly on both axes — with `.ide-body` still 965px, so the
+open modal no longer displaces anything. At the Tauri minimum window (900x560),
+per the guide's caveat: 828x482, fully on-screen both axes, no horizontal page
+scroll, 400px left for the editor itself.
+
+**Caveats and deviations.** None. Worth recording how this was missed: every
+Slice 12 check queried the DOM for open dialogs, focus, roles and tab state,
+and all of that was correct — nothing in that set would notice that the region
+*behind* the modal had been squashed. It took a screenshot to see it. Layout
+regressions need a geometry assertion, not a semantics one.

@@ -946,13 +946,25 @@ body {
  * for a confirmation and far too narrow for code.
  */
 .ide-overlay-editor {
-	position: relative;
-	display: flex;
-	flex-direction: column;
 	width: min(1100px, 92vw);
 	max-width: none;
 	height: min(760px, 86vh);
 	padding: 0;
+}
+
+/*
+ * Only while open. A bare `display: flex` outranks the UA rule that hides a
+ * closed `<dialog>`, which leaves it in the workbench's column at full height
+ * forever — squashing every region above it whether or not it is showing.
+ *
+ * Note there is no `position` here either: the UA gives an open modal
+ * `position: fixed` with auto margins, which is what centres it. Overriding
+ * that drops the dialog back into the flex flow. It still anchors the close
+ * button, since a fixed element is a containing block for absolute children.
+ */
+.ide-overlay-editor[open] {
+	display: flex;
+	flex-direction: column;
 }
 
 .ide-overlay-editor .ide-overlay-title {
