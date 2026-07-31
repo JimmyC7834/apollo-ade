@@ -20,5 +20,11 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  /*
+   * Self-check scripts run under Node, not the browser bundle, and would
+   * otherwise need @types/node pulled into the app's type environment. They
+   * are verified by running them (`npm run check`), not by tsc.
+   */
+  "exclude": ["src/**/*.check.ts"]
 }

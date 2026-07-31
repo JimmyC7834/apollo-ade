@@ -145,3 +145,76 @@ tab closes. Console is clean on a fresh load.
   is its first real consumer.
 - Workspace state still lives in `WorkbenchShell`, as the guide intends until
   the Slice 10 controller/layout split.
+
+---
+
+## Slice 3 — Command Center
+
+**User outcome:** Press Ctrl+Shift+P anywhere, type a few characters, and run a
+workbench command or jump to a file — then land back exactly where you were.
+
+**Added**
+
+- `commandRegistry.ts`: commands as data plus callbacks
+- Fuzzy scoring with a runnable self-check (`npm run check`)
+- Quick pick over commands (`>` prefix) and files (bare text)
+- Ctrl+Shift+P, arrow navigation with wrapping, Enter to execute, Escape to
+  dismiss, focus restoration to the opener
+- Result count and empty state
+
+**UI extracted:** `Overlay` — modal semantics, focus entry, containment,
+Escape, and opener capture/restore. `AccessibilityHelp` was migrated onto it,
+paying off the `ponytail:` debt recorded in Slice 1.
+
+**Dependencies:** none. First slice that adds nothing to `package.json`.
+
+**Security boundary:** unchanged.
+
+**Accessibility**
+
+- Combobox/listbox pattern: `aria-activedescendant` moves the selection while
+  focus stays in the input, so the query is never interrupted
+- Active row is scrolled into view during keyboard navigation
+- Result count is announced via `role="status"`
+- Overlay captures the opener before focus moves in, and restores it on close;
+  verified from two different openers and from inside Monaco
+
+**Validation performed:** `npm run build` and `npm run check` pass. Browser
+checks: open from a button and from inside Monaco, initial `>` query, ranking
+(`>tog` puts Toggle Panel first), arrow navigation and wrapping, file mode,
+empty state, Enter executing a command, Enter opening a file, Escape
+restoring focus to each distinct opener, and the migrated help dialog's
+open/Escape/reopen/close cycle plus being launched via a command. Console
+clean on fresh load.
+
+**The scoring self-check earned its keep.** It failed twice before any UI
+existed, both times on real ranking defects:
+
+1. An uncapped gap penalty scaled with the distance between words, which
+   drowned out initials matching — "ts" ranked "Tabs" above "Toggle Secondary
+   Sidebar". Gap cost is now capped.
+2. With gaps capped, scattered matches beat contiguous ones — "file" ranked
+   "Fix Little Errors" above "Open File". Contiguity now outranks word starts.
+
+Two of the original assertions were themselves wrong and were replaced with
+ones that isolate the rule under test.
+
+**Not validated**
+
+- Monaco painting, still: the test WebView never fires
+  `requestAnimationFrame`. The keybinding conflict *was* verified — the
+  capture-phase handler wins from inside Monaco's textarea.
+- Anything native. `cargo` still has never run in this repo.
+
+**Caveats and deviations**
+
+- `buildCommands(actions)` is a builder, not a mutable registry with
+  register/unregister. Nothing contributes commands dynamically yet; the
+  `Command` shape is unchanged either way, so adding registration later will
+  not disturb the palette. Marked with a `ponytail:` comment.
+- Fuzzy ranking is deliberately lightweight, per the guide — not VS Code's
+  algorithm.
+- Self-check files are excluded from `tsc` (they need `@types/node`); they are
+  verified by being run, not type-checked.
+- File search covers the fixture tree only, and matches on basename. Real
+  workspace search is Slice 8.

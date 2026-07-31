@@ -349,7 +349,7 @@ body {
 
 /* Dialog */
 
-.ide-dialog {
+.ide-overlay {
 	min-width: 320px;
 	max-width: 480px;
 	padding: var(--ide-space-5);
@@ -357,16 +357,90 @@ body {
 	border-radius: var(--ide-radius);
 	background: var(--ide-bg-overlay);
 	color: var(--ide-fg);
+	font-family: var(--ide-font-family);
+	font-size: var(--ide-font-size);
 }
 
-.ide-dialog::backdrop {
+.ide-overlay::backdrop {
 	background: rgb(0 0 0 / 40%);
 }
 
-.ide-dialog h2 {
+.ide-overlay-title {
 	margin: 0 0 var(--ide-space-4);
 	font-size: var(--ide-font-size);
 	font-weight: 600;
+}
+
+.ide-visually-hidden {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	margin: -1px;
+	padding: 0;
+	overflow: hidden;
+	clip-path: inset(50%);
+	white-space: nowrap;
+}
+
+/* Quick pick */
+
+.ide-quickpick {
+	width: min(600px, 90vw);
+	max-width: none;
+	padding: var(--ide-space-2);
+	/* Anchored near the top, like a command palette, not centred. */
+	margin-top: 12vh;
+}
+
+.ide-quickpick-input {
+	width: 100%;
+	padding: var(--ide-space-3);
+	border: 1px solid var(--ide-focus);
+	border-radius: var(--ide-radius);
+	background: var(--ide-bg);
+	color: var(--ide-fg);
+	font: inherit;
+}
+
+.ide-quickpick-list {
+	max-height: 40vh;
+	margin: var(--ide-space-2) 0 0;
+	padding: 0;
+	overflow-y: auto;
+	list-style: none;
+}
+
+.ide-quickpick-row {
+	display: flex;
+	align-items: center;
+	gap: var(--ide-space-3);
+	padding: var(--ide-space-2) var(--ide-space-3);
+	border-radius: var(--ide-radius);
+	cursor: pointer;
+}
+
+.ide-quickpick-row-active {
+	background: var(--ide-bg-active);
+}
+
+.ide-quickpick-label {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.ide-quickpick-detail {
+	margin-left: auto;
+	color: var(--ide-fg-subtle);
+	font-size: var(--ide-font-size-small);
+	white-space: nowrap;
+}
+
+.ide-quickpick-status {
+	margin: var(--ide-space-2) 0 0;
+	padding: 0 var(--ide-space-3);
+	color: var(--ide-fg-subtle);
+	font-size: var(--ide-font-size-small);
 }
 
 .ide-help-list {

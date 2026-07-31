@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { buildCommands } from '../commands/commandRegistry';
 import { EditorWorkbench, type EditorInput } from '../editor/EditorWorkbench';
+import { CommandCenter } from '../features/commandCenter/CommandCenter';
 import { ExplorerTree } from '../features/explorer/ExplorerTree';
 import { IconButton, Pane, ResizableSeparator } from '../ui';
 import { createWorkspaceProvider, type WorkspaceEntry } from '../workspace';
@@ -83,8 +85,9 @@ export function WorkbenchShell() {
 		setVisible((current) => ({ ...current, [region]: !current[region] }));
 	}, []);
 
-	// Stable, so the dialog's native `close` listener is not rebound every render.
 	const closeHelp = useCallback(() => setHelpOpen(false), []);
+	const [commandCenterOpen, setCommandCenterOpen] = useState(false);
+	const closeCommandCenter = useCallback(() => setCommandCenterOpen(false), []);
 
 	/*
 	 * Focus-safe hiding. Hiding a region unmounts both the region and its
@@ -99,6 +102,40 @@ export function WorkbenchShell() {
 			mainRef.current?.focus();
 		}
 	}, [visible]);
+
+	const commands = useMemo(
+		() =>
+			buildCommands({
+				togglePrimarySidebar: () => toggle('primarySidebar'),
+				toggleSecondarySidebar: () => toggle('secondarySidebar'),
+				togglePanel: () => toggle('panel'),
+				closeActiveEditor: () => {
+					if (activeEditorId) {
+						closeEditor(activeEditorId);
+					}
+				},
+				showAccessibilityHelp: () => setHelpOpen(true),
+			}),
+		[toggle, closeEditor, activeEditorId]
+	);
+
+	/*
+	 * Ctrl+Shift+P is bound on the capture phase because Monaco claims the same
+	 * chord for its own palette. Capturing means the workbench decides first;
+	 * without it the shortcut silently does nothing whenever the editor has
+	 * focus, which is most of the time.
+	 */
+	useEffect(() => {
+		function onKeyDown(event: KeyboardEvent): void {
+			if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'p') {
+				event.preventDefault();
+				event.stopPropagation();
+				setCommandCenterOpen(true);
+			}
+		}
+		window.addEventListener('keydown', onKeyDown, true);
+		return () => window.removeEventListener('keydown', onKeyDown, true);
+	}, []);
 
 	return (
 		<div className="ide-workbench">
@@ -222,6 +259,13 @@ export function WorkbenchShell() {
 				) : null}
 			</div>
 
+			<CommandCenter
+				open={commandCenterOpen}
+				commands={commands}
+				files={entries}
+				onOpenFile={(entry) => void openFile(entry)}
+				onClose={closeCommandCenter}
+			/>
 			<AccessibilityHelp open={helpOpen} onClose={closeHelp} />
 		</div>
 	);
