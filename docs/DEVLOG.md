@@ -762,3 +762,80 @@ re-exercised by hand after the move.
   unchanged (260 / 260 / 220).
 - The announcement slot has no producer. It is part of the guide's contract and
   the live region has to exist early to work at all, so it ships empty.
+
+## Slice 10a: Region clamping and the empty-state folder action (follow-up)
+
+Not a slice. Two defects found by running the app for the first time.
+
+### User outcome
+
+A panel sized in a large window no longer crushes the editor when the app
+reopens smaller, and a workbench with no folder open now offers a way to open
+one instead of only a small icon in a pane header.
+
+### Added
+
+- `.ide-region-sidebar { max-width: calc(100% - var(--ide-region-min)) }` and
+  the same as `max-height` on `.ide-region-panel`.
+- `ExplorerTree` accepts an optional `onOpenFolder`. When present it renders an
+  empty state with an "Open Folder" button instead of the tree.
+- `.ide-empty-state` in `App.css`.
+
+### Why CSS and not the drag handler
+
+The sashes clamp against their own min and max, never against the space
+actually available, so nothing was wrong with the stored value — 565px was a
+legitimate panel height in the window where it was chosen. Clamping at render
+time in CSS means the preference survives: shrink the window and the region
+gives way, grow it back and the user's size returns. Clamping in the handler,
+or on resize, would silently destroy a size the user picked.
+
+`--ide-region-min` is the same floor the sashes already use, so main is
+guaranteed the same minimum by either path.
+
+### UI extracted/reused
+
+None. `.ide-empty-state` is feature CSS, not a primitive — the Explorer is its
+only consumer. Note that this makes `.ide-button` a fourth hand-written
+consumer; the `Button` extraction question raised earlier is still open.
+
+### Adapters and dependencies
+
+Unchanged. `ExplorerTree` still knows nothing about workspaces or Tauri: the
+controller decides whether a folder can be chosen
+(`provider.canChooseWorkspace && !selection`) and the feature only receives a
+callback or `undefined`.
+
+### Accessibility behavior
+
+The empty state is a real `<button>` in the tab order, which the icon-only
+header action was too — the change is discoverability, not keyboard access.
+
+### Validation performed
+
+Live in the browser, measured from the DOM rather than by eye:
+
+- Stored `panelHeight` 565 in an 860px-tall window: panel rendered 565, main
+  256 — above the 170 floor, so correctly not clamped.
+- Same state at 600px tall: panel rendered 395 (container minus the floor),
+  main 166. Before this change main would have been 0.
+- Back at 1000px tall: panel returned to its stored 565, main 396. The
+  preference was never overwritten — `localStorage` still reads 565 throughout.
+- `npx tsc --noEmit` and `npm run check` clean.
+
+### Not validated
+
+The "Open Folder" empty state has not been seen. It only renders when a folder
+can be chosen and none is open, which is native-only — the browser fixture is
+always "selected". The native window in this session already had a workspace
+restored, so the state never appeared. Its layout, wrapping, and the picker it
+opens are compile-verified only.
+
+### Caveats and deviations
+
+- With both sidebars open each is capped independently, so together they can
+  still push main below the floor on a very narrow window. Fixing that properly
+  needs the layout to arbitrate between regions rather than clamp each one.
+- `MIN` in `WorkbenchLayout.tsx` and `--ide-region-min` in `tokens.css` are the
+  same number written twice. The token cannot be read from JS without a
+  `getComputedStyle` call at drag time, which is worse.

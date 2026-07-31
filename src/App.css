@@ -79,8 +79,23 @@ body {
 	overflow: hidden;
 }
 
+/*
+ * Regions keep their stored size but never take the window with them. A panel
+ * height saved in a tall window would otherwise crush the editor to nothing
+ * when the app reopens smaller — the sash clamps against its own min and max,
+ * never against the space actually available.
+ *
+ * Clamping in CSS rather than in the drag handler keeps the stored preference
+ * intact: shrink the window and the region gives way, grow it again and the
+ * user's size comes back. `--ide-region-min` is the same floor the sashes use,
+ * so main is guaranteed the same minimum either way.
+ *
+ * Caveat: with both sidebars open each is capped independently, so together
+ * they can still leave main below the floor on a very narrow window.
+ */
 .ide-region-sidebar {
 	flex: none;
+	max-width: calc(100% - var(--ide-region-min));
 	background: var(--ide-bg-sidebar);
 }
 
@@ -95,6 +110,7 @@ body {
 
 .ide-region-panel {
 	flex: none;
+	max-height: calc(100% - var(--ide-region-min));
 	background: var(--ide-bg-panel);
 }
 
@@ -655,6 +671,22 @@ body {
 	display: flex;
 	justify-content: flex-end;
 	gap: var(--ide-space-3);
+}
+
+/* Empty state — a pane with nothing in it yet, offering the way out. */
+
+.ide-empty-state {
+	display: flex;
+	flex-direction: column;
+	align-items: stretch;
+	gap: var(--ide-space-4);
+	padding: var(--ide-space-5) var(--ide-space-4);
+	color: var(--ide-fg-muted);
+}
+
+.ide-empty-state p {
+	margin: 0;
+	line-height: 1.4;
 }
 
 .ide-visually-hidden {

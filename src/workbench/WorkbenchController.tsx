@@ -461,6 +461,11 @@ export function WorkbenchController() {
 							entries={entries}
 							activeId={activeEditorId}
 							onOpenFile={(entry) => void openFile(entry.id)}
+							onOpenFolder={
+								provider.canChooseWorkspace && !selection
+									? () => void openFolder()
+									: undefined
+							}
 						/>
 					)}
 				</Pane>
