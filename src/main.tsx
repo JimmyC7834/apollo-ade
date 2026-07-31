@@ -4,10 +4,10 @@ import { createRoot } from 'react-dom/client';
 import './App.css';
 // Must run before any editor is created.
 import './editor/monacoEnvironment';
-import { WorkbenchShell } from './workbench/WorkbenchShell';
+import { WorkbenchController } from './workbench/WorkbenchController';
 
 createRoot(document.querySelector('#root')!).render(
 	<StrictMode>
-		<WorkbenchShell />
+		<WorkbenchController />
 	</StrictMode>
 );

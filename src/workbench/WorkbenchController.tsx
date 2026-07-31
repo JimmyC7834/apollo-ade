@@ -1,4 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+// Everything that is not topology: which providers are in use, what the
+// commands do, what is persisted, and which feature renders into which slot.
+// Geometry lives in WorkbenchLayout — this file never sets a width.
+
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { createChangesProvider } from '../changes';
 import { buildCommands } from '../commands/commandRegistry';
@@ -10,7 +14,7 @@ import { SearchView } from '../features/search/SearchView';
 import { TerminalPanel } from '../features/terminal/TerminalPanel';
 import { createPersistenceAdapter, type PersistedState, type PrimaryView } from '../persistence';
 import { createTerminalAdapter } from '../terminal';
-import { ActionBar, IconButton, Pane, ResizableSeparator } from '../ui';
+import { ActionBar, IconButton, Pane } from '../ui';
 import {
 	createWorkspaceProvider,
 	type WorkspaceEntry,
@@ -19,41 +23,38 @@ import {
 import { AccessibilityHelp } from './AccessibilityHelp';
 import { ConfirmDiscard } from './ConfirmDiscard';
 import { Titlebar } from './Titlebar';
+import {
+	DEFAULT_LAYOUT,
+	WorkbenchLayout,
+	type WorkbenchLayoutState,
+	type WorkbenchRegion,
+} from './WorkbenchLayout';
 import { useWindowControls } from './useWindowControls';
 
-const MIN = 170;
-const MAX_SIDEBAR = 600;
-const MAX_PANEL = 600;
-
-type Region = 'primarySidebar' | 'secondarySidebar' | 'panel';
-
-export function WorkbenchShell() {
+export function WorkbenchController() {
 	const controls = useWindowControls();
-	const mainRef = useRef<HTMLDivElement>(null);
 
 	// Read once, synchronously: layout that arrives after the first paint
 	// shows the user the default and then snaps, which reads as a glitch.
 	const persistence = useMemo(() => createPersistenceAdapter(), []);
 	const restored = useMemo(() => persistence.load(), [persistence]);
 
-	const [visible, setVisible] = useState<Record<Region, boolean>>(
-		restored?.visible ?? {
-			primarySidebar: true,
-			secondarySidebar: true,
-			panel: true,
-		}
+	// The persisted geometry fields are exactly WorkbenchLayoutState, so the
+	// refactor did not touch the storage schema.
+	const [layout, setLayout] = useState<WorkbenchLayoutState>(() =>
+		restored
+			? {
+					visible: restored.visible,
+					primaryWidth: restored.primaryWidth,
+					secondaryWidth: restored.secondaryWidth,
+					panelHeight: restored.panelHeight,
+				}
+			: DEFAULT_LAYOUT
 	);
-	const [primaryWidth, setPrimaryWidth] = useState(restored?.primaryWidth ?? 260);
-	const [secondaryWidth, setSecondaryWidth] = useState(restored?.secondaryWidth ?? 260);
-	const [panelHeight, setPanelHeight] = useState(restored?.panelHeight ?? 220);
 	const [primaryView, setPrimaryView] = useState<PrimaryView>(restored?.primaryView ?? 'explorer');
 	const [helpOpen, setHelpOpen] = useState(false);
+	const [commandCenterOpen, setCommandCenterOpen] = useState(false);
 
-	/*
-	 * Workspace and editor state live here for now. The guide splits this into
-	 * WorkbenchController and WorkbenchLayout in Slice 10, once feature growth
-	 * has made the shell too broad to change comfortably.
-	 */
 	const provider = useMemo(() => createWorkspaceProvider(), []);
 	const changesProvider = useMemo(() => createChangesProvider(), []);
 	const terminalAdapter = useMemo(() => createTerminalAdapter(), []);
@@ -234,7 +235,7 @@ export function WorkbenchShell() {
 			// Mark the written text as the new baseline, not the text as it is
 			// now — the user may have typed more while the write was in flight.
 			setInputs((current) =>
-					current.map((item) =>
+				current.map((item) =>
 					item.id === id && item.kind === 'source' ? { ...item, saved: content } : item
 				)
 			);
@@ -278,10 +279,7 @@ export function WorkbenchShell() {
 	 */
 	useEffect(() => {
 		const state: PersistedState = {
-			visible,
-			primaryWidth,
-			secondaryWidth,
-			panelHeight,
+			...layout,
 			primaryView,
 			workspace: selection,
 			editors: inputs
@@ -294,39 +292,27 @@ export function WorkbenchShell() {
 			activeEditorId,
 		};
 		persistence.save(state);
-	}, [
-		persistence,
-		visible,
-		primaryWidth,
-		secondaryWidth,
-		panelHeight,
-		primaryView,
-		selection,
-		inputs,
-		activeEditorId,
-	]);
+	}, [persistence, layout, primaryView, selection, inputs, activeEditorId]);
 
-	const toggle = useCallback((region: Region) => {
-		setVisible((current) => ({ ...current, [region]: !current[region] }));
+	const toggle = useCallback((region: WorkbenchRegion) => {
+		setLayout((current) => ({
+			...current,
+			visible: { ...current.visible, [region]: !current.visible[region] },
+		}));
+	}, []);
+
+	// Switching the primary view also reveals it: a view the user just asked
+	// for that stays hidden looks like the command did nothing.
+	const showPrimaryView = useCallback((view: PrimaryView) => {
+		setPrimaryView(view);
+		setLayout((current) => ({
+			...current,
+			visible: { ...current.visible, primarySidebar: true },
+		}));
 	}, []);
 
 	const closeHelp = useCallback(() => setHelpOpen(false), []);
-	const [commandCenterOpen, setCommandCenterOpen] = useState(false);
 	const closeCommandCenter = useCallback(() => setCommandCenterOpen(false), []);
-
-	/*
-	 * Focus-safe hiding. Hiding a region unmounts both the region and its
-	 * separator, and the separator lives outside the region element — so
-	 * predicting whether focus is about to be destroyed gets fiddly. Instead
-	 * repair it afterwards: if the update left focus on nothing, the user is
-	 * stranded, so hand it to main.
-	 */
-	useEffect(() => {
-		const active = document.activeElement;
-		if (!active || active === document.body) {
-			mainRef.current?.focus();
-		}
-	}, [visible]);
 
 	const commands = useMemo(
 		() =>
@@ -344,18 +330,21 @@ export function WorkbenchShell() {
 						void saveFile(activeEditorId);
 					}
 				},
-				showExplorer: () => {
-					setPrimaryView('explorer');
-					setVisible((current) => ({ ...current, primarySidebar: true }));
-				},
-				showSearch: () => {
-					setPrimaryView('search');
-					setVisible((current) => ({ ...current, primarySidebar: true }));
-				},
+				showExplorer: () => showPrimaryView('explorer'),
+				showSearch: () => showPrimaryView('search'),
 				openFolder: provider.canChooseWorkspace && !dirty ? () => void openFolder() : undefined,
 				showAccessibilityHelp: () => setHelpOpen(true),
 			}),
-		[toggle, closeEditor, saveFile, activeEditorId, provider, dirty, openFolder]
+		[
+			toggle,
+			showPrimaryView,
+			closeEditor,
+			saveFile,
+			activeEditorId,
+			provider,
+			dirty,
+			openFolder,
+		]
 	);
 
 	/*
@@ -392,209 +381,140 @@ export function WorkbenchShell() {
 	}, [activeEditorId, saveFile]);
 
 	return (
-		<div className="ide-workbench">
-			<Titlebar
-				title="ADE"
-				controls={controls}
-				actions={
-					<>
-						<IconButton
-							icon="layout-sidebar-left"
-							label="Toggle primary sidebar"
-							pressed={visible.primarySidebar}
-							onClick={() => toggle('primarySidebar')}
-						/>
-						<IconButton
-							icon="layout-panel"
-							label="Toggle panel"
-							pressed={visible.panel}
-							onClick={() => toggle('panel')}
-						/>
-						<IconButton
-							icon="layout-sidebar-right"
-							label="Toggle secondary sidebar"
-							pressed={visible.secondarySidebar}
-							onClick={() => toggle('secondarySidebar')}
-						/>
-						<IconButton
-							icon="question"
-							label="Keyboard help"
-							onClick={() => setHelpOpen(true)}
-						/>
-					</>
-				}
-			/>
-
-			<div className="ide-body">
-				{visible.primarySidebar ? (
-					<>
-						<div
-							className="ide-region ide-region-sidebar"
-							data-region="primarySidebar"
-							style={{ width: primaryWidth }}
-						>
-							<Pane
-								title={
-									primaryView === 'search'
-										? 'Search'
-										: selection
-											? `Explorer — ${selection.label}`
-											: 'Explorer'
-								}
-								actions={
-									<ActionBar label="Primary sidebar views">
-										<IconButton
-											icon="files"
-											label="Show Explorer"
-											pressed={primaryView === 'explorer'}
-											onClick={() => setPrimaryView('explorer')}
-										/>
-										<IconButton
-											icon="search"
-											label="Show Search"
-											pressed={primaryView === 'search'}
-											onClick={() => setPrimaryView('search')}
-										/>
-										{provider.canChooseWorkspace ? (
-											<IconButton
-												icon="folder-opened"
-												label={
-													dirty
-														? 'Open folder (save your changes first)'
-														: 'Open folder'
-												}
-												disabled={dirty}
-												onClick={() => void openFolder()}
-											/>
-										) : null}
-									</ActionBar>
-								}
-							>
-								{primaryView === 'search' ? (
-									<SearchView
-										provider={provider}
-										onOpenResult={(id, line) => void openFile(id, line)}
-									/>
-								) : (
-									<ExplorerTree
-										entries={entries}
-										activeId={activeEditorId}
-										onOpenFile={(entry) => void openFile(entry.id)}
-									/>
-								)}
-							</Pane>
-						</div>
-						<ResizableSeparator
-							label="Resize primary sidebar"
-							orientation="vertical"
-							value={primaryWidth}
-							min={MIN}
-							max={MAX_SIDEBAR}
-							onChange={setPrimaryWidth}
-						/>
-					</>
-				) : null}
-
-				<div className="ide-center">
-					<div
-						className="ide-region ide-region-main"
-						data-region="main"
-						ref={mainRef}
-						tabIndex={-1}
-						role="main"
-						aria-label="Main"
-					>
-						<EditorWorkbench
-							inputs={inputs}
-							activeId={activeEditorId}
-							onSelect={setActiveEditorId}
-							onClose={closeEditor}
-							onChange={editFile}
-						/>
-					</div>
-
-					{visible.panel ? (
+		<WorkbenchLayout
+			state={layout}
+			onChange={setLayout}
+			titlebar={
+				<Titlebar
+					title="ADE"
+					controls={controls}
+					actions={
 						<>
-							<ResizableSeparator
-								label="Resize panel"
-								orientation="horizontal"
-								value={panelHeight}
-								min={MIN}
-								max={MAX_PANEL}
-								inverted
-								onChange={setPanelHeight}
+							<IconButton
+								icon="layout-sidebar-left"
+								label="Toggle primary sidebar"
+								pressed={layout.visible.primarySidebar}
+								onClick={() => toggle('primarySidebar')}
 							/>
-							<div
-								className="ide-region ide-region-panel"
-								data-region="panel"
-								style={{ height: panelHeight }}
-							>
-								<TerminalPanel
-									adapter={terminalAdapter}
-									cwd={selection?.path || undefined}
-								/>
-							</div>
+							<IconButton
+								icon="layout-panel"
+								label="Toggle panel"
+								pressed={layout.visible.panel}
+								onClick={() => toggle('panel')}
+							/>
+							<IconButton
+								icon="layout-sidebar-right"
+								label="Toggle secondary sidebar"
+								pressed={layout.visible.secondarySidebar}
+								onClick={() => toggle('secondarySidebar')}
+							/>
+							<IconButton
+								icon="question"
+								label="Keyboard help"
+								onClick={() => setHelpOpen(true)}
+							/>
 						</>
-					) : null}
-				</div>
-
-				{visible.secondarySidebar ? (
-					<>
-						<ResizableSeparator
-							label="Resize secondary sidebar"
-							orientation="vertical"
-							value={secondaryWidth}
-							min={MIN}
-							max={MAX_SIDEBAR}
-							inverted
-							onChange={setSecondaryWidth}
-						/>
-						<div
-							className="ide-region ide-region-sidebar"
-							data-region="secondarySidebar"
-							style={{ width: secondaryWidth }}
-						>
-							<Pane title="Changes">
-								<ChangesView
-									provider={changesProvider}
-									activeDiffId={
-										activeEditorId?.startsWith('diff:') ? activeEditorId : undefined
-									}
-									onOpenDiff={(id) => void openDiff(id)}
+					}
+				/>
+			}
+			primarySidebar={
+				<Pane
+					title={
+						primaryView === 'search'
+							? 'Search'
+							: selection
+								? `Explorer — ${selection.label}`
+								: 'Explorer'
+					}
+					actions={
+						<ActionBar label="Primary sidebar views">
+							<IconButton
+								icon="files"
+								label="Show Explorer"
+								pressed={primaryView === 'explorer'}
+								onClick={() => setPrimaryView('explorer')}
+							/>
+							<IconButton
+								icon="search"
+								label="Show Search"
+								pressed={primaryView === 'search'}
+								onClick={() => setPrimaryView('search')}
+							/>
+							{provider.canChooseWorkspace ? (
+								<IconButton
+									icon="folder-opened"
+									label={dirty ? 'Open folder (save your changes first)' : 'Open folder'}
+									disabled={dirty}
+									onClick={() => void openFolder()}
 								/>
-							</Pane>
-						</div>
-					</>
-				) : null}
-			</div>
-
-			<CommandCenter
-				open={commandCenterOpen}
-				commands={commands}
-				files={entries}
-				onOpenFile={(entry) => void openFile(entry.id)}
-				onClose={closeCommandCenter}
-			/>
-			<ConfirmDiscard
-				name={inputs.find((input) => input.id === pendingCloseId)?.name}
-				onCancel={() => setPendingCloseId(undefined)}
-				onDiscard={() => {
-					if (pendingCloseId) {
-						forceCloseEditor(pendingCloseId);
+							) : null}
+						</ActionBar>
 					}
-					setPendingCloseId(undefined);
-				}}
-				onSave={() => {
-					const id = pendingCloseId;
-					setPendingCloseId(undefined);
-					if (id) {
-						// Only close once the write succeeded; a failed save
-						// that still closed the tab would lose the edit.
-						void saveFile(id).then(() => forceCloseEditor(id));
-					}
-				}}
-			/>
-			<AccessibilityHelp open={helpOpen} onClose={closeHelp} />
-		</div>
+				>
+					{primaryView === 'search' ? (
+						<SearchView
+							provider={provider}
+							onOpenResult={(id, line) => void openFile(id, line)}
+						/>
+					) : (
+						<ExplorerTree
+							entries={entries}
+							activeId={activeEditorId}
+							onOpenFile={(entry) => void openFile(entry.id)}
+						/>
+					)}
+				</Pane>
+			}
+			main={
+				<EditorWorkbench
+					inputs={inputs}
+					activeId={activeEditorId}
+					onSelect={setActiveEditorId}
+					onClose={closeEditor}
+					onChange={editFile}
+				/>
+			}
+			secondarySidebar={
+				<Pane title="Changes">
+					<ChangesView
+						provider={changesProvider}
+						activeDiffId={activeEditorId?.startsWith('diff:') ? activeEditorId : undefined}
+						onOpenDiff={(id) => void openDiff(id)}
+					/>
+				</Pane>
+			}
+			panel={<TerminalPanel adapter={terminalAdapter} cwd={selection?.path || undefined} />}
+			overlays={
+				<>
+					<CommandCenter
+						open={commandCenterOpen}
+						commands={commands}
+						files={entries}
+						onOpenFile={(entry) => void openFile(entry.id)}
+						onClose={closeCommandCenter}
+					/>
+					<ConfirmDiscard
+						name={inputs.find((input) => input.id === pendingCloseId)?.name}
+						onCancel={() => setPendingCloseId(undefined)}
+						onDiscard={() => {
+							if (pendingCloseId) {
+								forceCloseEditor(pendingCloseId);
+							}
+							setPendingCloseId(undefined);
+						}}
+						onSave={() => {
+							const id = pendingCloseId;
+							setPendingCloseId(undefined);
+							if (id) {
+								// Only close once the write succeeded; a failed save
+								// that still closed the tab would lose the edit.
+								void saveFile(id).then(() => forceCloseEditor(id));
+							}
+						}}
+					/>
+					<AccessibilityHelp open={helpOpen} onClose={closeHelp} />
+				</>
+			}
+		/>
 	);
 }

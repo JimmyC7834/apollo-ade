@@ -683,3 +683,82 @@ in `git_changes` in particular has never been seen against real git output.
   change list plus a `console.warn`, not a visible error. The guide requires a
   non-git workspace not to crash the workbench; distinguishing the two states
   in the UI is not modelled.
+
+## Slice 10: Controller and Layout Separation
+
+### User outcome
+
+Nothing visible changed, by design. This slice buys the ability to change the
+workbench topology without touching a single feature module.
+
+### Added
+
+- `src/workbench/WorkbenchLayout.tsx` — titlebar and body topology, region
+  placement, visibility, widths and heights, both sashes, focus transfer when
+  a region disappears, and the overlay and announcement slots.
+- `src/workbench/WorkbenchController.tsx` — provider selection, commands,
+  persistence, workspace and editor state, feature lifecycle, composition.
+- `WorkbenchShell.tsx` deleted. `main.tsx` renders the controller.
+
+### The interface
+
+`WorkbenchLayoutSlots` is the guide's contract verbatim: `titlebar`,
+`primarySidebar`, `main`, `secondarySidebar`, `panel`, optional `overlays` and
+`announcement`. Alongside it the layout takes one compact `state` object
+(`visible`, `primaryWidth`, `secondaryWidth`, `panelHeight`) and exactly one
+`onChange(next)` callback carrying the whole next geometry.
+
+The single callback is deliberate and is the guide's explicit warning: a set of
+per-region setters would leak sash mechanics back into the controller and make
+the interface shallow. The controller now contains no width, no minimum, no
+maximum, and no separator.
+
+### UI extracted/reused
+
+No new primitives. `ResizableSeparator` moved from the shell into the layout,
+which is the only module that should know a sash exists.
+
+### Adapters and dependencies
+
+Unchanged. No new dependencies. Features still receive providers from the
+controller and know nothing about where they are rendered — `TerminalPanel`,
+`ChangesView`, `SearchView`, `ExplorerTree` and `EditorWorkbench` were not
+edited at all.
+
+### Security boundary
+
+Untouched. This slice moves React state and JSX; it crosses no trust boundary.
+
+### Accessibility behavior
+
+- Focus repair on region hiding moved with the geometry that causes it. The
+  `main` ref now lives in the layout, which is what owns the element.
+- The `announcement` slot renders into a permanently mounted
+  `role="status" aria-live="polite"` region. It is always present even while
+  empty: a live region mounted together with its first message announces
+  nothing, because the screen reader was not observing it beforehand. No
+  feature pushes announcements through it yet.
+
+### Validation performed
+
+- `npx tsc --noEmit` clean, `npm run check` clean (3 self-checks).
+- Live: this refactor was applied while `npm run tauri dev` was running. Vite
+  reloaded the page and the app came back with no console or build errors.
+
+### Not validated
+
+The persistence schema is asserted unchanged by construction — the four
+persisted geometry fields are exactly `WorkbenchLayoutState`, spread into
+`PersistedState` — but no restart against a pre-refactor `localStorage` payload
+was performed. Sash dragging, region toggling and focus transfer were not
+re-exercised by hand after the move.
+
+### Caveats and deviations
+
+- `WorkbenchController` is still the largest module in the project, exactly as
+  the guide predicts. Domain-specific hooks are a later problem.
+- `DEFAULT_LAYOUT` lives in the layout module, not the controller, so every
+  geometry number in the app has one home. The persisted values themselves are
+  unchanged (260 / 260 / 220).
+- The announcement slot has no producer. It is part of the guide's contract and
+  the live region has to exist early to work at all, so it ships empty.
