@@ -3,7 +3,7 @@
 Living document — **edit it**, unlike `DEVLOG.md`, which is append-only history.
 Close an item by deleting it and recording the fix in the dev log.
 
-Last updated after Slice 11b closed the cancelled-approval defect. The numbering
+Last updated after Slice 12d closed the first three review defects. The numbering
 below is positional, not stable — closing an item renumbers the rest, so cite
 these by title in anything that outlives the file.
 
@@ -83,49 +83,7 @@ found them by reading, and the reason most survived is written under each.
 
 Ordered by consequence.
 
-### 1. Persisting on mount erases the record being restored
-
-`src/workbench/WorkbenchController.tsx:332`. The save effect has no guard and
-fires synchronously on mount, when `selection` is `undefined` and `inputs` is
-empty. The restore that would fill them in is async, at `:95`.
-
-The session itself is fine — `restored` is a synchronous `useMemo` at `:43`, so
-the data is already in hand. What is lost is the copy on disk. If
-`restoreWorkspace` rejects, the `catch` at `:105` falls back to
-`provider.defaultWorkspace`, which natively is nothing, `selection` stays
-undefined, and the stored workspace and editor list have already been
-overwritten with empties. A folder that is temporarily unavailable is therefore
-forgotten permanently, one launch later.
-
-This is the class of thing the ponytail rules say never to simplify away: error
-handling that prevents data loss. Fix is one guard, not a redesign.
-
-### 2. `revealLine` is re-applied on every keystroke
-
-`src/editor/MonacoEditor.tsx:114`, effect keyed `[id, content, revealLine]`.
-`content` changes on every character typed, and `WorkbenchController.openFile`
-(`:206`) never clears `revealLine` once the reveal has happened. So a file
-opened from a search result at line 40 drags the cursor back to 40:1 on every
-keypress, and the file cannot be edited anywhere else.
-
-Why it survived: typing into Monaco has never been exercised — see the
-unverified surface below, which called exactly this out.
-
-### 3. The titlebar drag region has no browser implementation
-
-`src/workbench/useWindowControls.ts:52-55` breaks the rule in `context.md`:
-*every native capability gets a deterministic browser implementation so the UI
-runs under `npm run dev` with no native process*. `workspace.ts`, `changes.ts`
-and `terminal.ts` all ship a fixture branch. This seam ships none — the four
-callbacks `void import('@tauri-apps/api/window').then(...)` with no `isTauri`
-check and no `catch`.
-
-`available` gates only the button row (`Titlebar.tsx:31`). The drag region at
-`Titlebar.tsx:16-27` wires `startDragging` and `toggleMaximize`
-unconditionally, so pressing or double-clicking the titlebar under `npm run
-dev` throws an unhandled rejection.
-
-### 4. `git_diff` turns an unreadable file into an empty diff
+### 1. `git_diff` turns an unreadable file into an empty diff
 
 `src-tauri/src/git.rs:153-156`. The working-tree side is
 `resolve(...).ok().and_then(read_to_string(...).ok()).unwrap_or_default()`.
@@ -138,7 +96,7 @@ The `unwrap_or_default()` on the `original` side above it is correct and should
 stay: `git show HEAD:path` genuinely fails for a newly added file, and empty is
 the right answer there.
 
-### 5. The workspace root is whatever the renderer says it is
+### 2. The workspace root is whatever the renderer says it is
 
 `src-tauri/src/workspace.rs:129`. `resolve` itself is sound — component scan,
 symlink rejection, canonicalise then `starts_with` — and `git.rs:40` matches it.
@@ -156,7 +114,7 @@ Worth deciding before Slice A gives a model tool access to this surface. It is a
 design gap rather than a code bug, so the fix is a slice: persist a token the
 Rust side issued rather than a raw path, or make a restored root re-confirmable.
 
-### 6. `withGlobalTauri: true` is an undeclared deviation
+### 3. `withGlobalTauri: true` is an undeclared deviation
 
 `src-tauri/tauri.conf.json:13` exposes `window.__TAURI__` to all page script,
 which cuts against Slice 4's stated goal of a workspace *without granting broad
@@ -167,7 +125,7 @@ provider detection path uses `__TAURI_INTERNALS__` and does not need it.
 Not recorded in the dev log and not in the guide's §15, so it is an undeclared
 deviation, which `context.md` forbids. Either drop the flag or declare it.
 
-### 7. The dev port deviates from the guide, undeclared
+### 4. The dev port deviates from the guide, undeclared
 
 The guide's §13.5 fixes the dev server at `1430`; this repo uses `5190`. That is
 stated in `context.md:58` but never in the dev log, so it is technically
@@ -177,7 +135,7 @@ deviation is silent.
 ### Not defects, but worth a cleanup pass
 
 Duplication the review turned up, none of it wrong today:
-`forceCloseEditor` (`WorkbenchController.tsx:301`) and `close`
+`forceCloseEditor` (`WorkbenchController.tsx:324`) and `close`
 (`TerminalPanel.tsx:33`) are the same close-and-select-neighbour algorithm;
 `parentOf` (`ExplorerTree.tsx:19`) and `directoryOf` (`ChangesView.tsx:31`) are
 identical bodies under two names; `basename` (`workspace.ts:80`) is re-inlined
@@ -216,9 +174,10 @@ the same thing, and the dev log should keep saying so until it has.
 - **Typing into Monaco**, and therefore dirty state surviving dialog dismissal
   end to end. No file has ever been edited through the UI and saved. This was
   previously written up here as "sound by construction", on the grounds that
-  `EditorDialog` holds no content state. That was wrong, and open defect 2 is
-  what was hiding behind it: the reveal effect re-runs on every keystroke. Do
-  not argue a surface is safe from its structure while it has never been run.
+  `EditorDialog` holds no content state. That was wrong, and the reveal-on-every-
+  keystroke defect closed in Slice 12d is what was hiding behind it. Do not argue
+  a surface is safe from its structure while it has never been run. The fix for
+  that defect is itself unobserved for the same reason.
 - **Screen reader.** Every accessibility claim in the dev log is structural:
   roles, labels, focus order and live-region wiring verified in the DOM. None of
   it has been heard. The `role="log"` transcript streaming word by word is the

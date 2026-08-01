@@ -1432,3 +1432,90 @@ gaining a fourth state, because whether a question is still open is a fact about
 the run, not about the question. `approvalLabel` derives it. A stored fourth
 state would have to be kept in step with `Turn.status` forever, and the first
 time it drifted the transcript would claim something that never happened.
+
+---
+
+## Slice 12d: The first three review defects, closed
+
+**User outcome.** Three things that would have bitten a real user. A workspace
+that is temporarily unreachable — a disconnected drive, a folder renamed and
+renamed back — is no longer forgotten permanently one launch later. A file
+opened from a search result can be edited anywhere in it, instead of having the
+cursor yanked back to the result line on every keypress. And pressing or
+double-clicking the titlebar under `npm run dev` no longer throws.
+
+**Cause.** All three come from the two-axis review recorded in
+`docs/OPEN-ISSUES.md`; all three were found by reading, none by using the app.
+
+The save effect in `WorkbenchController` had no guard and ran synchronously on
+mount, when `selection` is undefined and `inputs` is empty, while the restore
+that fills them in is async. The session survived that — `restored` is a
+synchronous `useMemo` — but the copy on disk did not: if `restoreWorkspace`
+rejected, the record had already been overwritten with emptiness.
+
+`MonacoEditor`'s model-swap effect was keyed `[id, content, revealLine]` and
+ended by revealing. `content` changes on every character typed.
+
+`useWindowControls` shipped no browser branch at all, against the rule that
+every native capability has one. `available` gates the button row, but
+`Titlebar` wires the drag region unconditionally.
+
+**Added.** Nothing, in the sense of no new module. Three edits: two pieces of
+state in `WorkbenchController` (`hydrated`, gating the save effect, and
+`unrestored`, holding the record of a root that could not be restored), the
+reveal split into its own effect that serves each file-and-line request once,
+and a `nativeWindow` helper that no-ops off Tauri and swallows a native
+rejection rather than leaving it unhandled in a pointer handler.
+
+`unrestored` is the part that is more than a guard, and it is there because the
+guard alone was wrong twice over. Simply not saving until a successful restore
+kept the record safe but latched the session off for good: a folder chosen
+afterwards through Open Folder was never persisted either. And in the browser
+`restoreWorkspace` *always* throws by design — a directory handle cannot be
+rebuilt from a name — so "don't save after a failed restore" would have meant
+`npm run dev` never persisting anything at all. Holding the old record and
+writing it back verbatim until a root is restored or chosen keeps both the
+session and the record honest.
+
+**UI extracted and reused.** None.
+
+**Adapters and dependencies.** None. `nativeWindow` is the browser branch the
+window seam was missing, kept in the same file as the native one, since a hook
+that resolves to nothing needs no adapter module.
+
+**Security boundary.** Unchanged. Nothing here reaches Rust.
+
+**Accessibility behavior.** Unchanged.
+
+**Validation performed.** `npm run build` clean apart from the pre-existing
+chunk-size warning; `npm run check` 7/7; `cargo test` 3/3; `tsc --noEmit` clean.
+
+A two-axis review was run on the change before it was committed, and it earned
+its keep: the first version of all three fixes shipped the two defects described
+above plus a third — the reveal effect keyed only on `[id, revealLine]` re-fired
+on every tab switch, overriding the view state the model swap had just restored,
+so a file opened from a search would have lost its cursor and scroll every time
+it was switched back to. Consuming the request once fixes it. That defect is
+strictly worse than the one being fixed, and it was found by reading, not by
+running — which is the same way the originals were found, and the same way they
+will keep being found until this surface is actually exercised.
+
+**What was not validated.** Everything that matters, for the same reason each
+time: none of these three surfaces has ever been observed. Typing into Monaco
+still has not happened, so the reveal fix is as unobserved as the defect was.
+The restore-failure path needs a workspace that goes away between launches and
+was not staged — note that the browser provider takes that path on every launch
+by design, so `npm run dev` exercises the fallback but never the native "drive
+came back" case. The drag region has never been pressed under `npm run dev`.
+
+**Judgement calls worth recording.** The reveal is served once per file and
+line and never again, so clicking the same search result twice, after scrolling
+away, does nothing the second time. Making that work needs the reveal to be a
+request with identity rather than a number, and threading a "consumed" callback
+back to the controller. Worth doing when someone actually hits it.
+
+A held `unrestored` record keeps the *old* editor list, including its unsaved
+text, rather than merging in anything from the current session. There is nothing
+to merge: the session has no root those ids mean anything in.
+
+**Caveats and deviations.** None.

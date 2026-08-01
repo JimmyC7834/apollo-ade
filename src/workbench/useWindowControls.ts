@@ -1,11 +1,30 @@
 import { useCallback, useEffect, useState } from 'react';
 
+import type { Window as TauriWindow } from '@tauri-apps/api/window';
+
 const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
 async function appWindow() {
 	const { getCurrentWindow } = await import('@tauri-apps/api/window');
 	return getCurrentWindow();
 }
+
+/*
+ * The browser implementation of window chrome is doing nothing: a tab has no
+ * frame to drag, minimize or close. It still has to exist. `available` gates
+ * the button row, but Titlebar wires the drag region unconditionally, so
+ * without this guard pressing the titlebar under `npm run dev` imports a
+ * native-only module and rejects with nobody listening.
+ */
+function nativeWindow(run: (win: TauriWindow) => Promise<void>): void {
+	if (isTauri) {
+		// Nothing useful follows a window that refuses to minimize, and an
+		// unhandled rejection in a pointer handler is worse than silence.
+		void appWindow().then(run).catch(noop);
+	}
+}
+
+function noop(): void {}
 
 export interface WindowControls {
 	readonly available: boolean;
@@ -49,10 +68,10 @@ export function useWindowControls(): WindowControls {
 		};
 	}, []);
 
-	const minimize = useCallback(() => void appWindow().then((w) => w.minimize()), []);
-	const toggleMaximize = useCallback(() => void appWindow().then((w) => w.toggleMaximize()), []);
-	const close = useCallback(() => void appWindow().then((w) => w.close()), []);
-	const startDragging = useCallback(() => void appWindow().then((w) => w.startDragging()), []);
+	const minimize = useCallback(() => nativeWindow((w) => w.minimize()), []);
+	const toggleMaximize = useCallback(() => nativeWindow((w) => w.toggleMaximize()), []);
+	const close = useCallback(() => nativeWindow((w) => w.close()), []);
+	const startDragging = useCallback(() => nativeWindow((w) => w.startDragging()), []);
 
 	return { available: isTauri, maximized, minimize, toggleMaximize, close, startDragging };
 }

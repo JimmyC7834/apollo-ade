@@ -111,11 +111,36 @@ export function MonacoEditor({ ref, id, content, revealLine, onChange }: MonacoE
 			editor.restoreViewState(viewState);
 		}
 
-		if (revealLine !== undefined) {
-			editor.revealLineInCenter(revealLine);
-			editor.setPosition({ lineNumber: revealLine, column: 1 });
+	}, [id, content]);
+
+	/*
+	 * Revealing is its own effect because the one above re-runs on `content`,
+	 * which changes on every keystroke — sharing them dragged the cursor back
+	 * to the search result's line on every character typed.
+	 *
+	 * `revealLine` is a one-shot request that nothing upstream clears, so it is
+	 * consumed here: served once per file-and-line, and never again. Without
+	 * that, switching tabs away and back re-reveals and overrides the view
+	 * state restored just above, and a file opened from a search would lose its
+	 * cursor and scroll on every switch for the rest of the session. The cost
+	 * is that re-clicking the same result after scrolling away does nothing;
+	 * fixing that needs the reveal to be a request with identity rather than a
+	 * number. Runs after the model swap by declaration order.
+	 */
+	const servedRevealRef = useRef<string>(null);
+	useEffect(() => {
+		const editor = editorRef.current;
+		if (!editor || revealLine === undefined) {
+			return;
 		}
-	}, [id, content, revealLine]);
+		const request = `${id}:${revealLine}`;
+		if (servedRevealRef.current === request) {
+			return;
+		}
+		servedRevealRef.current = request;
+		editor.revealLineInCenter(revealLine);
+		editor.setPosition({ lineNumber: revealLine, column: 1 });
+	}, [id, revealLine]);
 
 	return <div className="ide-editor" ref={hostRef} />;
 }

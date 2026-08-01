@@ -85,6 +85,20 @@ export function WorkbenchController() {
 	const [inputs, setInputs] = useState<readonly EditorInput[]>([]);
 	const [activeEditorId, setActiveEditorId] = useState<string | undefined>(undefined);
 	const [pendingCloseId, setPendingCloseId] = useState<string | undefined>(undefined);
+	/*
+	 * The save effect below must not run before the async restore has put the
+	 * restored state back: on mount `selection` is undefined and `inputs` is
+	 * empty, and writing that out erases the record being restored.
+	 */
+	const [hydrated, setHydrated] = useState(false);
+	/*
+	 * A root that could not be restored — a disconnected drive, or a browser
+	 * handle that cannot be re-granted without a gesture. The session carries on
+	 * without it, but its record is held here and written back untouched, since
+	 * it may well be reachable next launch and overwriting it forgets the folder
+	 * and its editors permanently. Superseded as soon as a root is chosen.
+	 */
+	const [unrestored, setUnrestored] = useState<PersistedState | undefined>(undefined);
 
 	/*
 	 * Restore the workspace, then the editors that lived in it. The order
@@ -105,12 +119,18 @@ export function WorkbenchController() {
 				} catch {
 					// Gone, or a browser handle that cannot be re-granted
 					// without a gesture. Fall back to whatever exists by
-					// default, which is nothing at all natively.
+					// default — nothing natively, the fixture in the browser —
+					// and keep the record rather than writing over it.
+					setUnrestored(restored);
 				}
 			}
 			if (cancelled) {
 				return;
 			}
+			// Whatever the session has is now the truth, including having no
+			// root at all. Saving before this point writes an empty state over
+			// the record being restored.
+			setHydrated(true);
 			if (!workspace) {
 				return;
 			}
@@ -193,6 +213,9 @@ export function WorkbenchController() {
 		setInputs([]);
 		setActiveEditorId(undefined);
 		setSelection(chosen);
+		// A deliberate choice supersedes a root that failed to restore: the
+		// user has answered the question the held record was waiting on.
+		setUnrestored(undefined);
 	}, [dirty, provider]);
 
 	const openFile = useCallback(
@@ -330,21 +353,35 @@ export function WorkbenchController() {
 	 * starting fresh.
 	 */
 	useEffect(() => {
+		if (!hydrated) {
+			return;
+		}
 		const state: PersistedState = {
 			...layout,
 			primaryView,
-			workspace: selection,
-			editors: inputs
-				.filter((input) => input.kind === 'source')
-				.map((input) => ({
-					id: input.id,
-					name: input.name,
-					...(isDirty(input) ? { content: input.content } : {}),
-				})),
-			activeEditorId,
+			// Geometry always belongs to this session. The workspace and its
+			// editors still belong to the last one until the root it named is
+			// either restored or replaced.
+			...(unrestored
+				? {
+						workspace: unrestored.workspace,
+						editors: unrestored.editors,
+						activeEditorId: unrestored.activeEditorId,
+					}
+				: {
+						workspace: selection,
+						editors: inputs
+							.filter((input) => input.kind === 'source')
+							.map((input) => ({
+								id: input.id,
+								name: input.name,
+								...(isDirty(input) ? { content: input.content } : {}),
+							})),
+						activeEditorId,
+					}),
 		};
 		persistence.save(state);
-	}, [persistence, layout, primaryView, selection, inputs, activeEditorId]);
+	}, [hydrated, unrestored, persistence, layout, primaryView, selection, inputs, activeEditorId]);
 
 	const toggle = useCallback((region: WorkbenchRegion) => {
 		setLayout((current) => ({
