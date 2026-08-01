@@ -151,6 +151,9 @@ Driven over the WebView2 debugging port, in one session, against a real folder:
 - **Typing into Monaco, and saving.** Confirmed at a real keyboard: text goes
   in, the editor goes dirty, and Ctrl+S writes the file. This had never been
   done since Slice 5.
+- **Closing a dirty editor.** The confirm dialog and its three answers,
+  including Discard, which is the only control in the app that destroys work.
+  Confirmed by hand. Every editor path now has a real run behind it.
 
 ### Never exercised in the native window
 
@@ -161,10 +164,6 @@ Driven over the WebView2 debugging port, in one session, against a real folder:
 
 ### Never exercised anywhere
 
-- **Discarding unsaved work.** Typing and saving are now confirmed, but the
-  path where a dirty editor is *closed* — the confirm dialog, and Discard in
-  particular, which throws the edit away — has still never been taken. It is
-  the one editor path whose failure destroys work.
 - **Monaco cannot be driven from the debugging port.** Not a defect, a limit on
   how this surface can be checked: Monaco 0.53 takes text through the
   **EditContext API**, not through a textarea, so neither `Input.insertText`

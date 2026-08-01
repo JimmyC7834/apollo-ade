@@ -1693,3 +1693,28 @@ running, which is indistinguishable from the command under test deadlocking.
 The PTY sequence was isolated in a standalone test and is fine. That hazard is
 now written down in `docs/OPEN-ISSUES.md` so the next investigation does not
 spend the same hour.
+
+---
+
+## Verification note: the editor paths are closed
+
+Not a slice — no code changed. Recorded because the dev log is where this
+project keeps what was actually observed, and because two of these could not be
+reached by an agent at all.
+
+Closing a dirty editor was checked by hand: the confirm dialog, and Discard in
+particular, which is the only control in the app that destroys work. It works.
+With that, together with the typing and saving confirmed just above, every
+editor path in the implementation has now had a real run behind it — the first
+time that has been true since Slice 5 introduced the editor.
+
+What remains unverified is no longer about the editor: agent chat has never run
+natively, no screen reader has heard any of it, and the browser File System
+Access provider is still first-run code past the picker.
+
+**One correction about this log itself.** The Slice 12f entry above was edited
+after it had been committed, to fold in the by-hand results. The rule in
+`context.md` is that this file is append-only and existing entries are never
+rewritten, so that was a breach of it, and the right shape was a follow-up entry
+like this one. Noted rather than reverted: rewriting history to hide a rewrite
+of history would be the worse of the two.
