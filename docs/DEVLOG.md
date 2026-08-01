@@ -1297,3 +1297,66 @@ Typing into Monaco still untested. No screen reader.
 `core.autocrlf=true` a reverted file can come back with different line endings
 than it had on disk. That is git's own behaviour, not ours, and git reports the
 tree clean either way.
+
+---
+
+## Slice 12c: Editor focus, closed
+
+**User outcome.** Opening a file or a diff puts the cursor in the editor, every
+time, including diffs and including the first open after a page load — the two
+cases that were logged as broken and as accepted-broken at the end of Slice 12b.
+
+**Cause.** Both were the same thing, and it was not a Monaco problem. Focus is
+requested from a callback ref in `EditorDialog`, which React runs in the layout
+phase; Monaco is created in a passive effect, which runs afterwards. So when the
+request arrived the editor did not exist yet, and `focus()` hit an early
+`return` and gave up. That call had never once done anything.
+
+It only showed as a defect where something forced a remount. Opening a file
+after a diff swaps `MonacoEditor` for `MonacoDiffEditor`, which is a fresh
+mount, and React's development double-invoke then disposes and recreates Monaco
+underneath the effect that had already focused it. Files-only never remounts —
+it swaps the model on a live editor — which is exactly why files-only scored 4/5
+while interleaving files and diffs scored 1/6.
+
+**Established by measurement, not reading.** Interleaved probe with `StrictMode`
+as committed: 0/6, diffs 0/3. Same probe with `StrictMode` commented out: 6/6,
+diffs 3/3. That isolated the double-mount as the entire cause in about two
+minutes, after three sessions of reasoning about Monaco internals had not.
+
+**Changed.** `focusEditor` now takes the editor as a getter rather than a value.
+A caller with no editor yet can still ask for focus, and the request waits for
+one to appear instead of being dropped — the retry loop it already had covers
+the gap. `MonacoEditor` and `MonacoDiffEditor` lost their early returns and pass
+`() => editorRef.current` and `() => editorRef.current?.getModifiedEditor()`.
+
+**Added.** `src/editor/focusEditor.check.ts`, wired into `npm run check` (now 6).
+It stubs `document` and drives a fake editor that does not exist for the first
+150ms. It asserts the four properties that matter and are otherwise only
+observable natively: a not-yet-existing editor is waited for; focus destroyed by
+a rebuild is taken back; focus the *user* moved is never taken back; and the
+watch is bounded, so it does not tick forever behind a dialog nobody reopened.
+
+**UI extracted / reused.** None. `Overlay`, `EditorWorkbench` and `EditorDialog`
+are untouched.
+
+**Adapters and dependencies.** None added.
+
+**Security boundary.** Unchanged; no Rust command touched.
+
+**Accessibility behavior.** This *is* the accessibility fix. The Slice 12
+contract, "initial focus into Monaco", now holds for source and diff alike.
+Escape still returns focus to the opener, 6/6.
+
+**Validation performed.** `tsc`, `npm run check` (6), `npm run build` clean.
+Interleaved source/diff probe in the native Tauri window with `StrictMode` on
+and the fix applied: focus in Monaco 6/6, focus on the modified side of the diff
+3/3, focus restored to the opener 6/6. `StrictMode` was restored and the probe's
+scratch edits reverted; the tree is clean apart from this entry's changes.
+
+**Not validated.** Still no typing into Monaco, no screen reader, and no
+terminal or agent chat natively — see `docs/OPEN-ISSUES.md`, from which both
+focus items have now been deleted.
+
+**Caveats and deviations.** None. Nothing in the guide changed; this brings the
+implementation up to what Slice 12 already specified.

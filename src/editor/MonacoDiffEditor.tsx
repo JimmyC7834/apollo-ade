@@ -34,12 +34,10 @@ export function MonacoDiffEditor({ ref, name, original, modified }: MonacoDiffEd
 		ref,
 		() => ({
 			focus() {
-				const modified = editorRef.current?.getModifiedEditor();
-				if (!modified) {
-					return;
-				}
 				cancelFocusRef.current?.();
-				cancelFocusRef.current = focusEditor(modified);
+				cancelFocusRef.current = focusEditor(
+					() => editorRef.current?.getModifiedEditor() ?? null
+				);
 			},
 		}),
 		[]

@@ -2,8 +2,10 @@
  * Focus a Monaco editor and keep it focused while the editor settles.
  *
  * Focusing Monaco once is not enough, and this was measured in the real Tauri
- * window rather than reasoned about. Three distinct failures showed up:
+ * window rather than reasoned about. Four distinct failures showed up:
  *
+ *  - the editor does not exist yet: focus is requested when React attaches the
+ *    ref, which is a layout effect, and Monaco is built in a passive one;
  *  - the editor has not laid out yet and has no input element to focus;
  *  - it has laid out, and the first `focus()` still does not stick;
  *  - focus lands correctly and is then destroyed, because Monaco replaces its
@@ -14,6 +16,10 @@
  * So this watches for a short window instead of stopping at the first success,
  * re-focusing whenever the editor has lost focus to nobody. It gives up
  * immediately once anything else holds focus, so it never fights the user.
+ *
+ * The editor is passed as a getter rather than a value for the first failure
+ * above: a caller that has not built its editor yet can still ask for focus,
+ * and the request simply waits for the editor to appear.
  *
  * Ticks are macrotasks, not animation frames, so this also works in a window
  * that is not rendering — a background tab serves no frames at all.
@@ -35,7 +41,7 @@ export interface FocusableEditor {
 const WINDOW_MS = 800;
 const INTERVAL_MS = 25;
 
-export function focusEditor(editor: FocusableEditor): () => void {
+export function focusEditor(getEditor: () => FocusableEditor | null): () => void {
 	// Where focus was when the request was made — typically whatever the dialog
 	// fell back to while the editor was still coming up.
 	const settled = document.activeElement;
@@ -44,12 +50,12 @@ export function focusEditor(editor: FocusableEditor): () => void {
 	let everFocused = false;
 
 	/** Is focus still unclaimed, and therefore ours to place? */
-	const ours = (): boolean => {
+	const ours = (editor: FocusableEditor | null): boolean => {
 		const active = document.activeElement;
 		if (active === null || active === document.body) {
 			return true;
 		}
-		if (editor.getDomNode()?.contains(active) === true) {
+		if (editor?.getDomNode()?.contains(active) === true) {
 			return true;
 		}
 		/*
@@ -63,28 +69,32 @@ export function focusEditor(editor: FocusableEditor): () => void {
 
 	const attempt = (): void => {
 		timer = null;
-		if (!ours()) {
+		const editor = getEditor();
+		if (!ours(editor)) {
 			return;
 		}
-		if (editor.hasTextFocus()) {
-			everFocused = true;
-		} else {
-			editor.focus();
-			if (!editor.hasTextFocus()) {
-				/*
-				 * `focus()` goes quiet while Monaco is rebuilding its input, so
-				 * fall back to the element. It is re-queried every tick on
-				 * purpose: the node that existed a moment ago may be the one
-				 * that was just thrown away. `.ime-text-area` is deliberately
-				 * not matched — it is a hidden helper that accepts focus and
-				 * then swallows every keystroke.
-				 */
-				editor
-					.getDomNode()
-					?.querySelector<HTMLElement>('.native-edit-context, textarea.inputarea')
-					?.focus();
+		// No editor yet — the request stays alive and tries again next tick.
+		if (editor !== null) {
+			if (editor.hasTextFocus()) {
+				everFocused = true;
+			} else {
+				editor.focus();
+				if (!editor.hasTextFocus()) {
+					/*
+					 * `focus()` goes quiet while Monaco is rebuilding its input,
+					 * so fall back to the element. It is re-queried every tick on
+					 * purpose: the node that existed a moment ago may be the one
+					 * that was just thrown away. `.ime-text-area` is deliberately
+					 * not matched — it is a hidden helper that accepts focus and
+					 * then swallows every keystroke.
+					 */
+					editor
+						.getDomNode()
+						?.querySelector<HTMLElement>('.native-edit-context, textarea.inputarea')
+						?.focus();
+				}
+				everFocused = everFocused || editor.hasTextFocus();
 			}
-			everFocused = everFocused || editor.hasTextFocus();
 		}
 		if (Date.now() >= deadline) {
 			return;
@@ -101,3 +111,4 @@ export function focusEditor(editor: FocusableEditor): () => void {
 		}
 	};
 }
+

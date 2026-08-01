@@ -3,7 +3,7 @@
 Living document — **edit it**, unlike `DEVLOG.md`, which is append-only history.
 Close an item by deleting it and recording the fix in the dev log.
 
-Last updated after the Slice 12b native verification pass.
+Last updated after the Slice 12c editor-focus fix.
 
 ---
 
@@ -34,6 +34,12 @@ Two things that cost time when this was first set up:
 - **Reset state between probes.** A dialog left open from a previous probe makes
   the tree behind it inert, so the next probe's clicks do nothing and the
   results look like failures.
+- **Measure a control before theorising.** The editor-focus defect took three
+  sessions of reading code and one A/B run: probe, comment out `StrictMode`,
+  probe again, restore. Vite reloads on the edit, so a control and an experiment
+  are two minutes apart in the same window. Do that before forming a theory
+  about anything mount-related — React's development double-mount disposes and
+  recreates Monaco, and it looks exactly like a bug in your own code.
 
 Selecting a workspace without driving the OS folder dialog:
 
@@ -63,59 +69,6 @@ conclusions during Slice 12:
 Anything about timing, focus, layout inside Monaco, or animation **must** be
 verified in the native window. Semantics-only checks (roles, labels, state) are
 still fine there.
-
----
-
-## Open defect: editor focus with diffs
-
-**Guide contract broken:** Slice 12, "Initial focus into Monaco."
-
-**Symptom.** Opening a diff does not put focus in the modified editor. Worse,
-once a diff has been shown, the *next* file open fails to focus as well. Focus
-lands on `document.body` while the modal is open — still tab-reachable, so the
-dialog is not a trap, but not the contract.
-
-**Measured.** Interleaving files and diffs: **1/6** opens focused correctly.
-Files only: **4/5** (the one failure is the StrictMode case below).
-
-**Reproduce.** Native window, a workspace with uncommitted changes so the
-Changes view is populated. Alternate: Explorer file → Changes row → Explorer
-file → Changes row. Check `document.activeElement.closest('.editor.modified')`
-about 1.5s after each open, dismissing with Escape in between.
-
-**Ruled out, so do not redo these.**
-
-- Not the initial-focus selector. `.native-edit-context` is the real input under
-  the EditContext API; `textarea.inputarea` is the pre-EditContext fallback.
-  `.ime-text-area` is a hidden helper that *accepts focus and swallows every
-  keystroke* — never match a bare `textarea`.
-- Not the element being absent. It exists and focusing it by hand always works.
-- Not the `activeEditorId` ordering — that was a genuine separate bug, fixed in
-  Slice 12b, and fixing it took files-only from 1/5 to 4/5 without helping
-  diffs.
-- Not the retry budget alone. `focusEditor` already watches for 800ms and
-  re-focuses while focus is unclaimed.
-
-**Where to look.** `src/editor/MonacoDiffEditor.tsx` focuses
-`getModifiedEditor()`. Switching between a file and a diff swaps
-`MonacoEditor` for `MonacoDiffEditor` in `src/editor/EditorWorkbench.tsx`, so
-one unmounts and the other mounts — a brand-new editor each time. The callback
-ref in `src/editor/EditorDialog.tsx` was added to focus exactly on attach, and
-it did not fix this, which is the most interesting clue: either the handle
-attaches before the underlying editor exists, or the diff editor's sub-editors
-refuse focus until they have laid out. `MonacoDiffEditor` creates its editor in
-an effect with deps `[name, original, modified]`, so it is rebuilt per input.
-
----
-
-## Known and accepted: first editor open in development
-
-The first editor opened after a page load does not take focus. **Development
-only** — confirmed by removing `StrictMode` from `src/main.tsx` and re-running,
-after which the case passes. React's development double-mount disposes and
-recreates Monaco, taking focus with it. Production builds do not do this.
-
-`StrictMode` stays. It is what exposed the ordering bug fixed in Slice 12b.
 
 ---
 

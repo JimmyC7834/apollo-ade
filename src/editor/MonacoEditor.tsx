@@ -43,12 +43,8 @@ export function MonacoEditor({ ref, id, content, revealLine, onChange }: MonacoE
 		ref,
 		() => ({
 			focus() {
-				const editor = editorRef.current;
-				if (!editor) {
-					return;
-				}
 				cancelFocusRef.current?.();
-				cancelFocusRef.current = focusEditor(editor);
+				cancelFocusRef.current = focusEditor(() => editorRef.current);
 			},
 		}),
 		[]
