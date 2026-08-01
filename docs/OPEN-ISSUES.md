@@ -144,6 +144,13 @@ Driven over the WebView2 debugging port, in one session, against a real folder:
 - **The folder dialog does not block the app.** `choose_workspace` runs
   `blocking_pick_folder` on the blocking pool; with the dialog open, IPC still
   answers. That was the specific risk flagged when it was written.
+- **Choosing a folder, end to end.** A folder was picked from the real dialog:
+  it was adopted, the record under `app_config_dir` was written, and both the
+  returned path and the record are ordinary Windows paths — the Slice 12f fix
+  in effect on the path that produced it.
+- **Typing into Monaco, and saving.** Confirmed at a real keyboard: text goes
+  in, the editor goes dirty, and Ctrl+S writes the file. This had never been
+  done since Slice 5.
 
 ### Never exercised in the native window
 
@@ -151,21 +158,20 @@ Driven over the WebView2 debugging port, in one session, against a real folder:
   approval, cancellation, the live region. The deterministic provider paces on
   `requestAnimationFrame` when the document is visible, which has therefore
   still never been the code path under test.
-- **Choosing a folder end to end.** The dialog opens and the app survives it,
-  but nothing has ever been *picked*: that needs a human at the mouse, and the
-  branch that adopts the result and writes the record has only been exercised
-  through `set_workspace`, which shares its body.
 
 ### Never exercised anywhere
 
-- **Typing into Monaco**, and therefore dirty state, saving, and the
-  discard-on-close dialog end to end. Still true, and now with a known cause:
-  Monaco 0.53 takes text through the **EditContext API**, not through a
-  textarea, so neither `Input.insertText` nor synthetic key events reach it.
-  Key events *do* arrive at the DOM — a listener records them — and the mouse
-  works normally, moving the cursor and focusing the editor. Text input alone
-  needs a real keyboard. Do not read the arrival of a keydown as evidence that
-  Monaco processed it.
+- **Discarding unsaved work.** Typing and saving are now confirmed, but the
+  path where a dirty editor is *closed* — the confirm dialog, and Discard in
+  particular, which throws the edit away — has still never been taken. It is
+  the one editor path whose failure destroys work.
+- **Monaco cannot be driven from the debugging port.** Not a defect, a limit on
+  how this surface can be checked: Monaco 0.53 takes text through the
+  **EditContext API**, not through a textarea, so neither `Input.insertText`
+  nor synthetic key events reach it. Key events *do* arrive at the DOM — a
+  listener records them — and the mouse works normally, moving the cursor and
+  focusing the editor. Anything about text input needs a human at the keyboard.
+  Do not read the arrival of a keydown as evidence that Monaco processed it.
 - **Screen reader.** Every accessibility claim in the dev log is structural:
   roles, labels, focus order and live-region wiring verified in the DOM. None of
   it has been heard. The `role="log"` transcript streaming word by word is the

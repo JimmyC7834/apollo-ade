@@ -1670,14 +1670,20 @@ workspace. What that showed is listed under "Verified in the native window" in
 work, and that `choose_workspace` does not block the app while its dialog is
 open — the one risk that entry called out by name.
 
-**What was not validated.** Typing into Monaco, still, and now for a documented
-reason: Monaco 0.53 takes text through the EditContext API, so neither
-`Input.insertText` nor synthetic key events reach it, even though the keydown
-events demonstrably arrive in the DOM and the mouse works normally. Saving,
-dirty state and the discard dialog therefore remain unexercised end to end. No
-folder has been *picked* from the dialog either — the dialog opens and the app
-survives it, but the pick needs a human. No screen reader. Agent chat has still
-never run natively.
+**What was not validated by this agent.** Typing into Monaco could not be
+driven, for a documented reason: Monaco 0.53 takes text through the EditContext
+API, so neither `Input.insertText` nor synthetic key events reach it, even
+though the keydown events demonstrably arrive in the DOM and the mouse works
+normally. Nor could a folder be picked from the dialog.
+
+**Both were then done by hand, and both work.** A folder was chosen from the
+real dialog — adopted, recorded, and returned as an ordinary Windows path, so
+the fix above is confirmed on the path that produced the bug. And text was
+typed into Monaco and saved with Ctrl+S, which had not happened since Slice 5.
+That leaves *closing* a dirty editor — the confirm dialog, and Discard, which
+throws the edit away — as the one editor path still never taken, and it is the
+one whose failure loses work. No screen reader. Agent chat has still never run
+natively.
 
 **Caveats and deviations.** None. One correction to record: an earlier probe in
 this session appeared to show `terminal_create` hanging the app, and it did not.
