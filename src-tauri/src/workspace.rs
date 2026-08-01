@@ -44,6 +44,33 @@ pub struct Entry {
     depth: usize,
 }
 
+/// Canonicalize, without the Windows verbatim prefix.
+///
+/// `fs::canonicalize` returns `\\?\C:\...`. It compares and opens correctly, so
+/// nothing internal cares — but it is also the path the user is shown as their
+/// workspace, and the one a shell starts in. PowerShell reads a verbatim path
+/// as a provider path and prompts with
+/// `PS Microsoft.PowerShell.Core\FileSystem::\\?\C:\...`, which is what the
+/// terminal actually showed before this existed.
+///
+/// Stripped in one place so the root and everything resolved under it are the
+/// same shape: `resolve` confines by `starts_with`, and mixing the two forms
+/// would make every file look like an escape.
+pub(crate) fn canonical(path: &Path) -> std::io::Result<PathBuf> {
+    let real = fs::canonicalize(path)?;
+    #[cfg(windows)]
+    {
+        // Verbatim UNC (`\\?\UNC\server\share`) is left alone: its short form
+        // is a different rewrite, and a network root is not worth the risk.
+        if let Some(stripped) = real.to_str().and_then(|s| s.strip_prefix(r"\\?\")) {
+            if !stripped.starts_with("UNC\\") {
+                return Ok(PathBuf::from(stripped));
+            }
+        }
+    }
+    Ok(real)
+}
+
 /// Resolve a root-relative id to a real file beneath `root`.
 ///
 /// Rejects absolute ids, `..`, anything that resolves outside the root, and
@@ -75,7 +102,7 @@ pub(crate) fn resolve(root: &Path, id: &str) -> Result<PathBuf, String> {
     // deliberately *not* "not found" — the file was there a line ago, so this
     // is a permission or path problem, and callers that treat absence as a
     // legitimate answer (`git_diff`) must not treat this one that way.
-    let real = fs::canonicalize(&joined).map_err(|e| format!("cannot resolve path: {e}"))?;
+    let real = canonical(&joined).map_err(|e| format!("cannot resolve path: {e}"))?;
     if !real.starts_with(root) {
         return Err("path escapes the workspace".into());
     }
@@ -133,7 +160,7 @@ pub(crate) fn root_of(state: &WorkspaceState) -> Result<PathBuf, String> {
 
 /// Adopt a directory as the workspace root. The only place a root is ever set.
 fn adopt(path: &Path, state: &WorkspaceState) -> Result<WorkspaceInfo, String> {
-    let root = fs::canonicalize(path).map_err(|e| e.to_string())?;
+    let root = canonical(path).map_err(|e| e.to_string())?;
     if !root.is_dir() {
         return Err("not a directory".into());
     }
@@ -337,13 +364,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn canonical_leaves_no_verbatim_prefix() {
+        let real = canonical(&std::env::temp_dir()).unwrap();
+        // What the user is shown and what a shell starts in.
+        assert!(!real.to_string_lossy().starts_with(r"\\?\"), "{real:?}");
+        assert!(real.is_dir(), "still has to open: {real:?}");
+    }
+
+    #[test]
     fn resolve_confines_to_root() {
         let dir = std::env::temp_dir().join("ade-resolve-test");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join("sub")).unwrap();
         fs::write(dir.join("sub/ok.txt"), "hi").unwrap();
         fs::write(dir.join("../ade-outside.txt"), "nope").unwrap();
-        let root = fs::canonicalize(&dir).unwrap();
+        // Built the same way `adopt` builds a real root: a test that mixed
+        // the verbatim and stripped forms would fail every confinement check.
+        let root = canonical(&dir).unwrap();
 
         assert!(resolve(&root, "sub/ok.txt").is_ok());
         assert!(resolve(&root, "../ade-outside.txt").is_err());

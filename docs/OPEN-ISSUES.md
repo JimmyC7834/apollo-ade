@@ -36,6 +36,14 @@ Two things that cost time when this was first set up:
 - **Reset state between probes.** A dialog left open from a previous probe makes
   the tree behind it inert, so the next probe's clicks do nothing and the
   results look like failures.
+- **Do not hand-roll `plugin:event|listen`.** Calling it over the port with an
+  invented payload wedges the IPC: every later `invoke` hangs, the renderer
+  keeps running, and it looks exactly like the command under test deadlocking.
+  A whole PTY investigation came out of that. To watch events, drive the UI and
+  read the DOM instead.
+- **The dev watcher restarts the app.** Editing anything under `src-tauri`
+  mid-probe rebuilds and relaunches it, so a probe can be measuring one build
+  and reporting on another. Finish the edit, wait for the relaunch, then probe.
 - **Measure a control before theorising.** The editor-focus defect took three
   sessions of reading code and one A/B run: probe, comment out `StrictMode`,
   probe again, restore. Vite reloads on the edit, so a control and an experiment
@@ -115,34 +123,49 @@ The confirm-dialog shape now has two real consumers (`ConfirmDiscard.tsx:13`,
 Nothing here is known to be broken. It has never been observed, which is not
 the same thing, and the dev log should keep saying so until it has.
 
+### Verified in the native window (Slice 12f)
+
+Driven over the WebView2 debugging port, in one session, against a real folder:
+
+- **Workspace restore.** `restore_workspace` reads Rust's own record and the
+  workbench comes up on the folder from the previous launch, with no path from
+  `localStorage` involved.
+- **Terminal panel / PTY.** A real PowerShell spawns, renders its prompt into
+  xterm, and starts in the workspace root — which Rust supplies, not the page.
+- **Explorer, search, and Changes.** 110 tree entries, four search hits for a
+  real symbol, and the change list showing the files this slice was editing.
+- **`git_diff`, including its refusals.** A tracked file diffs (953 against 983
+  bytes); a directory and an escaping id are refused with an error instead of
+  an empty side; a genuinely missing file still reads as empty.
+- **Monaco, natively.** It lays out (40 view lines), takes focus, reveals a
+  search result at line 329, and — the point of the Slice 12d fix — keeps the
+  cursor where the user put it across a tab round-trip instead of snapping back
+  to the reveal line.
+- **The folder dialog does not block the app.** `choose_workspace` runs
+  `blocking_pick_folder` on the blocking pool; with the dialog open, IPC still
+  answers. That was the specific risk flagged when it was written.
+
 ### Never exercised in the native window
 
-- **Terminal panel / PTY.** The whole of Slice 6 natively: spawning PowerShell,
-  input and output, resize, multiple terminals, disposal on close. Only the
-  browser echo fake has ever run.
 - **Agent chat.** Slice 11 natively — streaming with real animation frames,
-  approval, cancellation, the live region. Note the deterministic provider paces
-  on `requestAnimationFrame` when the document is visible, which has therefore
-  never actually been the code path under test.
-- **Explorer "Open Folder" empty state** and the native folder dialog, which
-  needs a real OS dialog and a user gesture. Slice 12e moved that dialog into
-  Rust (`choose_workspace`), so what has never been run is now a
-  `blocking_pick_folder` call on the async command runtime — a plausible place
-  to deadlock, and the one thing here that would be obvious in ten seconds of
-  actually opening a folder.
-- **`restore_workspace`**, and the record under `app_config_dir` it reads. The
-  path that matters — quit with a folder open, relaunch, get it back — has
-  never been walked natively.
+  approval, cancellation, the live region. The deterministic provider paces on
+  `requestAnimationFrame` when the document is visible, which has therefore
+  still never been the code path under test.
+- **Choosing a folder end to end.** The dialog opens and the app survives it,
+  but nothing has ever been *picked*: that needs a human at the mouse, and the
+  branch that adopts the result and writes the record has only been exercised
+  through `set_workspace`, which shares its body.
 
 ### Never exercised anywhere
 
-- **Typing into Monaco**, and therefore dirty state surviving dialog dismissal
-  end to end. No file has ever been edited through the UI and saved. This was
-  previously written up here as "sound by construction", on the grounds that
-  `EditorDialog` holds no content state. That was wrong, and the reveal-on-every-
-  keystroke defect closed in Slice 12d is what was hiding behind it. Do not argue
-  a surface is safe from its structure while it has never been run. The fix for
-  that defect is itself unobserved for the same reason.
+- **Typing into Monaco**, and therefore dirty state, saving, and the
+  discard-on-close dialog end to end. Still true, and now with a known cause:
+  Monaco 0.53 takes text through the **EditContext API**, not through a
+  textarea, so neither `Input.insertText` nor synthetic key events reach it.
+  Key events *do* arrive at the DOM — a listener records them — and the mouse
+  works normally, moving the cursor and focusing the editor. Text input alone
+  needs a real keyboard. Do not read the arrival of a keydown as evidence that
+  Monaco processed it.
 - **Screen reader.** Every accessibility claim in the dev log is structural:
   roles, labels, focus order and live-region wiring verified in the DOM. None of
   it has been heard. The `role="log"` transcript streaming word by word is the

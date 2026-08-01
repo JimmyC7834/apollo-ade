@@ -1621,3 +1621,69 @@ where the guide's §13.5 says 1430, because 5180 belongs to the sibling
 all along; the rule it was breaking is that a deviation must appear in this log,
 and now it does. That closes the last of the seven review items, which is why
 `docs/OPEN-ISSUES.md` no longer lists any open defect.
+
+---
+
+## Slice 12f: Running it, and the path that fell out
+
+**User outcome.** The terminal opens where the user's folder is, and says so:
+the prompt reads `PS C:\Users\...\tauri-ade-prototype>` where it used to read
+`PS Microsoft.PowerShell.Core\FileSystem::\?\C:\Users\...`. The workspace path
+the app shows and stores is an ordinary Windows path.
+
+**Cause.** `fs::canonicalize` returns a verbatim path — `\?\C:\...`. Every
+internal use was correct with it: `starts_with` confinement compares fine, and
+`git -C` accepts one (both verified natively this session). But the root is also
+handed outward — to the user as their workspace, and to `CommandBuilder::cwd`
+as a shell's starting directory — and PowerShell reads a verbatim path as a
+provider path rather than a location. This predates Slice 12e; moving the shell
+cwd from the renderer to Rust did not introduce it, it only made it visible,
+because nothing had ever opened a terminal in the native window before.
+
+**Added.** `canonical` in `workspace.rs`, wrapping `fs::canonicalize` and
+stripping the prefix, used by both `adopt` and `resolve`. Both, deliberately:
+`resolve` confines by `starts_with(root)`, so a root in one shape and a resolved
+file in the other makes every file in the workspace look like an escape. The
+existing tests built their roots with raw `fs::canonicalize` and failed exactly
+that way when only `resolve` was converted, which is the cheapest possible
+demonstration of why the helper has one caller-facing form. Verbatim UNC is left
+alone — its short form is a different rewrite and a network root is not worth
+the risk. `canonical_leaves_no_verbatim_prefix` covers it.
+
+**UI extracted and reused.** None.
+
+**Adapters and dependencies.** None.
+
+**Security boundary.** Unchanged in policy. Worth noting that the confinement
+check now compares stripped paths on both sides rather than verbatim ones; the
+comparison is the same comparison, and `resolve_confines_to_root` still passes
+with the escape cases it always had.
+
+**Accessibility behavior.** Unchanged.
+
+**Validation performed.** This entry is mostly validation. `cargo test` 5/5,
+`npm run check` 7/7, `npm run build` and `tsc --noEmit` clean — and then the
+app was actually run, over the WebView2 debugging port, against this repo as its
+workspace. What that showed is listed under "Verified in the native window" in
+`docs/OPEN-ISSUES.md`; the short version is that Slice 6's PTY, Slice 12e's
+`restore_workspace` and `git_diff` refusals, and Slice 12d's reveal fix all
+work, and that `choose_workspace` does not block the app while its dialog is
+open — the one risk that entry called out by name.
+
+**What was not validated.** Typing into Monaco, still, and now for a documented
+reason: Monaco 0.53 takes text through the EditContext API, so neither
+`Input.insertText` nor synthetic key events reach it, even though the keydown
+events demonstrably arrive in the DOM and the mouse works normally. Saving,
+dirty state and the discard dialog therefore remain unexercised end to end. No
+folder has been *picked* from the dialog either — the dialog opens and the app
+survives it, but the pick needs a human. No screen reader. Agent chat has still
+never run natively.
+
+**Caveats and deviations.** None. One correction to record: an earlier probe in
+this session appeared to show `terminal_create` hanging the app, and it did not.
+The probe had called `plugin:event|listen` with a hand-rolled payload, which
+wedges the IPC — every later `invoke` then hangs while the renderer keeps
+running, which is indistinguishable from the command under test deadlocking.
+The PTY sequence was isolated in a standalone test and is fine. That hazard is
+now written down in `docs/OPEN-ISSUES.md` so the next investigation does not
+spend the same hour.

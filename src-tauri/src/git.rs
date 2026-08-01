@@ -254,7 +254,7 @@ mod tests {
         std::fs::create_dir_all(dir.join("sub")).unwrap();
         std::fs::write(dir.join("kept.txt"), "hi").unwrap();
         std::fs::write(dir.join("../ade-diff-outside.txt"), "nope").unwrap();
-        let root = std::fs::canonicalize(&dir).unwrap();
+        let root = crate::workspace::canonical(&dir).unwrap();
 
         assert_eq!(working_tree_side(&root, "kept.txt").unwrap(), "hi");
         // Deleted: the one absence that legitimately reads as an empty side.
