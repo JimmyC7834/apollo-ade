@@ -9,7 +9,6 @@ export interface TerminalInstanceProps {
 	readonly id: string;
 	/** Inactive instances stay mounted so their scrollback survives. */
 	readonly active: boolean;
-	readonly cwd: string | undefined;
 	readonly onExit: (id: string, code: number | undefined) => void;
 }
 
@@ -20,7 +19,7 @@ export interface TerminalInstanceProps {
  * needs the terminal's real column and row count, and that is only known once
  * the element has been laid out and fitted.
  */
-export function TerminalInstance({ adapter, id, active, cwd, onExit }: TerminalInstanceProps) {
+export function TerminalInstance({ adapter, id, active, onExit }: TerminalInstanceProps) {
 	const hostRef = useRef<HTMLDivElement>(null);
 	const fitRef = useRef<FitAddon>(null);
 	// The exit callback must not re-create the terminal when it changes.
@@ -100,7 +99,7 @@ export function TerminalInstance({ adapter, id, active, cwd, onExit }: TerminalI
 		});
 
 		const typed = terminal.onData((data) => void adapter.write(id, data));
-		void adapter.create(id, terminal.cols, terminal.rows, cwd);
+		void adapter.create(id, terminal.cols, terminal.rows);
 
 		// The panel is resizable by sash and by window, so measure the element
 		// rather than listening for window resizes.
@@ -121,7 +120,7 @@ export function TerminalInstance({ adapter, id, active, cwd, onExit }: TerminalI
 			terminal.dispose();
 			void adapter.kill(id);
 		};
-	}, [adapter, id, cwd]);
+	}, [adapter, id]);
 
 	// Becoming visible again is not a resize of the element, so fit explicitly.
 	useEffect(() => {

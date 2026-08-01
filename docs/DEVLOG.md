@@ -1519,3 +1519,105 @@ text, rather than merging in anything from the current session. There is nothing
 to merge: the session has no root those ids mean anything in.
 
 **Caveats and deviations.** None.
+
+---
+
+## Slice 12e: The next three review defects, closed
+
+**User outcome.** A diff of a file the workspace refuses to read now says so,
+instead of drawing every line as deleted. The folder the app opens is the folder
+the user picked in an OS dialog, and nothing the page can say changes that. And
+the page no longer gets a global Tauri object it never used.
+
+**Cause.** All three from the same two-axis review, none observed failing.
+
+`git_diff` built its working-tree side as `resolve(...).ok().and_then(read).ok()
+.unwrap_or_default()`. Confinement refusal, over the size cap, and not-UTF-8 all
+collapsed into an empty string, and an empty side renders as a whole-file
+deletion — a plausible answer to a question that was denied.
+
+`set_workspace` accepted any absolute path from the renderer and canonicalised
+it into the root, and the frontend fed it a path out of `localStorage` on every
+launch. `resolve` was never the weak part; the root it confines *to* was. A
+tampered `ade.workbench` made `C:\` the workspace and every subsequent check
+obligingly confined to that.
+
+`withGlobalTauri: true` exposed `window.__TAURI__` to all page script. Nothing
+in the repo referenced it — detection uses `__TAURI_INTERNALS__` — so it was
+surface granted for nothing, and undeclared besides.
+
+**Added.** `working_tree_side` in `git.rs`, which classifies the one absence
+that legitimately reads as empty (the file is not there — a deleted file) and
+propagates every other refusal. In `workspace.rs`: `adopt`, now the only place a
+root is ever set; `record`/`remember`, the file under `app_config_dir` where the
+chosen root is written down; and two commands, `choose_workspace` (opens the OS
+dialog *in Rust* and records the answer) and `restore_workspace` (no arguments —
+it reads that record back).
+
+`set_workspace` survives as a debug-build affordance and refuses in release. It
+is how the app is driven over the WebView2 debugging port without an OS dialog,
+which is the only way anything here has ever been observed, so removing it would
+have cost more than it bought. It records the root like a real choice does, so a
+probe still survives a reload.
+
+**UI extracted and reused.** None. No component changed.
+
+**Adapters and dependencies.** `WorkspaceProvider.restoreWorkspace` lost its
+`path` parameter — the interface change *is* the fix, since a seam that takes a
+root from the caller cannot be made safe by its implementation. The Tauri
+provider no longer imports `@tauri-apps/plugin-dialog`; that npm dependency and
+the `dialog:allow-open` capability are both gone, because the renderer no longer
+opens dialogs. The Rust plugin stays — it is what `choose_workspace` uses.
+
+**Security boundary.** This is the slice. Before it, two commands took a
+directory from the renderer, and reviewing the change turned up the second one:
+`set_workspace` took a root, and `terminal_create` took a `cwd` it spawned
+PowerShell in. Page script could name any directory on the machine for either.
+Both are gone — `terminal_create` now reads the root from Rust's own state, and
+`set_workspace` survives only as a debug affordance that refuses in release. The
+untrusted side can no longer name a directory at all, only a relative id inside
+a root it did not choose. `git_diff` no longer converts a refusal into content,
+and `WorkbenchController` no longer drops the resulting error on the floor: a
+refused file or diff is announced instead of quietly doing nothing.
+
+The `cwd` parameter was dead surface once Rust stopped needing it, so it came
+out of the terminal adapter, `TerminalPanel` and `TerminalInstance` as well.
+
+**Accessibility behavior.** Unchanged.
+
+**Validation performed.** `npm run build` clean apart from the pre-existing
+chunk-size warning; `npm run check` 7/7; `cargo test` 4/4, the new one covering
+`working_tree_side` — present file, deleted file, escaping path, absolute path,
+and a directory — without needing a git repository; `tsc --noEmit` clean.
+
+A two-axis review ran before this was committed and found three things in the
+first cut of it. `working_tree_side` keyed "the file is simply absent" on the
+string `"not found"`, which `resolve` returned from *two* sites: the metadata
+probe and the canonicalize below it. A file that existed but could not be
+canonicalised — permission denied on a parent, say — therefore still collapsed
+to an empty side, which is the exact defect being fixed. `resolve` now reports
+that case differently. The review also caught `terminal_create` (above) and the
+fact that a `git_diff` error had nowhere to go in the UI.
+
+**What was not validated.** The whole of the workspace change, and this is the
+uncomfortable part: `choose_workspace` calls `blocking_pick_folder`, which
+parks its thread until the user answers, so it is put on the blocking pool
+rather than left on an async worker. That is a reasoned choice, not a verified
+one: no folder has ever been opened in this app, and a dialog that never returns
+would look exactly like the app hanging. Nor
+has `restore_workspace` — quit with a folder open, relaunch, get it back — been
+walked natively. A release build has never been run, so `set_workspace`'s
+refusal is untested in the configuration where it matters. `git_diff`'s new
+error path is covered at the helper but the command itself still needs a repo
+and a real refusal to see end to end.
+
+**Caveats and deviations.** `withGlobalTauri` was an undeclared deviation and is
+now simply gone rather than declared, which is the cheaper of the two fixes the
+open-issues entry offered.
+
+The dev port is declared here rather than fixed: this repo runs Vite on **5190**
+where the guide's §13.5 says 1430, because 5180 belongs to the sibling
+`agent-window-tauri` and the two are run side by side. `context.md` has said so
+all along; the rule it was breaking is that a deviation must appear in this log,
+and now it does. That closes the last of the seven review items, which is why
+`docs/OPEN-ISSUES.md` no longer lists any open defect.

@@ -38,8 +38,12 @@ export interface WorkspaceProvider {
 	 */
 	readonly defaultWorkspace?: WorkspaceSelection;
 	chooseWorkspace(): Promise<WorkspaceSelection | undefined>;
-	/** Re-select a previously chosen root by absolute path. */
-	restoreWorkspace(path: string): Promise<WorkspaceSelection>;
+	/**
+	 * Re-select whatever root was last chosen. Deliberately takes no path: the
+	 * provider is the side that knows which folder the user answered a dialog
+	 * with, and persisted state is not evidence of that.
+	 */
+	restoreWorkspace(): Promise<WorkspaceSelection>;
 	getTree(): Promise<readonly WorkspaceEntry[]>;
 	getFiles(): Promise<readonly WorkspaceEntry[]>;
 	readFile(id: string): Promise<WorkspaceFile>;
@@ -97,8 +101,8 @@ function fixtureProvider(): WorkspaceProvider {
 		async chooseWorkspace() {
 			return undefined;
 		},
-		async restoreWorkspace(path) {
-			return { label: 'fixture', path };
+		async restoreWorkspace() {
+			return { label: 'fixture', path: '' };
 		},
 		async getTree() {
 			return entries;
@@ -336,20 +340,23 @@ function fileSystemAccessProvider(pick: NonNullable<Window['showDirectoryPicker'
 
 function tauriProvider(): WorkspaceProvider {
 	const core = () => import('@tauri-apps/api/core');
-	// `set_workspace` is idempotent: choosing and restoring are the same
-	// canonicalize-and-store operation, only the source of the path differs.
-	const select = async (path: string) =>
-		(await core()).invoke<WorkspaceSelection>('set_workspace', { path });
 	const tree = async () => (await core()).invoke<WorkspaceEntry[]>('list_tree');
 
 	return {
 		canChooseWorkspace: true,
+		/*
+		 * The folder dialog runs in Rust, not here. Rust is the filesystem
+		 * authority, so it is also the only side that gets to learn a root:
+		 * neither command below takes a path, and there is nothing this
+		 * provider could send that would widen what the app can reach.
+		 */
 		async chooseWorkspace() {
-			const { open } = await import('@tauri-apps/plugin-dialog');
-			const picked = await open({ directory: true, multiple: false });
-			return typeof picked === 'string' ? select(picked) : undefined;
+			const picked = await (await core()).invoke<WorkspaceSelection | null>('choose_workspace');
+			return picked ?? undefined;
 		},
-		restoreWorkspace: select,
+		async restoreWorkspace() {
+			return (await core()).invoke<WorkspaceSelection>('restore_workspace');
+		},
 		getTree: tree,
 		async getFiles() {
 			return (await tree()).filter((entry) => entry.kind === 'file');

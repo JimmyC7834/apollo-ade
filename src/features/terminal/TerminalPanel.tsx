@@ -6,8 +6,6 @@ import { TerminalInstance } from './TerminalInstance';
 
 export interface TerminalPanelProps {
 	readonly adapter: TerminalAdapter;
-	/** Working directory for new shells; the selected workspace root. */
-	readonly cwd: string | undefined;
 }
 
 interface Session {
@@ -18,7 +16,7 @@ interface Session {
 
 let counter = 0;
 
-export function TerminalPanel({ adapter, cwd }: TerminalPanelProps) {
+export function TerminalPanel({ adapter }: TerminalPanelProps) {
 	const [sessions, setSessions] = useState<readonly Session[]>([]);
 	const [activeId, setActiveId] = useState<string | undefined>(undefined);
 
@@ -92,7 +90,6 @@ export function TerminalPanel({ adapter, cwd }: TerminalPanelProps) {
 						adapter={adapter}
 						id={session.id}
 						active={session.id === activeId}
-						cwd={cwd}
 						onExit={markExited}
 					/>
 				))

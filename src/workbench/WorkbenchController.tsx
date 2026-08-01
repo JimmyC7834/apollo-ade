@@ -34,6 +34,11 @@ import {
 } from './WorkbenchLayout';
 import { useWindowControls } from './useWindowControls';
 
+// Rust rejections arrive as strings, not Errors, so both shapes are read.
+function reason(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
 export function WorkbenchController() {
 	const controls = useWindowControls();
 
@@ -115,7 +120,7 @@ export function WorkbenchController() {
 			let workspace = provider.defaultWorkspace;
 			if (restored?.workspace) {
 				try {
-					workspace = await provider.restoreWorkspace(restored.workspace.path);
+					workspace = await provider.restoreWorkspace();
 				} catch {
 					// Gone, or a browser handle that cannot be re-granted
 					// without a gesture. Fall back to whatever exists by
@@ -234,7 +239,15 @@ export function WorkbenchController() {
 				}
 				return;
 			}
-			const file = await provider.readFile(id);
+			// Same rule as openDiff: a file the workspace refuses is reported,
+			// not silently nothing-happened.
+			let file;
+			try {
+				file = await provider.readFile(id);
+			} catch (error) {
+				announce(`Could not open ${id}. ${reason(error)}`);
+				return;
+			}
 			setInputs((current) =>
 				current.some((input) => input.id === id)
 					? current
@@ -260,7 +273,7 @@ export function WorkbenchController() {
 			setActiveEditorId(id);
 			setEditorOpen(true);
 		},
-		[inputs, provider]
+		[announce, inputs, provider]
 	);
 
 	// Diffs share the editor's tab strip but live in their own id space, so a
@@ -268,7 +281,20 @@ export function WorkbenchController() {
 	const openDiff = useCallback(
 		async (id: string) => {
 			const diffId = `diff:${id}`;
-			const diff = await changesProvider.getDiff(id);
+			/*
+			 * A refused diff has to say so. Rust reports a file it will not read
+			 * — outside the workspace, a symlink, over the size cap — as an
+			 * error rather than as empty content, precisely so this does not
+			 * render as a diff deleting the whole file. Swallowing it here would
+			 * put the silence back one layer down.
+			 */
+			let diff;
+			try {
+				diff = await changesProvider.getDiff(id);
+			} catch (error) {
+				announce(`Could not open the diff for ${id}. ${reason(error)}`);
+				return;
+			}
 			const input: EditorInput = {
 				kind: 'diff',
 				id: diffId,
@@ -288,7 +314,7 @@ export function WorkbenchController() {
 			setActiveEditorId(diffId);
 			setEditorOpen(true);
 		},
-		[changesProvider]
+		[announce, changesProvider]
 	);
 
 	const editFile = useCallback((id: string, content: string) => {
@@ -585,7 +611,7 @@ export function WorkbenchController() {
 					/>
 				</Pane>
 			}
-			panel={<TerminalPanel adapter={terminalAdapter} cwd={selection?.path || undefined} />}
+			panel={<TerminalPanel adapter={terminalAdapter} />}
 			overlays={
 				<>
 					<EditorDialog

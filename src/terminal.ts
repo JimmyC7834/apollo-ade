@@ -8,7 +8,8 @@ export type ExitListener = (id: string, code: number | undefined) => void;
 export interface TerminalAdapter {
 	/** True when sessions are real shells rather than the echo fallback. */
 	readonly isNative: boolean;
-	create(id: string, cols: number, rows: number, cwd?: string): Promise<void>;
+	/** The working directory is the provider's business, not the caller's. */
+	create(id: string, cols: number, rows: number): Promise<void>;
 	write(id: string, data: string): Promise<void>;
 	resize(id: string, cols: number, rows: number): Promise<void>;
 	kill(id: string): Promise<void>;
@@ -117,8 +118,8 @@ function tauriAdapter(): TerminalAdapter {
 	const core = () => import('@tauri-apps/api/core');
 	return {
 		isNative: true,
-		async create(id, cols, rows, cwd) {
-			await (await core()).invoke('terminal_create', { id, cols, rows, cwd });
+		async create(id, cols, rows) {
+			await (await core()).invoke('terminal_create', { id, cols, rows });
 		},
 		async write(id, data) {
 			await (await core()).invoke('terminal_write', { id, data });

@@ -52,9 +52,9 @@ pub fn terminal_create(
     id: String,
     cols: u16,
     rows: u16,
-    cwd: Option<String>,
     app: AppHandle,
     state: tauri::State<'_, TerminalState>,
+    workspace: tauri::State<'_, crate::workspace::WorkspaceState>,
 ) -> Result<(), String> {
     let size = PtySize {
         rows: rows.max(1),
@@ -70,8 +70,13 @@ pub fn terminal_create(
     for arg in &SHELL[1..] {
         command.arg(arg);
     }
-    if let Some(cwd) = cwd {
-        command.cwd(cwd);
+    // The shell starts in the workspace root, which Rust reads from its own
+    // state rather than taking from the renderer. A directory named by page
+    // script is a directory the untrusted side chose to run a shell in, and
+    // that is the same hole `choose_workspace` closes for the file surface.
+    // With no workspace selected the shell inherits the app's directory.
+    if let Ok(root) = crate::workspace::root_of(&workspace) {
+        command.cwd(root);
     }
     let child = pair.slave.spawn_command(command).map_err(|e| e.to_string())?;
     // The slave is dropped here on purpose: while this process still holds it

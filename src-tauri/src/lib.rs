@@ -9,6 +9,8 @@ pub fn run() {
         .manage(workspace::WorkspaceState::default())
         .manage(terminal::TerminalState::default())
         .invoke_handler(tauri::generate_handler![
+            workspace::choose_workspace,
+            workspace::restore_workspace,
             workspace::set_workspace,
             workspace::list_tree,
             workspace::read_file,

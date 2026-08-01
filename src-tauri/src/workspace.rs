@@ -12,6 +12,8 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
 
 use serde::Serialize;
+use tauri::Manager;
+use tauri_plugin_dialog::DialogExt;
 
 const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_DEPTH: usize = 12;
@@ -69,8 +71,11 @@ pub(crate) fn resolve(root: &Path, id: &str) -> Result<PathBuf, String> {
     }
 
     // Canonicalize last, as a belt-and-braces check against anything the
-    // component scan missed (e.g. Windows 8.3 short names).
-    let real = fs::canonicalize(&joined).map_err(|_| "not found".to_string())?;
+    // component scan missed (e.g. Windows 8.3 short names). Its failure is
+    // deliberately *not* "not found" — the file was there a line ago, so this
+    // is a permission or path problem, and callers that treat absence as a
+    // legitimate answer (`git_diff`) must not treat this one that way.
+    let real = fs::canonicalize(&joined).map_err(|e| format!("cannot resolve path: {e}"))?;
     if !real.starts_with(root) {
         return Err("path escapes the workspace".into());
     }
@@ -126,12 +131,9 @@ pub(crate) fn root_of(state: &WorkspaceState) -> Result<PathBuf, String> {
         .ok_or_else(|| "no workspace selected".to_string())
 }
 
-#[tauri::command]
-pub fn set_workspace(
-    path: String,
-    state: tauri::State<'_, WorkspaceState>,
-) -> Result<WorkspaceInfo, String> {
-    let root = fs::canonicalize(&path).map_err(|e| e.to_string())?;
+/// Adopt a directory as the workspace root. The only place a root is ever set.
+fn adopt(path: &Path, state: &WorkspaceState) -> Result<WorkspaceInfo, String> {
+    let root = fs::canonicalize(path).map_err(|e| e.to_string())?;
     if !root.is_dir() {
         return Err("not a directory".into());
     }
@@ -144,6 +146,89 @@ pub fn set_workspace(
         path: root.display().to_string(),
     };
     *state.0.lock().unwrap() = Some(root);
+    Ok(info)
+}
+
+/// Where the chosen root is remembered between launches.
+fn record(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_config_dir()
+        .map(|dir| dir.join("workspace"))
+        .map_err(|e| e.to_string())
+}
+
+/// Write the record `restore_workspace` reads back.
+///
+/// Silent on failure, deliberately: the user asked to open a folder and it is
+/// open. Losing only the ability to reopen it automatically next launch is not
+/// worth failing that on, and there is nothing they could do about it.
+fn remember(app: &tauri::AppHandle, path: &str) {
+    let Ok(file) = record(app) else { return };
+    if let Some(dir) = file.parent() {
+        let _ = fs::create_dir_all(dir);
+    }
+    let _ = fs::write(file, path);
+}
+
+/// Choose the workspace root through an OS folder dialog.
+///
+/// The dialog runs here rather than in the renderer, and the answer is written
+/// down here too, because the renderer is the untrusted side: no command takes
+/// a root from it. Choosing a folder is a user gesture through an OS dialog;
+/// restoring one is not, so `restore_workspace` reads back what this wrote
+/// instead of trusting a path out of `localStorage`.
+#[tauri::command]
+pub async fn choose_workspace(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, WorkspaceState>,
+) -> Result<Option<WorkspaceInfo>, String> {
+    // `blocking_pick_folder` parks its thread until the user answers, so it is
+    // put on the blocking pool rather than on an async worker.
+    let dialog = app.clone();
+    let picked = tauri::async_runtime::spawn_blocking(move || {
+        dialog.dialog().file().blocking_pick_folder()
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    let Some(picked) = picked else {
+        return Ok(None); // Dismissed.
+    };
+    let path = picked.into_path().map_err(|e| e.to_string())?;
+    let info = adopt(&path, &state)?;
+    remember(&app, &info.path);
+    Ok(Some(info))
+}
+
+/// Re-select the root last chosen, by reading Rust's own record of it.
+///
+/// Takes no path. That is the whole point: see `choose_workspace`.
+#[tauri::command]
+pub fn restore_workspace(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, WorkspaceState>,
+) -> Result<WorkspaceInfo, String> {
+    let recorded = fs::read_to_string(record(&app)?)
+        .map_err(|_| "no workspace has been chosen on this machine".to_string())?;
+    adopt(Path::new(recorded.trim()), &state)
+}
+
+/// Debug-only: set the root by path, so the app can be driven over the WebView2
+/// debugging port without an OS dialog — `docs/OPEN-ISSUES.md` explains how.
+/// It records the root like a real choice does, so a probe survives a reload.
+///
+/// Refuses in release builds, where a root named by the renderer is exactly the
+/// hole `choose_workspace` exists to close.
+#[tauri::command]
+pub fn set_workspace(
+    path: String,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, WorkspaceState>,
+) -> Result<WorkspaceInfo, String> {
+    if !cfg!(debug_assertions) {
+        return Err("set_workspace is a debug-build affordance".into());
+    }
+    let info = adopt(Path::new(&path), &state)?;
+    remember(&app, &info.path);
     Ok(info)
 }
 

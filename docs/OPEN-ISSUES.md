@@ -3,9 +3,9 @@
 Living document — **edit it**, unlike `DEVLOG.md`, which is append-only history.
 Close an item by deleting it and recording the fix in the dev log.
 
-Last updated after Slice 12d closed the first three review defects. The numbering
-below is positional, not stable — closing an item renumbers the rest, so cite
-these by title in anything that outlives the file.
+Last updated after Slice 12e, which closed the last of the review defects. What
+is left is the unverified surface, which is the larger half of this file and
+always was.
 
 ---
 
@@ -55,8 +55,14 @@ Use **forward slashes**. Backslashes survive neither shell heredocs nor JS
 string escaping reliably, and `set_workspace` rejects a mangled path with
 Windows error 123, which reads like an app bug and is not one.
 
+`set_workspace` is a **debug-build affordance only** — it refuses in release,
+because a root named by the renderer is the hole `choose_workspace` closes. It
+records the root exactly as a real choice does, so a probe survives a reload.
+
 To make the UI reflect it, write `ade.workbench` into `localStorage` with a
-`workspace` field and reload — that exercises the real restore path.
+`workspace` field and reload — that exercises the real restore path. Only the
+*presence* of that field matters now; the `path` in it is decorative, since
+`restore_workspace` takes no argument and reads Rust's own record.
 
 ### The browser pane is not a substitute
 
@@ -76,61 +82,13 @@ still fine there.
 
 ## Open defects
 
-Found by a two-axis review of the whole implementation — slices 0 through 12,
-6,869 lines — run after Slice 12c. Every one below was read in the source, not
-just reported. None has been observed failing in the running app: the review
-found them by reading, and the reason most survived is written under each.
+**None.** The two-axis review of slices 0 through 12 — 6,869 lines, run after
+Slice 12c — found seven, and Slices 12d and 12e closed all of them.
 
-Ordered by consequence.
-
-### 1. `git_diff` turns an unreadable file into an empty diff
-
-`src-tauri/src/git.rs:153-156`. The working-tree side is
-`resolve(...).ok().and_then(read_to_string(...).ok()).unwrap_or_default()`.
-Three different failures — path rejected by confinement, file over the read cap,
-file not valid UTF-8 — all collapse to an empty string, and the diff renders as
-though every line was deleted. A confinement refusal in particular should be an
-error reaching the user, not a plausible-looking diff.
-
-The `unwrap_or_default()` on the `original` side above it is correct and should
-stay: `git show HEAD:path` genuinely fails for a newly added file, and empty is
-the right answer there.
-
-### 2. The workspace root is whatever the renderer says it is
-
-`src-tauri/src/workspace.rs:129`. `resolve` itself is sound — component scan,
-symlink rejection, canonicalise then `starts_with` — and `git.rs:40` matches it.
-There is no escape from a root. But `set_workspace` accepts any absolute path
-the frontend sends and canonicalises it into the root, and `workspace.ts:341`
-routes `restoreWorkspace` through it with a path read straight out of
-`localStorage`.
-
-The whole point of the confinement design is that the renderer is the untrusted
-side. A tampered `ade.workbench` value sets the root to `C:\` and every
-subsequent `resolve` obligingly confines to it. Natively choosing a folder is a
-user gesture through an OS dialog; restoring one is not.
-
-Worth deciding before Slice A gives a model tool access to this surface. It is a
-design gap rather than a code bug, so the fix is a slice: persist a token the
-Rust side issued rather than a raw path, or make a restored root re-confirmable.
-
-### 3. `withGlobalTauri: true` is an undeclared deviation
-
-`src-tauri/tauri.conf.json:13` exposes `window.__TAURI__` to all page script,
-which cuts against Slice 4's stated goal of a workspace *without granting broad
-filesystem access to the frontend*, and against §4.3's rule that feature
-components consume domain interfaces rather than calling Tauri directly. The
-provider detection path uses `__TAURI_INTERNALS__` and does not need it.
-
-Not recorded in the dev log and not in the guide's §15, so it is an undeclared
-deviation, which `context.md` forbids. Either drop the flag or declare it.
-
-### 4. The dev port deviates from the guide, undeclared
-
-The guide's §13.5 fixes the dev server at `1430`; this repo uses `5190`. That is
-stated in `context.md:58` but never in the dev log, so it is technically
-undeclared. Trivial in itself — recorded only because the rule is that no
-deviation is silent.
+That is a statement about reading, not about running. Every one of those seven
+was found by reading the source, and every fix was verified the same way; the
+unverified surface below has not shrunk, and is now the only thing standing
+between this and a working app. Read it before believing the heading.
 
 ### Not defects, but worth a cleanup pass
 
@@ -138,7 +96,7 @@ Duplication the review turned up, none of it wrong today:
 `forceCloseEditor` (`WorkbenchController.tsx:324`) and `close`
 (`TerminalPanel.tsx:33`) are the same close-and-select-neighbour algorithm;
 `parentOf` (`ExplorerTree.tsx:19`) and `directoryOf` (`ChangesView.tsx:31`) are
-identical bodies under two names; `basename` (`workspace.ts:80`) is re-inlined
+identical bodies under two names; `basename` (`workspace.ts:84`) is re-inlined
 twice in `changes.ts`; the `'__TAURI_INTERNALS__' in window` test appears in four
 files; the same Arrow/Home/End cascade appears in four components; and
 `WorkbenchLayout.tsx:27` hardcodes three sizes that `tokens.css:96` already
@@ -167,7 +125,14 @@ the same thing, and the dev log should keep saying so until it has.
   on `requestAnimationFrame` when the document is visible, which has therefore
   never actually been the code path under test.
 - **Explorer "Open Folder" empty state** and the native folder dialog, which
-  needs a real OS dialog and a user gesture.
+  needs a real OS dialog and a user gesture. Slice 12e moved that dialog into
+  Rust (`choose_workspace`), so what has never been run is now a
+  `blocking_pick_folder` call on the async command runtime — a plausible place
+  to deadlock, and the one thing here that would be obvious in ten seconds of
+  actually opening a folder.
+- **`restore_workspace`**, and the record under `app_config_dir` it reads. The
+  path that matters — quit with a folder open, relaunch, get it back — has
+  never been walked natively.
 
 ### Never exercised anywhere
 
