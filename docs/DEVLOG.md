@@ -1360,3 +1360,75 @@ focus items have now been deleted.
 
 **Caveats and deviations.** None. Nothing in the guide changed; this brings the
 implementation up to what Slice 12 already specified.
+
+---
+
+## Slice 11b: Cancelled approvals, closed (follow-up)
+
+**User outcome.** Pressing Stop while the agent is waiting for approval now ends
+the question. Continue and Skip disappear and the approval reads "Not answered";
+it is no longer possible to approve a run that is not running. Answering an
+approval affects only the run that asked, and never reaches back into an earlier
+one.
+
+**Cause.** Two defects in `AgentChat.tsx`, found by a two-axis review of the
+whole implementation rather than by using the app.
+
+`applyEvent` handled `cancelled` by setting `status` and nothing else, so a
+pending approval stayed pending, kept its live buttons, and would announce
+"Approved. Continuing." into the live region for a dead run.
+
+`resolve` then mapped over **every** turn and flipped anything still pending. So
+answering a fresh approval also silently answered a stale one abandoned by an
+earlier Stop — the transcript rewrote history the user had already read.
+
+**Correction to the Slice 11 entry above.** That entry states the transcript is
+frozen after Stop. It was not, and had never been. This log is append-only, so
+the original line stands as written; this paragraph is the correction. The claim
+was made from reading the provider's state machine, which does stop cleanly —
+what was never checked was the component's reduction of its events.
+
+**Added.** `src/features/agent/transcript.ts`: the transcript reduction as pure
+functions, out of the JSX. `applyEvent` and `asPlainText` moved unchanged;
+`resolveApproval` and `canAnswer` are new and hold the rules that were wrong;
+`approvalLabel` derives how an approval reads from the status of the turn that
+owns it. `transcript.check.ts` covers all of it.
+
+**UI extracted and reused.** None. `AgentChat.tsx` lost 60 lines and gained no
+component.
+
+**Adapters and dependencies.** None. `agent.ts` is untouched — the provider's
+state machine was always correct, and both defects were downstream of it.
+
+**Security boundary.** Unchanged. Nothing here reaches Rust.
+
+**Accessibility behavior.** Three changes, two of them beyond the reported
+defect and taken because the rule is that accessibility is part of the work.
+The approval group's `aria-label` now carries its own outcome, so navigating
+group to group says which questions are still open without reading into each.
+Answering now returns focus to the composer: the clicked button was being
+replaced by static text, dropping focus to `body` for the remainder of the run,
+which with a real model could be a long time. And the label a screen reader
+reads is the same string the plain-text transcript uses, from one function.
+
+**Validation performed.** `tsc --noEmit` clean; `npm run check` 7/7 including
+the new one; `npm run build` clean apart from the pre-existing chunk-size
+warning; `cargo test` 3/3. The new check was mutation-tested: dropping the run
+status from `canAnswer`, dropping the status guard from `resolveApproval`,
+scoping it to the last turn instead of the running one — each reintroduces a
+defect and each is caught.
+
+**What was not validated.** Nothing was run in the native window, and Slice 11
+still has never been. No screen reader has heard any of the above. In
+particular, cancelling with an approval pending now changes text inside a
+`role="log"` region at the same moment `onAnnounce` says "Agent stopped", and
+the order those two reach a screen reader is unknown and was not investigated —
+guessing at announcement ordering without hearing it is how the claim being
+corrected in this entry got made in the first place.
+
+**Caveats and deviations.** None from the guide. One judgement call worth
+recording: an approval abandoned by Stop keeps `state: 'pending'` rather than
+gaining a fourth state, because whether a question is still open is a fact about
+the run, not about the question. `approvalLabel` derives it. A stored fourth
+state would have to be kept in step with `Turn.status` forever, and the first
+time it drifted the transcript would claim something that never happened.

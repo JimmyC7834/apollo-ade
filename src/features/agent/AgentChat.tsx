@@ -5,67 +5,21 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import type { AgentEvent, AgentProvider, AgentRun } from '../../agent';
+import type { AgentProvider, AgentRun } from '../../agent';
 import { Icon, Overlay } from '../../ui';
-
-type Part =
-	| { readonly kind: 'text'; readonly text: string }
-	| { readonly kind: 'activity'; readonly label: string; readonly detail?: string }
-	| {
-			readonly kind: 'approval';
-			readonly label: string;
-			readonly detail: string;
-			readonly state: 'pending' | 'approved' | 'skipped';
-	  };
-
-interface Turn {
-	readonly id: number;
-	readonly prompt: string;
-	readonly parts: readonly Part[];
-	readonly status: 'running' | 'complete' | 'cancelled';
-}
+import {
+	applyEvent,
+	approvalLabel,
+	asPlainText,
+	canAnswer,
+	resolveApproval,
+	type Turn,
+} from './transcript';
 
 export interface AgentChatProps {
 	readonly provider: AgentProvider;
 	/** Routed to the workbench live region for state changes worth hearing. */
 	readonly onAnnounce?: (message: string) => void;
-}
-
-/** Fold one event into the running turn. Text chunks merge; the rest append. */
-function applyEvent(turn: Turn, event: AgentEvent): Turn {
-	if (event.kind === 'complete' || event.kind === 'cancelled') {
-		return { ...turn, status: event.kind === 'complete' ? 'complete' : 'cancelled' };
-	}
-	if (event.kind === 'text') {
-		const last = turn.parts.at(-1);
-		return {
-			...turn,
-			parts:
-				last?.kind === 'text'
-					? [...turn.parts.slice(0, -1), { kind: 'text', text: last.text + event.text }]
-					: [...turn.parts, { kind: 'text', text: event.text }],
-		};
-	}
-	if (event.kind === 'activity') {
-		return { ...turn, parts: [...turn.parts, event] };
-	}
-	return { ...turn, parts: [...turn.parts, { ...event, state: 'pending' }] };
-}
-
-/** The transcript as plain text, for the accessible-transcript dialog. */
-function asPlainText(turns: readonly Turn[]): string {
-	return turns
-		.map((turn) => {
-			const body = turn.parts.map((part) =>
-				part.kind === 'text'
-					? part.text
-					: part.kind === 'activity'
-						? `\n[tool] ${part.label}${part.detail ? ` — ${part.detail}` : ''}\n`
-						: `\n[approval] ${part.label} — ${part.detail} (${part.state})\n`
-			);
-			return `You: ${turn.prompt}\n\nAgent: ${body.join('')}\n[${turn.status}]`;
-		})
-		.join('\n\n———\n\n');
 }
 
 export function AgentChat({ provider, onAnnounce }: AgentChatProps) {
@@ -122,19 +76,15 @@ export function AgentChat({ provider, onAnnounce }: AgentChatProps) {
 
 	const resolve = useCallback(
 		(approved: boolean) => {
-			setTurns((current) =>
-				current.map((turn) => ({
-					...turn,
-					parts: turn.parts.map((part) =>
-						part.kind === 'approval' && part.state === 'pending'
-							? { ...part, state: approved ? 'approved' : 'skipped' }
-							: part
-					),
-				}))
-			);
+			setTurns((current) => resolveApproval(current, approved));
 			setAwaitingApproval(false);
 			onAnnounce?.(approved ? 'Approved. Continuing.' : 'Skipped.');
 			runRef.current?.resolveApproval(approved);
+			// The button that was just clicked is about to be replaced by static
+			// text, and focus would fall to `body` — for the rest of the run, since
+			// nothing else reclaims it until the run ends. Send it where the run
+			// ending sends it too, so answering never strands a keyboard user.
+			promptRef.current?.focus();
 		},
 		[onAnnounce]
 	);
@@ -176,11 +126,17 @@ export function AgentChat({ provider, onAnnounce }: AgentChatProps) {
 									className="ide-agent-approval"
 									key={index}
 									role="group"
-									aria-label={`Approval: ${part.label}`}
+									// Carries its own outcome: navigating group to group
+									// should not require reading into each one to find
+									// out which questions are still being asked.
+									aria-label={`Approval: ${part.label} — ${approvalLabel(
+										part.state,
+										turn.status
+									)}`}
 								>
 									<p className="ide-agent-approval-title">{part.label}</p>
 									<p className="ide-agent-approval-detail">{part.detail}</p>
-									{part.state === 'pending' ? (
+									{canAnswer(part, turn) ? (
 										<div className="ide-agent-approval-actions">
 											<button
 												type="button"
@@ -199,7 +155,7 @@ export function AgentChat({ provider, onAnnounce }: AgentChatProps) {
 										</div>
 									) : (
 										<p className="ide-agent-approval-state">
-											{part.state === 'approved' ? 'Approved' : 'Skipped'}
+											{approvalLabel(part.state, turn.status)}
 										</p>
 									)}
 								</div>
