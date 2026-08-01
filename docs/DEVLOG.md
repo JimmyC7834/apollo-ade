@@ -1223,3 +1223,77 @@ Slice 12 check queried the DOM for open dialogs, focus, roles and tab state,
 and all of that was correct — nothing in that set would notice that the region
 *behind* the modal had been squashed. It took a screenshot to see it. Layout
 regressions need a geometry assertion, not a semantics one.
+
+## Slice 12b: Native verification pass
+
+**User outcome.** Opening a file no longer destroys and rebuilds the editor, so
+Monaco instances, models and undo history survive. Focus reaches the editor
+reliably for files. One defect remains open and is described below.
+
+**Added.** Nothing shipped. A native inspection capability was established:
+launching with `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222`
+exposes the Tauri WebView2 over the DevTools protocol, so the real window can be
+driven and measured the same way the browser pane was. Everything since Slice 9
+had been unverified natively; that gap is now closed for most of the app.
+
+**What the native window proved that the browser could not.** It serves real
+frames (32 in 500ms, against 0 in the hidden browser pane), so Monaco actually
+lays out and paints. Every timing conclusion drawn in Slice 12 was therefore
+drawn in an environment that could not exercise this code, and one of them was
+wrong.
+
+**Fixed — editor destroyed on every new file open.** `openFile` set
+`activeEditorId` before awaiting the read, so for one render the active id named
+an input that did not exist yet. `EditorWorkbench` then rendered no editor at
+all, unmounting Monaco and remounting it once the content arrived — discarding
+the instance, its models, and any focus placed in it. `openDiff` had the same
+ordering. Both now select the id only after the input is in state. This was a
+real product bug independent of focus.
+
+**Fixed — focus placed once, then lost.** `focusEditor` stopped at the first
+successful `focus()`. Measured in the real window, focus lands in Monaco and is
+torn out again when Monaco rebuilds its input for a newly opened model, up to
+400ms later. It now watches for a short window, re-focusing only while focus is
+unclaimed, and falls back to the input element when `focus()` goes quiet during
+a rebuild. `EditorDialog` also focuses from a callback ref, which runs exactly
+when an editor instance attaches.
+
+**Verified natively.** Rust layer, first time ever: `set_workspace`
+canonicalises to a verbatim path; `list_tree` returns 106 entries with zero
+`node_modules`/`.git`/`target`/`dist` leakage; `search_workspace` returns real
+hits with correct line numbers; `read_file` works. Security boundary: five
+escape attempts (`../`, `src/../../`, absolute Windows, backslash traversal,
+`/etc/passwd`) were all refused. Git, first time ever: write, detected as
+modified, `git_diff` showing real HEAD content, stage, unstage, revert, back to
+zero changes — with the scratch line gone and the tree clean. Layout: body 765
+of 800 with the dialog closed (`display: none`), dialog centred exactly at
+(90,56) 1100x688 when open, body undisplaced. Workspace restore repopulates the
+Explorer and pane title. Escape returns focus to the opener 6/6.
+
+**Open defect — editor focus with diffs.** Opening a diff does not put focus in
+the modified editor, and after a diff has been shown the next file open fails to
+focus as well: 1/6 in an interleaved source/diff run, against 4/5 when only
+files are opened. Focus lands on `body` inside the open modal, so the dialog is
+still keyboard-reachable by tabbing, but this does not meet the guide's Slice 12
+contract ("initial focus into Monaco"). Cause not established. Not a regression
+from this pass — it was never working; the browser pane simply could not show
+it.
+
+**Known and accepted.** The very first editor opened after a page load does not
+take focus in development. Confirmed by removing `StrictMode` and re-running:
+the case then passes. React's development-only double-mount disposes and
+recreates Monaco, and production builds do not do this. `StrictMode` was
+restored; it stays.
+
+**Validation performed.** `tsc`, `npm run check` (5), `npm run build` clean.
+Everything above measured from the live native window over CDP. The working
+tree is clean apart from the source changes in this entry — the verification
+scratch line was reverted and `context.md` restored.
+
+**Not validated.** Terminal PTY and agent chat were not reached natively.
+Typing into Monaco still untested. No screen reader.
+
+**Caveats.** `git_revert` restores through git's filters, so with
+`core.autocrlf=true` a reverted file can come back with different line endings
+than it had on disk. That is git's own behaviour, not ours, and git reports the
+tree clean either way.

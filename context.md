@@ -28,6 +28,16 @@ when the slice is finished, using the template already in that file:
 The log is how the next agent learns what actually happened, including what
 was skipped. Record honest gaps — an unrun test is a caveat, not an omission.
 
+## Open issues
+
+`docs/OPEN-ISSUES.md` is the living counterpart to the dev log: current open
+defects, what has never been verified, and how to inspect the **native** window
+over the WebView2 debugging port. **Read it before picking up a slice**, and
+edit it — close items by deleting them and recording the fix in the dev log.
+
+It exists because the dev log is append-only, so by the time it is long enough
+to be useful it is too long to answer "what is broken right now?".
+
 ## Working rules
 
 - Feature code consumes domain interfaces; it never calls Tauri directly.
@@ -41,7 +51,13 @@ was skipped. Record honest gaps — an unrun test is a caveat, not an omission.
 
 ```bash
 npm run build
+npm run check
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
 Dev server runs on port 5190 (5180 belongs to the sibling `agent-window-tauri`).
+
+The browser pane is **not** equivalent to the native window — it serves no
+animation frames, so Monaco never lays out and timing behaves differently.
+Anything about focus, layout inside Monaco, or animation has to be checked
+natively; `docs/OPEN-ISSUES.md` explains how.

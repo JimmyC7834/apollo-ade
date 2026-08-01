@@ -197,10 +197,10 @@ export function WorkbenchController() {
 
 	const openFile = useCallback(
 		async (id: string, revealLine?: number) => {
-			setActiveEditorId(id);
 			// Already open: keep any unsaved edits, but honour a new target
 			// line — that is the whole point of opening a search result.
 			if (inputs.some((input) => input.id === id)) {
+				setActiveEditorId(id);
 				setEditorOpen(true);
 				if (revealLine !== undefined) {
 					setInputs((current) =>
@@ -228,11 +228,13 @@ export function WorkbenchController() {
 						]
 			);
 			/*
-			 * Raised only once the file is in state. Opening first would put the
-			 * dialog over an empty editor for a frame, and the overlay's initial
-			 * focus resolves on the open transition — so focus would land on the
-			 * close button instead of Monaco, which is not yet mounted.
+			 * Activated and raised only once the file is in state, and in that
+			 * order. Selecting an id the inputs do not contain yet leaves a
+			 * render with no active input at all, which unmounts the editor and
+			 * remounts it a moment later — throwing away the Monaco instance,
+			 * its models, and any focus just placed in it.
 			 */
+			setActiveEditorId(id);
 			setEditorOpen(true);
 		},
 		[inputs, provider]
@@ -243,7 +245,6 @@ export function WorkbenchController() {
 	const openDiff = useCallback(
 		async (id: string) => {
 			const diffId = `diff:${id}`;
-			setActiveEditorId(diffId);
 			const diff = await changesProvider.getDiff(id);
 			const input: EditorInput = {
 				kind: 'diff',
@@ -259,6 +260,9 @@ export function WorkbenchController() {
 					? current.map((existing) => (existing.id === diffId ? input : existing))
 					: [...current, input]
 			);
+			// Same ordering rule as openFile: never select an id the inputs do
+			// not have yet.
+			setActiveEditorId(diffId);
 			setEditorOpen(true);
 		},
 		[changesProvider]

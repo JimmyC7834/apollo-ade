@@ -7,7 +7,7 @@
 // owns no editor state at all — which is what lets unsaved content survive
 // being dismissed, since the state lives in the controller above.
 
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 
 import { IconButton, Overlay } from '../ui';
 import type { EditorHandle } from './EditorHandle';
@@ -53,6 +53,23 @@ export function EditorDialog({
 		}
 	}, [open, activeId]);
 
+	/*
+	 * Focus again whenever an editor instance actually attaches. The effect
+	 * above covers opening the dialog, but not the cases where Monaco is torn
+	 * down and rebuilt underneath it: switching between a file and a diff swaps
+	 * one component for the other, and React remounts children a second time in
+	 * development. Both produce a brand-new editor that nothing has focused,
+	 * and a callback ref is the one hook that runs exactly then.
+	 */
+	const openRef = useRef(open);
+	openRef.current = open;
+	const attachEditor = useCallback((handle: EditorHandle | null) => {
+		editorRef.current = handle;
+		if (handle && openRef.current) {
+			handle.focus();
+		}
+	}, []);
+
 	return (
 		<Overlay
 			open={open}
@@ -64,7 +81,7 @@ export function EditorDialog({
 				<IconButton icon="close" label="Close editor" onClick={onDismiss} />
 			</div>
 			<EditorWorkbench
-				editorRef={editorRef}
+				editorRef={attachEditor}
 				inputs={inputs}
 				activeId={activeId}
 				onSelect={onSelect}
