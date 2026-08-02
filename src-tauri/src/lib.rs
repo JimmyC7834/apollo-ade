@@ -1,4 +1,5 @@
 mod git;
+mod provider;
 mod terminal;
 mod workspace;
 
@@ -16,6 +17,7 @@ pub fn run() {
             workspace::read_file,
             workspace::write_file,
             workspace::search_workspace,
+            provider::provider_stream,
             terminal::terminal_create,
             terminal::terminal_write,
             terminal::terminal_resize,

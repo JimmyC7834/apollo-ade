@@ -169,6 +169,36 @@ length (`pi/docs/custom-provider.md`, 27 KB) with a worked
 
 ---
 
+## Confirmed by the spike — the design works, and the seam is smaller than expected
+
+Built and measured on 2 Aug 2026; details in
+[Thinnest end-to-end turn](12-walking-skeleton.md).
+
+**The integration point is not `ProviderStreams.stream` itself — it is `options.fetch`.**
+pi's `StreamOptions` accepts a custom `fetch`, and `openai-completions` passes it straight
+to the official SDK. `AgentHarnessStreamOptions` does *not* forward one, so the harness
+cannot inject it; wrapping `ProviderStreams` to add it can. That wrapper is six lines, pi
+is unmodified, and every provider request goes through Rust.
+
+**Streaming across the IPC holds.** 14 chunks over 722 ms for a 12 kB response, head
+delivered at 428 ms — incremental, not buffered. This was the ticket's riskiest claim.
+
+Three things worth keeping:
+
+- **Never return `Err` from the streaming command.** A rejected `invoke` surfaces inside
+  pi's stream plumbing as a thrown promise with no useful origin. Transport failures go
+  back as an `error` *event* on the channel instead.
+- **The renderer must still present a key to pi.** `getClientApiKey` throws outright
+  unless it sees an api key or an authorization header, so the provider resolves a
+  placeholder. Rust discards any `Authorization` header it is handed and attaches the real
+  one, so the placeholder never travels.
+- **CORS stops existing**, which was not the motivation but is the larger practical win —
+  a request issued from Rust has no browser origin, and pi's `dangerouslyAllowBrowser`
+  escape hatch becomes irrelevant.
+
+Still open: the key is an environment variable, not `keyring`, and the command hardcodes
+one provider's auth.
+
 ## Amendment — where the key is stored
 
 Decision 1 settled that Rust makes the call; it left *storage* behind a "Rust resolver

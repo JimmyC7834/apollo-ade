@@ -121,6 +121,13 @@ built.
   path, the orphan probe, and four event kinds that never fired. **Local models could not
   run it at all** — they emit tool calls as prose, which is a template limitation, not a
   pi one, and it constrains any offline story.
+- **The credential path is built and measured.**
+  [Who holds the API key](tickets/06-credentials-and-http.md) is confirmed: Rust makes the
+  HTTPS call, the key never enters JavaScript, and streamed bytes cross the IPC
+  incrementally — 14 chunks over 722 ms, not one buffered lump. The injection point turned
+  out to be `options.fetch` rather than `ProviderStreams.stream`, which makes the whole
+  integration a six-line wrapper with pi unmodified. Still an environment variable rather
+  than `keyring`, and hardcoded to one provider.
 
 - [What pi costs in the bundle](tickets/08-bundle-cost.md) — acceptable: one provider
   adds **8.8% gzip** over a build Monaco already dominates. The ~21k-line `pi-ai` was

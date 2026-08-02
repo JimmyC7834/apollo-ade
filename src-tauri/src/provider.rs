@@ -1,0 +1,122 @@
+// SPIKE — see docs/wayfinder/pi-harness/tickets/06-credentials-and-http.md.
+//
+// Rust makes the provider HTTPS call so the API key never enters JavaScript.
+// The renderer sends a request with no credential on it; the key is attached
+// here and the response is streamed back over a Tauri channel.
+//
+// Two things this buys beyond secrecy. There is no Node process in a packaged
+// build, so a shipped app has nowhere else to make this call from. And a
+// request issued from Rust carries no browser origin, so CORS preflight — and
+// the `dangerouslyAllowBrowser` escape hatch pi otherwise needs — stops
+// applying at all.
+
+use std::collections::HashMap;
+
+use futures_util::StreamExt;
+use serde::{Deserialize, Serialize};
+use tauri::ipc::Channel;
+
+/// Where the key comes from. Ticket 06 settled: environment variable for the
+/// spike, OS keychain (`keyring`) for v1. The swap is this function.
+fn resolve_api_key() -> Option<String> {
+    std::env::var("DEEPSEEK_API_KEY").ok().filter(|key| !key.trim().is_empty())
+}
+
+#[derive(Deserialize)]
+pub struct ProviderRequest {
+    url: String,
+    /// Sent by the renderer without any credential. `Authorization` is added
+    /// here; anything the renderer sends under that name is discarded rather
+    /// than merged, so the renderer cannot influence what key is used.
+    headers: HashMap<String, String>,
+    body: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ProviderEvent {
+    Head {
+        status: u16,
+        headers: HashMap<String, String>,
+    },
+    /*
+     * Raw bytes, not a string. SSE is text, but a chunk boundary can land in
+     * the middle of a multi-byte character, and decoding per chunk would
+     * corrupt it. Reassembly belongs to whoever sees the whole stream, so the
+     * renderer decodes.
+     *
+     * The cost is that serde renders this as a JSON array of numbers, which is
+     * several times the size of the payload. Acceptable while the question is
+     * whether streaming works at all; if throughput ever matters, this is the
+     * thing to change.
+     */
+    Chunk {
+        bytes: Vec<u8>,
+    },
+    End,
+    Error {
+        message: String,
+    },
+}
+
+/// Stream a provider response back to the renderer.
+///
+/// Never returns `Err` for transport failures — they are delivered as an
+/// `Error` event instead. A rejected `invoke` would surface in the renderer as
+/// a thrown promise somewhere inside pi's stream plumbing, which is exactly the
+/// shape of failure the never-throw contract exists to avoid.
+#[tauri::command]
+pub async fn provider_stream(request: ProviderRequest, on_event: Channel<ProviderEvent>) {
+    if let Err(message) = stream_inner(request, &on_event).await {
+        let _ = on_event.send(ProviderEvent::Error { message });
+    }
+}
+
+async fn stream_inner(
+    request: ProviderRequest,
+    on_event: &Channel<ProviderEvent>,
+) -> Result<(), String> {
+    let key = resolve_api_key()
+        .ok_or_else(|| "DEEPSEEK_API_KEY is not set in the app's environment".to_string())?;
+
+    let client = reqwest::Client::new();
+    let mut builder = client.post(&request.url).bearer_auth(key);
+
+    for (name, value) in &request.headers {
+        if name.eq_ignore_ascii_case("authorization") {
+            continue;
+        }
+        builder = builder.header(name, value);
+    }
+    if let Some(body) = request.body {
+        builder = builder.body(body);
+    }
+
+    let response = builder.send().await.map_err(|error| error.to_string())?;
+
+    let status = response.status().as_u16();
+    let headers = response
+        .headers()
+        .iter()
+        .filter_map(|(name, value)| {
+            value.to_str().ok().map(|value| (name.as_str().to_string(), value.to_string()))
+        })
+        .collect();
+
+    // The head goes out before the first chunk so the renderer can construct a
+    // Response and let its consumer start reading. A non-2xx status still
+    // streams its body — provider error payloads are JSON worth surfacing.
+    on_event
+        .send(ProviderEvent::Head { status, headers })
+        .map_err(|error| error.to_string())?;
+
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|error| error.to_string())?;
+        on_event
+            .send(ProviderEvent::Chunk { bytes: chunk.to_vec() })
+            .map_err(|error| error.to_string())?;
+    }
+
+    on_event.send(ProviderEvent::End).map_err(|error| error.to_string())
+}

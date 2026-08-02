@@ -147,29 +147,70 @@ prose that looks like JSON renders as prose. The consequence for
 for a hosted one, and any offline story has to name models whose templates parse tool
 calls, not merely accept them.
 
+### Settled by instrumentation — the credential path and the failure path
+
+Second run, DeepSeek through **Rust**, driven over the WebView2 debugging port so the
+numbers are measured rather than observed.
+
+**Streaming across the IPC works, and it is genuinely incremental.** One request through
+`provider_stream`:
+
+| | |
+|---|---|
+| status | 200 |
+| head arrived | 428 ms |
+| chunks | **14** |
+| spread first→last chunk | **722 ms** |
+| bytes | 12,002 |
+| `[DONE]` seen | yes |
+| key present anywhere in JS | **no** |
+
+Fourteen chunks over 722 ms is the whole point: a buffered response would have arrived as
+one chunk at the end, and the transcript would have looked identical. **This was the
+riskiest item on [ticket 06](06-credentials-and-http.md) and it holds.**
+
+**The failure path holds too**, which the happy path could never have shown. `read` on a
+missing file produced a `Result`, pi turned it into an error tool result carrying
+`not found`, the model was told, and it recovered and explained itself in a following
+turn. No rejected `invoke` reached pi's loop. **The never-throw invariant from
+[ticket 01](01-execution-env-surface.md) survives a real failing tool call**, including the
+part where pi's own `getOrThrow` converts back to an exception one layer up.
+
+**The loop is multi-turn, not single-shot.** tool → error → model continues → answer, with
+several successful reads in the same session.
+
+**One defect found and fixed in the adapter**, worth recording because it is the failure
+mode this kind of code has: `tool_end` rendered its reason with `String(result)`, and
+`AgentToolResult` is an object, so the transcript said `[object Object]` and threw the
+diagnostic away. The first real tool failure was therefore unreadable. Tool results carry
+their message in `content[].text`; anything mapping them must go and get it.
+
+**The Vite proxy is gone.** It existed to remove the credential as a variable while the
+loop was unproven. The loop is proven and Rust now makes the call, so keeping both would
+have been a second way to do the same thing.
+
 ### Not settled — still needs work
 
-Three things the happy path could not answer. All three want the WebView2 debugging port
-(`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222`), because they are
-about what the event stream contains rather than what the transcript shows.
-
-1. **The failure path.** Point `read` at a file that does not exist and confirm a `Result`
-   comes back rather than a rejected `invoke` reaching pi's loop. Note that pi's
-   `path-utils` wraps `exists` in `getOrThrow`, so the throw is *expected* one layer up —
-   what must hold is that our adapter never throws and the tool executor catches. A
-   passing happy path says nothing about this.
-2. **The orphaned `tool_use` probe**, carried here from
+1. **The orphaned `tool_use` probe**, carried here from
    [ticket 14](14-switch-aftermath.md). Re-send a history containing a completed tool call
    with that tool removed from the request schema, and record what each provider does.
-   Only DeepSeek is currently reachable; Anthropic and Google still need one call each.
-3. **Which event kinds never fired.** `thinking`, `usage`, `compacted` and `error` are all
-   in the contract and none were exercised — the UI adapter drops the middle two before
-   they could be seen, and `deepseek-chat` is not a reasoning model. The contract is
-   *unfalsified*, not *confirmed*, on those four.
+   Only DeepSeek has been reachable so far; Anthropic and Google still need one call each,
+   and Anthropic's `anthropic-messages` has different streaming framing from everything
+   tested here.
+2. **Four event kinds have never fired.** `thinking`, `usage`, `compacted` and `error` are
+   all in the contract and none has been seen. The UI adapter drops `usage` and `compacted`
+   before they could be, `deepseek-chat` is not a reasoning model, and no request has
+   failed mid-stream. The contract is *unfalsified* on those four, not *confirmed* — and
+   `error` is the one that matters, because it is the path a user hits on a dropped
+   connection.
+3. **Key storage is still an environment variable.** `resolve_api_key()` in
+   `src-tauri/src/provider.rs` reads `DEEPSEEK_API_KEY`. [Ticket 06](06-credentials-and-http.md)
+   settled `keyring` for v1, and that function is the entire swap.
+4. **The proxy is hardcoded to one provider.** `provider_stream` always attaches a DeepSeek
+   bearer token; nothing dispatches on which provider is being called. Fine for a spike,
+   wrong the moment a second provider exists.
 
-**The credential path is still not built, and this run did not test it.**
-`import.meta.env` inlines its values into the build output, so a real key there would be
-baked into `dist/`. The Vite proxy sidesteps that by attaching the header in Node — but no
-streamed bytes crossed the Tauri IPC, which is the single riskiest thing on
-[ticket 06](06-credentials-and-http.md) and the reason it wanted this spike. **That work is
-untouched and is the obvious next move.**
+Also worth carrying forward, though neither is this ticket's job: `ProviderEvent::Chunk`
+serialises bytes as a JSON array of numbers, which is several times the payload size — it
+did not matter at 12 kB and will matter later. And `spikeFetch` is exposed on `globalThis`
+under `import.meta.env.DEV` purely so the debugging port can reach it.
