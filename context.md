@@ -2,6 +2,28 @@
 
 Working rules for this repo. Read before starting work.
 
+## Less is more
+
+The governing philosophy, and it outranks the guide when the two pull apart.
+**Every wanted and needed feature ships — and nothing else does.** This is not a
+licence to cut scope: a missing feature the user asked for is a failure, not a
+simplification.
+
+What it rules out is everything around the feature. No abstraction with one
+implementation. No configuration for a constant. No scaffolding built for a
+future that has not arrived. No second way to do something that already works.
+When two designs deliver the same behaviour, the smaller one is correct — and
+"smaller" means fewer moving parts and fewer concepts to hold, not terser code.
+
+Prefer deleting to adding. Prefer an existing dependency to a new one, a
+platform feature to a dependency, and nothing at all to any of them. When a
+shortcut is taken deliberately, mark it and name what would justify replacing
+it, so the next reader knows it was a decision rather than an oversight.
+
+The exceptions are fixed and small: input validation at trust boundaries, error
+handling that prevents data loss, the security boundary, and accessibility. These
+are never the thing that gets trimmed.
+
 ## The guide is the spec
 
 `docs/# Building a VS Code-Like Agent IDE with Vertical Slices.md` is the

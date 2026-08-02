@@ -12,6 +12,13 @@ dist
 dist-ssr
 *.local
 
+# Upstream checkouts and packed tarballs, kept locally for reading. Not ours to
+# commit, and re-fetchable — see docs/wayfinder/pi-harness/map.md for the commands.
+pi/
+claude-code/
+.pi/
+docs/wayfinder/pi-harness/tickets/pitar/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
