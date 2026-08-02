@@ -192,3 +192,20 @@ The lesson worth keeping: both earlier surveys were grep-based over *some* of th
 package, and both were wrong in the same direction. The method list should be settled by
 type-checking a real implementation against the interface, not by searching for call
 sites.
+
+### Correction 3 — `cleanup()`, and the lesson applied
+
+Type-checking a real implementation, which is what
+[the spike](12-walking-skeleton.md) finally did, turned up **`cleanup(): Promise<void>`**
+— declared on `FileSystem` *and* on `Shell`, and missed by all three surveys above.
+One implementation satisfies both. Like every other method it must not throw.
+
+So the surface is **12 filesystem methods, `exec`, and `cleanup`**. Three surveys, three
+undercounts, all in the same direction — the correction the last one prescribed is the
+one that found this, which is the argument for doing it that way first next time.
+
+One finding that changes how the invariant should be read: **pi's own tools convert
+`Result` back into exceptions.** `harness/tools/path-utils.js` wraps `absolutePath` and
+`exists` in `getOrThrow`, and the tool executor catches. The never-throw contract
+therefore binds *our adapter*, not pi's internals — we still may not throw, but we do not
+get to assume a `Result` travels all the way up.

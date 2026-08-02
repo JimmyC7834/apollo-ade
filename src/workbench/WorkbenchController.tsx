@@ -16,6 +16,7 @@ import { ExplorerTree } from '../features/explorer/ExplorerTree';
 import { SearchView } from '../features/search/SearchView';
 import { TerminalPanel } from '../features/terminal/TerminalPanel';
 import { createPersistenceAdapter, type PersistedState, type PrimaryView } from '../persistence';
+import { createPiAgentProvider, readSpikeConfig } from '../spike/provider';
 import { createTerminalAdapter } from '../terminal';
 import { ActionBar, IconButton, Pane } from '../ui';
 import {
@@ -82,7 +83,13 @@ export function WorkbenchController() {
 	);
 
 	const provider = useMemo(() => createWorkspaceProvider(), []);
-	const agentProvider = useMemo(() => createAgentProvider(), []);
+	// SPIKE: the real pi harness takes over when VITE_SPIKE_BASE_URL and
+	// VITE_SPIKE_MODEL are set, otherwise the scripted provider runs as before.
+	// Revert with `rm -r src/spike` and this ternary.
+	const agentProvider = useMemo(() => {
+		const spike = readSpikeConfig();
+		return spike ? createPiAgentProvider(provider, spike) : createAgentProvider();
+	}, [provider]);
 	const changesProvider = useMemo(() => createChangesProvider(), []);
 	const terminalAdapter = useMemo(() => createTerminalAdapter(), []);
 	const [selection, setSelection] = useState<WorkspaceSelection | undefined>(undefined);

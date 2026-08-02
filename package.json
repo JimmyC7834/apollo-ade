@@ -6,11 +6,13 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "check": "node src/agent.check.ts && node src/commands/fuzzy.check.ts && node src/commands/commandRegistry.check.ts && node src/ui/WorkbenchTree.check.ts && node src/persistence.check.ts && node src/editor/focusEditor.check.ts && node src/features/agent/transcript.check.ts",
+    "check": "node src/agent.check.ts && node src/commands/fuzzy.check.ts && node src/commands/commandRegistry.check.ts && node src/ui/WorkbenchTree.check.ts && node src/persistence.check.ts && node src/editor/focusEditor.check.ts && node src/features/agent/transcript.check.ts && node src/spike/events.check.ts",
     "preview": "vite preview",
     "tauri": "tauri"
   },
   "dependencies": {
+    "@earendil-works/pi-agent-core": "0.83.0",
+    "@earendil-works/pi-ai": "0.83.0",
     "@tauri-apps/api": "^2",
     "@vscode/codicons": "^0.0.46-24",
     "@xterm/addon-fit": "^0.11.0",
