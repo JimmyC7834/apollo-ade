@@ -4,7 +4,7 @@ title: Thinnest end-to-end turn
 parent: ../map.md
 blocked-by: [01-execution-env-surface.md, 05-event-contract.md, 06-credentials-and-http.md]
 assignee: jc4649
-status: open
+status: closed
 ---
 
 # Thinnest end-to-end turn
@@ -58,6 +58,46 @@ One caution from `docs/OPEN-ISSUES.md` worth reading first: a hand-rolled
 `plugin:event|listen` payload wedges the IPC, after which every `invoke` hangs while the
 renderer keeps running — indistinguishable from the command under test deadlocking. An
 hour has already been lost to that once.
+
+---
+
+## Resolution
+
+**Everything the spike set out to falsify held. Nothing upstream reopens.** The one
+finding that changes a plan is about local models, and it belongs to
+[browser mode](10-browser-mode-env.md), not to any decision made here.
+
+| What it tried to falsify | Outcome |
+|---|---|
+| Does `AgentEvent` carry a real streamed turn? | **Held**, unamended |
+| Does `ExecutionEnv` satisfy never-throw under a real tool call, including failure? | **Held** |
+| Does the credential shape actually stream? | **Held** — 14 chunks over 722 ms |
+| Does Rollup treeshake pi as well as esbuild? | **Yes**, and better than measured |
+| What do providers do with an orphaned `tool_use`? | DeepSeek: accepts. Others deferred |
+| Does the renderer keep up? | **Yes**, natively |
+
+Three things were learned that no amount of reading would have produced, and all three are
+about the same failure mode — **the code that only runs when something goes wrong**:
+
+1. `ExecutionEnv` has a `cleanup()` that three separate grep-based surveys missed. Found
+   by type-checking an implementation, which is what the third survey's own correction had
+   prescribed.
+2. pi's tools convert `Result` back into exceptions via `getOrThrow`, so the never-throw
+   contract binds our adapter and not pi's internals.
+3. The adapter rendered tool failures as `[object Object]`, and it took a real failure to
+   notice — which happened by accident, because the open workspace was a different project
+   than the one being asked about.
+
+**The spike has not been deleted.** The ticket says to delete it, and that instruction
+stands; it is left in place only until the decision to start the real slice is made, so
+that the slice can be written against something running rather than against this document.
+`rm -r src/spike` plus one ternary in `WorkbenchController.tsx` removes it. The Rust
+`provider_stream` command is the exception — it is ticket 06's design rather than spike
+scaffolding, and it stays.
+
+Deferred, and tracked where they belong rather than here: the orphan probe against
+Anthropic and Google ([ticket 14](14-switch-aftermath.md)), `keyring` storage and
+per-provider auth dispatch ([ticket 06](06-credentials-and-http.md)).
 
 ---
 

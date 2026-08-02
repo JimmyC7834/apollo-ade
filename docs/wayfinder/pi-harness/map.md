@@ -114,7 +114,8 @@ built.
 
 <!-- one line per closed ticket -->
 
-- **The walking skeleton ran.** [Thinnest end-to-end turn](tickets/12-walking-skeleton.md)
+- **The walking skeleton closed, and nothing upstream reopened.**
+  [Thinnest end-to-end turn](tickets/12-walking-skeleton.md)
   closed a real loop against DeepSeek in the native window — streamed prose, a `read` tool
   call, tool result, grounded answer — so the eleven-kind event contract and the
   `ExecutionEnv` adapter both survived contact. Still open on that ticket: the failure
