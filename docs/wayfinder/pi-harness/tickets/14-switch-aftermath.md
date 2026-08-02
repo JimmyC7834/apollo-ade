@@ -136,7 +136,7 @@ notion that an orphan exists. Two consequences:
    So it does fall out of replay, as the question suspected — **but only under this
    representation**, and the cheaper-looking one is the broken one.
 
-### Orphan probe — DeepSeek only, 2 Aug 2026
+### Orphan probe — DeepSeek and Google, 2 Aug 2026
 
 **DeepSeek accepts an orphaned `tool_call` without complaint.** A history containing a
 completed `tool_calls` / `tool` pair naming `read`, re-sent two ways:
@@ -150,16 +150,42 @@ No validation error either way, and the model used the orphaned result rather th
 confused by it. Incidental: declaring the unrelated tool cost 335 prompt tokens against
 76 — tool schemas are not free, which matters for how wide a profile's tool set should be.
 
-**This does not settle the question.** DeepSeek is `openai-completions`, the most
-permissive of the three bundled shapes, and it is the one that was always most likely to
-pass. `anthropic-messages` validates `tool_use`/`tool_result` pairing more strictly and is
-the case the mitigation exists for. Deferred by the dev, deliberately.
+**Google accepts them too**, on `gemini-3.5-flash` via `google-generative-ai` — a
+structurally different API, with `functionCall` / `functionResponse` parts rather than
+tool blocks. Same two cases, both 200, both answered from the orphaned response.
 
-What it does buy is a floor: the permissive path is confirmed working, so if Anthropic
-later rejects it, the fix is known to be provider-specific rather than a flaw in the
-representation.
+So **two of the three bundled API shapes tolerate orphans**, and they are the two that
+differ most from each other. That is better evidence than either alone: the tolerance is
+not an artefact of one wire format.
+
+**It still does not settle the question.** `anthropic-messages` is unprobed and is the
+strictest of the three about `tool_use`/`tool_result` pairing — the case the mitigation
+exists for. Anthropic has no free tier and was deferred by the dev; Copilot proxies Claude
+over `anthropic-messages` and would exercise the codepath, but a *pass* there would be
+weak evidence, since the gateway may normalise the request before forwarding.
+
+**What this buys is a safe default.** Build mid-session narrowing the straightforward way.
+If Anthropic later rejects an orphan, the fix is known, local, and provider-specific —
+include the orphaned tool's schema in the request while leaving it out of
+`activeToolNames` — rather than a flaw in how the session is represented.
+
+### Two findings from the same run, unrelated to orphans
+
+- **pi's Google model catalog is stale, and it is static.** `gemini-2.5-flash` — which
+  `GOOGLE_MODELS` ships — returns `404: no longer available to new users` for a newly
+  issued key. `googleProvider()` passes no `fetchModels`, so nothing refreshes it. **A new
+  user's key cannot call the models pi advertises**, and no amount of pinning fixes that,
+  because the staleness is on the provider's side rather than ours. Whatever ships needs
+  either a live model list or a clear failure when a catalogued model is gone. This
+  sharpens [How this repo depends on pi](07-pi-dependency.md): pinning protects us from
+  upstream churn, not from the world moving underneath a frozen catalog.
+- **Gemini 3.x returns `thoughtSignature` on content parts** — opaque reasoning blobs
+  alongside the text. Providers of this kind generally require them echoed back on
+  subsequent turns, so they are history state, not decoration. Relevant to the `thinking`
+  kind in [the event contract](05-event-contract.md) and to anything that rewrites history,
+  including compaction and this ticket's own subject.
 
 ### Not settled here
 
-- **The same probe against Anthropic and Google.** Both need a key that is not configured.
-  Anthropic is the one that matters — see above.
+- **The same probe against Anthropic.** Needs a key with no free tier. It is the strict
+  case, and it is the only one that could still change a decision.

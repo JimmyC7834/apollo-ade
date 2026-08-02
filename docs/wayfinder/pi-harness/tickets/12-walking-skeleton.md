@@ -231,10 +231,11 @@ have been a second way to do the same thing.
 
 ### Not settled — still needs work
 
-1. **The orphaned `tool_use` probe** is done for DeepSeek — it accepts orphans without
-   complaint — and **deferred for Anthropic and Google by the dev**. Results are recorded
-   on [ticket 14](14-switch-aftermath.md), which owns the question. Anthropic is the case
-   that matters and remains unanswered.
+1. **The orphaned `tool_use` probe** is done for DeepSeek and Google — both accept orphans
+   without complaint, across two structurally different API shapes. **Anthropic is
+   deferred** (no free tier) and is the strict case. Results and the two incidental
+   findings from that run are on [ticket 14](14-switch-aftermath.md), which owns the
+   question.
 2. **Four event kinds have never fired.** `thinking`, `usage`, `compacted` and `error` are
    all in the contract and none has been seen. The UI adapter drops `usage` and `compacted`
    before they could be, `deepseek-chat` is not a reasoning model, and no request has

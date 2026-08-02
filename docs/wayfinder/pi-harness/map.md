@@ -129,6 +129,14 @@ built.
   out to be `options.fetch` rather than `ProviderStreams.stream`, which makes the whole
   integration a six-line wrapper with pi unmodified. Still an environment variable rather
   than `keyring`, and hardcoded to one provider.
+- **⚠ pi's bundled model catalogs go stale, and pinning does not help.** Probing Google
+  turned up that `gemini-2.5-flash` — which pi 0.83.0 ships in `GOOGLE_MODELS` — returns
+  `404: no longer available to new users` for a newly issued key, and `googleProvider()`
+  passes no `fetchModels` to refresh it. **A new user's key cannot call the models pi
+  advertises.** This is a different failure from the churn
+  [ticket 07](tickets/07-pi-dependency.md) guards against: pinning protects us from
+  upstream changing, not from the world moving underneath a frozen catalog. Whatever ships
+  needs a live model list or an honest failure when a catalogued model is gone.
 
 - [What pi costs in the bundle](tickets/08-bundle-cost.md) — acceptable: one provider
   adds **8.8% gzip** over a build Monaco already dominates. The ~21k-line `pi-ai` was
