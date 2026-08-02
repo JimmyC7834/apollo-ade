@@ -103,24 +103,73 @@ ternary.**
   is enough; returning `undefined` would mark the provider unconfigured and make its
   models unavailable. Run two replaces exactly this function and nothing else.
 
-### Not settled — needs a running model
+### Settled by a live run
 
-Everything the ticket actually exists to falsify is still open. **No live turn has been
-run**, because no OpenAI-compatible server was listening on 1234/11434/8080/5000 and
-DeepSeek needs a key.
+**DeepSeek (`deepseek-chat`, served as `deepseek-v4-flash`), in the native window, 2 Aug
+2026.** Confirmed by the dev at the keyboard; the renderer was not instrumented, so what
+follows is an observation rather than a measurement, and the two probes below that need
+instrumentation are still open.
 
-Still to do, in order:
+- **The loop closes.** One prompt → streamed response → a `read` tool call → tool result →
+  a final answer grounded in the file. pi's harness runs in the WebView, and
+  `ExecutionEnv` over `WorkspaceProvider` satisfies `createReadTool` against a real call.
+- **`AgentEvent` survived contact with a real stream.** The tool call rendered as an
+  activity line carrying its path, prose rendered as prose, and nothing leaked through as
+  raw JSON — which is what a dropped or mis-mapped event kind would have looked like. The
+  eleven-kind contract from [ticket 05](05-event-contract.md) stands, unamended.
+- **The renderer keeps up.** Text streamed smoothly, natively, with no visible chunking.
+  This is the question `context.md` says the browser pane cannot answer, and it is now
+  answered.
 
-1. Start a local server, then `VITE_SPIKE_BASE_URL=http://localhost:1234/v1
-   VITE_SPIKE_MODEL=<id> npm run tauri dev`. **Natively — not the browser pane**, per
-   `context.md`.
-2. Ask something that forces a `read`. Watch for events the mapping drops, and for the
-   renderer keeping up with the token stream.
-3. Point `read` at a missing file and confirm a `Result` comes back rather than a
-   rejected `invoke` reaching pi's loop.
-4. Only then run two, DeepSeek, where the key is the sole variable that changed.
+**The route was not the planned one.** Local-then-DeepSeek was designed so the API key
+would be the only variable between two runs. That fell through — see below — so the
+credential was neutralised with a dev-server proxy instead, and DeepSeek was the only run.
 
-**The credential path is deliberately not built.** `import.meta.env` inlines its values
-into the build output, so putting a real key there would bake it into `dist/` — worse
-than the env var [ticket 06](06-credentials-and-http.md) accepted for a spike. Run two's
-key goes through Rust, which is what that ticket wanted tested anyway.
+### Local models could not run the spike at all
+
+Worth recording, because it will come up again the moment anyone tries to work offline.
+**Every local model on this machine emits tool calls as prose, not as structured calls.**
+
+| Model | Result |
+|---|---|
+| `qwen2.5-coder:7b` | `{"name": "read", "arguments": {...}}` as message **content** |
+| `qwen2.5-coder:14b` | the same, wrapped in a ```json fence — worse |
+| `codestral:22b` | `does not support tools`, refused by Ollama outright |
+
+The first two declare a `tools` capability in `ollama show`. The capability flag says the
+template *accepts* tool definitions, not that it *parses* calls back out. Identical on
+`/v1/chat/completions` and `/api/chat`, so it is the model's chat template, not Ollama's
+OpenAI shim.
+
+**This is not a pi problem and not a spike bug** — pi needs a `toolCall` content block, and
+prose that looks like JSON renders as prose. The consequence for
+[browser mode](10-browser-mode-env.md) is real: a local model is not a drop-in substitute
+for a hosted one, and any offline story has to name models whose templates parse tool
+calls, not merely accept them.
+
+### Not settled — still needs work
+
+Three things the happy path could not answer. All three want the WebView2 debugging port
+(`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222`), because they are
+about what the event stream contains rather than what the transcript shows.
+
+1. **The failure path.** Point `read` at a file that does not exist and confirm a `Result`
+   comes back rather than a rejected `invoke` reaching pi's loop. Note that pi's
+   `path-utils` wraps `exists` in `getOrThrow`, so the throw is *expected* one layer up —
+   what must hold is that our adapter never throws and the tool executor catches. A
+   passing happy path says nothing about this.
+2. **The orphaned `tool_use` probe**, carried here from
+   [ticket 14](14-switch-aftermath.md). Re-send a history containing a completed tool call
+   with that tool removed from the request schema, and record what each provider does.
+   Only DeepSeek is currently reachable; Anthropic and Google still need one call each.
+3. **Which event kinds never fired.** `thinking`, `usage`, `compacted` and `error` are all
+   in the contract and none were exercised — the UI adapter drops the middle two before
+   they could be seen, and `deepseek-chat` is not a reasoning model. The contract is
+   *unfalsified*, not *confirmed*, on those four.
+
+**The credential path is still not built, and this run did not test it.**
+`import.meta.env` inlines its values into the build output, so a real key there would be
+baked into `dist/`. The Vite proxy sidesteps that by attaching the header in Node — but no
+streamed bytes crossed the Tauri IPC, which is the single riskiest thing on
+[ticket 06](06-credentials-and-http.md) and the reason it wanted this spike. **That work is
+untouched and is the obvious next move.**

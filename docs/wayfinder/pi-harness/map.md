@@ -114,6 +114,14 @@ built.
 
 <!-- one line per closed ticket -->
 
+- **The walking skeleton ran.** [Thinnest end-to-end turn](tickets/12-walking-skeleton.md)
+  closed a real loop against DeepSeek in the native window — streamed prose, a `read` tool
+  call, tool result, grounded answer — so the eleven-kind event contract and the
+  `ExecutionEnv` adapter both survived contact. Still open on that ticket: the failure
+  path, the orphan probe, and four event kinds that never fired. **Local models could not
+  run it at all** — they emit tool calls as prose, which is a template limitation, not a
+  pi one, and it constrains any offline story.
+
 - [What pi costs in the bundle](tickets/08-bundle-cost.md) — acceptable: one provider
   adds **8.8% gzip** over a build Monaco already dominates. The ~21k-line `pi-ai` was
   the wrong suspect; it treeshakes. Import providers **by subpath, never the barrel** —
