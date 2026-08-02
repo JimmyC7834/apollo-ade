@@ -136,7 +136,30 @@ notion that an orphan exists. Two consequences:
    So it does fall out of replay, as the question suspected — **but only under this
    representation**, and the cheaper-looking one is the broken one.
 
+### Orphan probe — DeepSeek only, 2 Aug 2026
+
+**DeepSeek accepts an orphaned `tool_call` without complaint.** A history containing a
+completed `tool_calls` / `tool` pair naming `read`, re-sent two ways:
+
+| Request | Result |
+|---|---|
+| `tools` omitted entirely | 200, answered from the tool result |
+| `tools` declaring only `write` | 200, answered from the tool result |
+
+No validation error either way, and the model used the orphaned result rather than being
+confused by it. Incidental: declaring the unrelated tool cost 335 prompt tokens against
+76 — tool schemas are not free, which matters for how wide a profile's tool set should be.
+
+**This does not settle the question.** DeepSeek is `openai-completions`, the most
+permissive of the three bundled shapes, and it is the one that was always most likely to
+pass. `anthropic-messages` validates `tool_use`/`tool_result` pairing more strictly and is
+the case the mitigation exists for. Deferred by the dev, deliberately.
+
+What it does buy is a floor: the permissive path is confirmed working, so if Anthropic
+later rejects it, the fix is known to be provider-specific rather than a flaw in the
+representation.
+
 ### Not settled here
 
-The orphan probe itself (decision 2), which is now an explicit deliverable of
-[the walking skeleton](12-walking-skeleton.md).
+- **The same probe against Anthropic and Google.** Both need a key that is not configured.
+  Anthropic is the one that matters — see above.

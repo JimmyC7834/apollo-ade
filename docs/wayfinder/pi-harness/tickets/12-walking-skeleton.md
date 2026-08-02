@@ -191,12 +191,10 @@ have been a second way to do the same thing.
 
 ### Not settled — still needs work
 
-1. **The orphaned `tool_use` probe**, carried here from
-   [ticket 14](14-switch-aftermath.md). Re-send a history containing a completed tool call
-   with that tool removed from the request schema, and record what each provider does.
-   Only DeepSeek has been reachable so far; Anthropic and Google still need one call each,
-   and Anthropic's `anthropic-messages` has different streaming framing from everything
-   tested here.
+1. **The orphaned `tool_use` probe** is done for DeepSeek — it accepts orphans without
+   complaint — and **deferred for Anthropic and Google by the dev**. Results are recorded
+   on [ticket 14](14-switch-aftermath.md), which owns the question. Anthropic is the case
+   that matters and remains unanswered.
 2. **Four event kinds have never fired.** `thinking`, `usage`, `compacted` and `error` are
    all in the contract and none has been seen. The UI adapter drops `usage` and `compacted`
    before they could be, `deepseek-chat` is not a reasoning model, and no request has
