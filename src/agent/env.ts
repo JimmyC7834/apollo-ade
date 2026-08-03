@@ -68,9 +68,6 @@ function unimplementedRest() {
 		async readTextLines(path: string) {
 			return unsupported(`readTextLines(${path})`);
 		},
-		async writeFile(path: string) {
-			return unsupported(`writeFile(${path})`);
-		},
 		async appendFile(path: string) {
 			return unsupported(`appendFile(${path})`);
 		},
@@ -179,6 +176,20 @@ export function createTauriEnv(): ExecutionEnv {
 
 		readTextFile: readText,
 
+		async writeFile(path, content) {
+			// pi hands `string | Uint8Array`. Rust takes text, so binary writes
+			// are refused rather than silently mangled through a lossy decode —
+			// the edit and write tools only ever produce text.
+			if (typeof content !== 'string') {
+				return err(
+					new FileError('not_supported', 'binary writes are not supported', path)
+				);
+			}
+			return attempt(path, async () =>
+				(await core()).invoke<void>('agent_write_file', { id: toId(path), content })
+			);
+		},
+
 		async readBinaryFile(path) {
 			/*
 			 * Text only. `read_file` refuses non-UTF-8, so pi's image handling in
@@ -201,7 +212,11 @@ export function createTauriEnv(): ExecutionEnv {
  * would drift from the native path silently; this cannot, because it is the
  * same code above the seam.
  */
-export function createMemoryEnv(files: Readonly<Record<string, string>>): ExecutionEnv {
+export function createMemoryEnv(seed: Readonly<Record<string, string>>): ExecutionEnv {
+	// Copied, and writes land in the copy. Browser mode has to be able to
+	// demonstrate an edit, and mutating the shared fixture would leak one
+	// session's changes into the explorer's view of the same files.
+	const files: Record<string, string> = { ...seed };
 	const get = (path: string) => files[toId(path)];
 
 	return {
@@ -239,6 +254,16 @@ export function createMemoryEnv(files: Readonly<Record<string, string>>): Execut
 			return content === undefined
 				? err(new FileError('not_found', 'not found', path))
 				: ok(new TextEncoder().encode(content));
+		},
+
+		async writeFile(path, content) {
+			if (typeof content !== 'string') {
+				return err(
+					new FileError('not_supported', 'binary writes are not supported', path)
+				);
+			}
+			files[toId(path)] = content;
+			return ok(undefined);
 		},
 	};
 }

@@ -1806,3 +1806,105 @@ but is unreachable, since no gate is registered yet. Images are unsupported:
   covering every adapter beat one covering most plus a special case.
 - **Model costs are zeroed rather than guessed.** A wrong cost table produces
   confident wrong numbers, which is worse than none.
+
+---
+
+## Slice 14 — The agent can change your code
+
+**User outcome:** The agent writes and edits files in the workspace. By default
+it just does it; with `VITE_AGENT_GATE=careful` it asks first, and either way the
+working tree is snapshotted before every turn so an unwanted change is
+recoverable.
+
+**Added**
+
+- `src/agent/gate.ts`: pi's `tool_call` hook, with an `auto` and a `careful`
+  policy. Auto is the default and never prompts — **auto mode is the policy dial
+  set to permissive, not the absence of a gate**, which is why both modes run the
+  same mechanism.
+- `write` and `edit` tools, plus `ExecutionEnv.writeFile` in both environments.
+- `agent_write_file` in Rust: create-capable, unlike `write_file`, which routes
+  through `resolve` and so can only overwrite files that already exist.
+- `git_checkpoint` in Rust, run before every turn.
+- `src/agent/gate.check.ts`.
+
+**UI extracted / reused**
+
+Nothing new. `PartView` renders the approval, which slice 13 built and could not
+reach because nothing raised one.
+
+**Adapters and dependencies**
+
+No new dependencies. `AgentRun.resolveApproval` finally does something: it
+settles the promise the hook is awaiting.
+
+**Security boundary**
+
+`agent_write_file` makes its own containment argument rather than inheriting
+one: every path component must be `Normal`, the *parent* is canonicalised and
+must still be inside the root, and an existing target that is a symlink or not a
+regular file is refused. **This is the floor, and it holds regardless of what the
+gate decided** — a renderer talked into writing outside the root still cannot.
+
+`git_checkpoint` uses `stash create` + `stash store`, which builds a commit
+object without touching the working tree, the index, or the branch. Its limits
+are stated in the source and repeated here: it captures modifications to
+*tracked* files only, so it does not recover an untracked file that was
+overwritten, anything deleted outside the repository, a force push, or anything
+already sent over the network.
+
+**Not built, deliberately:** `bash`/`exec`, and the deny list of irreversible
+commands. The deny list guards *commands*, so building it before the thing that
+runs commands would be guarding nothing. They ship together or not at all.
+
+**Accessibility behavior**
+
+The approval is a `role="group"` labelled with its own outcome, so it reads as
+answered/unanswered without entering it. Answering moves focus to the composer,
+because the button that was clicked is about to be replaced by static text and
+focus would otherwise fall to `body`.
+
+**Validation performed**
+
+`npm run build`, `npm run check` (9 checks), `cargo test` (5).
+
+Driven natively over the WebView2 debugging port against `deepseek-reasoner`,
+in a throwaway git workspace:
+
+- **Auto passes reads, careful stops writes.** `read` ran unprompted; `edit`
+  raised an approval with Continue/Skip.
+- **Approving completes the edit** — verified on disk, not just in the
+  transcript.
+- **Declining does not abort the turn.** The tool card became `Failed` reading
+  "The user declined this change.", the model saw the error result, re-read the
+  file, and reported honestly that nothing had changed. This is the behaviour the
+  gate ticket said is easiest to get wrong, and it is now exercised.
+- **The checkpoint recovers clobbered work.** With uncommitted edits in the tree,
+  the agent was told to overwrite a file; `git show 'stash@{0}:README.md'` returns
+  the pre-agent contents verbatim.
+- **`thinking` renders**, collapsed by default — see the caveat below.
+
+**Not validated:** still no screen reader. `compacted` has never fired; no
+session has run long enough. The `careful` policy has only been exercised on
+`write` and `edit`, because those are the only mutating tools that exist.
+
+**Caveats and deviations from the guide**
+
+- **A checkpoint on a clean tree saves nothing, and that is correct.**
+  `stash create` returns empty when there is nothing to stash — the recovery
+  point is already HEAD. It only produces a stash when the user had uncommitted
+  work, which is exactly the case where one is needed.
+- **`model.reasoning: true` is not enough to get reasoning, and the failure is
+  silent.** pi's harness defaults `thinkingLevel` to `"off"`, and for DeepSeek
+  its adapter then sends `thinking: { type: "disabled" }`. The API returns no
+  `reasoning_content`, no `thinking_delta` is emitted, and the transcript looks
+  exactly like a non-reasoning model — with no error anywhere. Found by
+  instrumenting the event stream after three rounds of guessing; `curl` proved
+  the API was willing, so the suppression had to be ours. Fixed by setting
+  `thinkingLevel` from `model.reasoning`.
+- **Whether a model reasons is a regex on its id.** Wrong for the next reasoning
+  model not named after one. The honest answer is a model catalog, and the map
+  already records that pi's is stale enough for a new key to be unable to call
+  what it advertises — so adopting it is its own piece of work.
+- **Gate policy is an env var**, like model selection. It is a per-profile field
+  in the design; profiles are a later slice.

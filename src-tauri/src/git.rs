@@ -279,3 +279,35 @@ mod tests {
         assert!(relative("src/../../outside.ts").is_err());
     }
 }
+
+/// Snapshot the working tree before a turn, so an unwanted change is
+/// recoverable.
+///
+/// For a coding agent, undo beats prevention: a prompt the user has been
+/// trained to dismiss protects nothing, whereas a checkpoint makes the change
+/// reversible. This is decision 4 of the permission-gate ticket.
+///
+/// `stash create` builds a commit object without touching the working tree, the
+/// index, or the branch — the agent's turn proceeds exactly as if this had not
+/// run. `stash store` then names it so it appears in `git stash list` and is
+/// not garbage-collected.
+///
+/// **Its limits are the reason the rest of the floor exists.** It captures
+/// modifications to *tracked* files only: it does not recover an untracked file
+/// the agent overwrote, anything deleted outside the repository, a force push,
+/// or anything already sent over the network. `Ok(None)` means there was
+/// nothing to save, which is the normal case for a clean tree.
+#[tauri::command]
+pub fn git_checkpoint(
+    label: String,
+    state: tauri::State<'_, WorkspaceState>,
+) -> Result<Option<String>, String> {
+    let root = root_of(&state)?;
+    let created = git(&root, &["stash", "create"])?;
+    let sha = created.trim();
+    if sha.is_empty() {
+        return Ok(None);
+    }
+    git(&root, &["stash", "store", "-m", &label, sha])?;
+    Ok(Some(sha.to_string()))
+}

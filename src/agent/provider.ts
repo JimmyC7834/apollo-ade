@@ -10,7 +10,9 @@ import {
 	AgentHarness,
 	InMemorySessionStorage,
 	Session,
+	createEditTool,
 	createReadTool,
+	createWriteTool,
 	type AgentHarnessEvent,
 	type ExecutionEnv,
 } from '@earendil-works/pi-agent-core';
@@ -23,11 +25,31 @@ import { createMemoryEnv, createTauriEnv } from './env';
 import { mapEvent } from './events';
 import { installRustFetch } from './rustFetch';
 import { cannedProvider, FIXTURE_FILES } from './canned';
+import { createGate, readGatePolicy, type GatePolicy } from './gate';
 
 const SYSTEM_PROMPT =
 	'You are a coding assistant inside an editor. Use the `read` tool to look at files ' +
-	'before answering questions about them. Paths are relative to the workspace root. ' +
-	'If a file is missing, say so rather than guessing at its contents.';
+	'before answering questions about them, and `write` or `edit` to change them. Paths ' +
+	'are relative to the workspace root. If a file is missing, say so rather than ' +
+	'guessing at its contents. Never guess at what a file contains before editing it — ' +
+	'read it first.';
+
+/**
+ * Snapshot the working tree before the turn.
+ *
+ * Best-effort by design: no repository, no commits, or a clean tree all mean
+ * there is nothing to save, and none of them is a reason to refuse to run. The
+ * checkpoint is a safety net, not a precondition — failing the turn because the
+ * net could not be hung would be worse than running without it.
+ */
+async function checkpoint(prompt: string): Promise<void> {
+	try {
+		const { invoke } = await import('@tauri-apps/api/core');
+		await invoke('git_checkpoint', { label: `agent: ${prompt.slice(0, 60)}` });
+	} catch {
+		// Not a git repository, or git is not installed.
+	}
+}
 
 /*
  * The three API shapes pi bundles. Keyed by pi's real provider id, not a label
@@ -78,7 +100,20 @@ function modelFor(choice: ModelChoice): Model<Api> {
 		api: SHAPES[choice.provider].api,
 		provider: choice.provider,
 		baseUrl: SHAPES[choice.provider].baseUrl,
-		reasoning: false,
+		/*
+		 * A heuristic on the model id, and knowingly a poor one — it happens to
+		 * be right for `deepseek-reasoner` and will be wrong for the next
+		 * reasoning model that is not named after one.
+		 *
+		 * The honest answer is a model catalog, and pi ships one; the map
+		 * recorded that pi's is already stale enough for a new key to be unable
+		 * to call what it advertises, so adopting it is its own piece of work.
+		 * Until then this is wrong in a visible way rather than absent: the
+		 * adapter reads `reasoning_content` off the stream regardless, so a
+		 * mislabelled model still *shows* its reasoning — what this flag
+		 * controls is whether that reasoning is echoed back on later turns.
+		 */
+		reasoning: /reason|think/i.test(choice.modelId),
 		input: ['text'],
 		// Zeroed rather than guessed. A wrong cost table produces confident
 		// wrong numbers in the UI, which is worse than none — and the real
@@ -119,17 +154,35 @@ function runHarness(
 	env: ExecutionEnv,
 	models: ReturnType<typeof createModels>,
 	model: Model<Api>,
+	policy: GatePolicy,
 	prompt: string,
 	onEvent: (event: AgentEvent) => void
 ) {
+	const gate = createGate(policy, onEvent);
 	const harness = new AgentHarness<{ env: ExecutionEnv }>({
 		session: new Session(new InMemorySessionStorage()),
 		models,
 		model,
-		tools: [createReadTool()],
+		/*
+		 * `model.reasoning: true` is not enough to get reasoning out of a model,
+		 * and the failure is silent. pi's harness defaults `thinkingLevel` to
+		 * "off", and for DeepSeek that makes its adapter send
+		 * `thinking: { type: "disabled" }` — the API then returns no
+		 * `reasoning_content` at all, so no `thinking_delta` is ever emitted and
+		 * the transcript looks exactly like a non-reasoning model.
+		 *
+		 * The level is not exposed yet; it belongs to profiles alongside the
+		 * model. "medium" until then, and only for a model that can use it —
+		 * asking a non-reasoning model to think is a request some providers
+		 * reject outright.
+		 */
+		thinkingLevel: model.reasoning ? 'medium' : 'off',
+		tools: [createReadTool(), createWriteTool(), createEditTool()],
 		toolContext: { env },
 		systemPrompt: SYSTEM_PROMPT,
 	});
+
+	harness.on('tool_call', (event) => gate.onToolCall(event));
 
 	harness.subscribe((event: AgentHarnessEvent) => {
 		for (const mapped of mapEvent(event)) {
@@ -140,7 +193,7 @@ function runHarness(
 	// `prompt()` rejects on failures that never reach the event stream — auth is
 	// the common one. Swallowing it would make a failed run look like an empty
 	// one, which is indistinguishable from the model having nothing to say.
-	harness.prompt(prompt).catch((cause: unknown) => {
+	void checkpoint(prompt).then(() => harness.prompt(prompt)).catch((cause: unknown) => {
 		onEvent({
 			kind: 'error',
 			message: cause instanceof Error ? cause.message : String(cause),
@@ -149,11 +202,14 @@ function runHarness(
 	});
 
 	return {
-		cancel: () => void harness.abort(),
-		// No permission gate is registered yet, so no approval is ever asked.
-		// A no-op rather than a throw: the UI may still call this on a stale
-		// click. It becomes real in the gate slice.
-		resolveApproval: () => {},
+		cancel: () => {
+			// Abandon first. Aborting while the gate still holds a promise would
+			// leave the hook awaiting an answer that can no longer arrive, and
+			// the turn would never settle.
+			gate.abandon();
+			void harness.abort();
+		},
+		resolveApproval: (approved: boolean) => gate.resolve(approved),
 	};
 }
 
@@ -168,17 +224,21 @@ export function createAgentProvider(): AgentProvider {
 		const env = createTauriEnv();
 		const models = modelsFor(choice);
 		const model = modelFor(choice);
-		return { start: (prompt, onEvent) => runHarness(env, models, model, prompt, onEvent) };
+		const policy = readGatePolicy();
+		return {
+			start: (prompt, onEvent) => runHarness(env, models, model, policy, prompt, onEvent),
+		};
 	}
 
 	// No model configured, or no native shell: the canned provider. It is the
 	// same harness and the same tool, so a bug in the mapping shows up here too.
 	const env = createMemoryEnv(FIXTURE_FILES);
 	const canned = cannedProvider();
+	const policy = readGatePolicy();
 	return {
 		start: (prompt, onEvent) => {
 			canned.rearm();
-			return runHarness(env, canned.models, canned.model, prompt, onEvent);
+			return runHarness(env, canned.models, canned.model, policy, prompt, onEvent);
 		},
 	};
 }

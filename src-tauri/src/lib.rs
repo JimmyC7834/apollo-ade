@@ -18,6 +18,7 @@ pub fn run() {
             workspace::write_file,
             workspace::search_workspace,
             workspace::stat_path,
+            workspace::agent_write_file,
             provider::provider_stream,
             terminal::terminal_create,
             terminal::terminal_write,
@@ -28,6 +29,7 @@ pub fn run() {
             git::git_stage,
             git::git_unstage,
             git::git_revert,
+            git::git_checkpoint,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

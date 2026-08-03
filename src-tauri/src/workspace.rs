@@ -341,6 +341,66 @@ pub fn stat_path(
     }))
 }
 
+/// Create or overwrite a file for the agent, inside the root.
+///
+/// Separate from `write_file` because that one routes through `resolve`, which
+/// requires the target to already exist — the editor can only save files it
+/// opened, and that restriction is right for the editor. An agent has to be
+/// able to create.
+///
+/// The containment argument is therefore made here rather than inherited:
+///
+/// - every component must be `Normal`, so `..` and absolute paths are refused
+///   before anything touches the disk;
+/// - the *parent* is canonicalised and must still be inside the root, which is
+///   what stops a symlinked directory being used as a way out;
+/// - an existing target that is a symlink or not a regular file is refused,
+///   so this cannot clobber a directory or write through a link.
+///
+/// **This is the floor from the permission gate ticket, and it is enforced
+/// regardless of what the gate in TypeScript decided.** A renderer that has
+/// been talked into writing outside the root still cannot.
+#[tauri::command]
+pub fn agent_write_file(
+    id: String,
+    content: String,
+    state: tauri::State<'_, WorkspaceState>,
+) -> Result<(), String> {
+    let root = root_of(&state)?;
+    let candidate = Path::new(&id);
+    if candidate
+        .components()
+        .any(|c| !matches!(c, Component::Normal(_)))
+    {
+        return Err("invalid path".into());
+    }
+    if content.len() as u64 > MAX_FILE_BYTES {
+        return Err("file is larger than 2 MiB".into());
+    }
+
+    let target = root.join(candidate);
+    let parent = target.parent().ok_or_else(|| "invalid path".to_string())?;
+    fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+
+    // Canonicalise after creating, so the check sees the directory that will
+    // actually be written to rather than one that may not exist yet.
+    let real_parent = canonical(parent).map_err(|e| e.to_string())?;
+    if !real_parent.starts_with(&root) {
+        return Err("refusing to write outside the workspace".into());
+    }
+
+    if let Ok(meta) = fs::symlink_metadata(&target) {
+        if meta.file_type().is_symlink() {
+            return Err("symlinks are not supported".into());
+        }
+        if !meta.is_file() {
+            return Err("not a file".into());
+        }
+    }
+
+    fs::write(&target, content).map_err(|e| e.to_string())
+}
+
 /// Overwrite an existing file in the workspace.
 ///
 /// `resolve` requires the target to already exist as a regular file, so this
