@@ -71,8 +71,17 @@ function unimplementedRest() {
 		async appendFile(path: string) {
 			return unsupported(`appendFile(${path})`);
 		},
-		async joinPath() {
-			return unsupported('joinPath');
+		/**
+		 * Purely syntactic, and shared by both environments because there is
+		 * nothing environment-specific about joining strings. Forward slashes
+		 * only: this namespace is the workspace's, not the OS's.
+		 */
+		async joinPath(parts: string[]) {
+			const joined = parts
+				.flatMap((part) => part.split('/'))
+				.filter((segment) => segment !== '' && segment !== '.')
+				.join('/');
+			return ok<string, FileError>(ROOT + joined);
 		},
 		async listDir(path: string) {
 			return unsupported(`listDir(${path})`);
@@ -175,6 +184,46 @@ export function createTauriEnv(): ExecutionEnv {
 		},
 
 		readTextFile: readText,
+
+		/*
+		 * The four below exist for the session store rather than for a tool. They
+		 * are what `JsonlSessionRepo` needs on top of read and write, and they are
+		 * deliberately the *only* four added — `remove` stays unsupported, so the
+		 * repo's `delete` fails loudly rather than the app growing a way to erase
+		 * files nothing asks it to erase.
+		 */
+		async readTextLines(path, options) {
+			return attempt(path, async () =>
+				(await core()).invoke<string[]>('read_text_lines', {
+					id: toId(path),
+					maxLines: options?.maxLines ?? null,
+				})
+			);
+		},
+
+		async appendFile(path, content) {
+			if (typeof content !== 'string') {
+				return err(new FileError('not_supported', 'binary appends are not supported', path));
+			}
+			return attempt(path, async () =>
+				(await core()).invoke<void>('agent_append_file', { id: toId(path), content })
+			);
+		},
+
+		async createDir(path) {
+			return attempt(path, async () =>
+				(await core()).invoke<void>('agent_create_dir', { id: toId(path) })
+			);
+		},
+
+		async listDir(path) {
+			const result = await attempt(path, async () =>
+				(await core()).invoke<PathMeta[]>('agent_list_dir', { id: toId(path) })
+			);
+			return result.ok
+				? ok(result.value.map((meta) => ({ ...meta, path: ROOT + meta.path })))
+				: result;
+		},
 
 		async writeFile(path, content) {
 			// pi hands `string | Uint8Array`. Rust takes text, so binary writes

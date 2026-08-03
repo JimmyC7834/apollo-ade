@@ -1987,3 +1987,65 @@ was found by reading the code.
 - **`compacted` is now reachable** for the first time, and still has not fired.
   That is now an honest "untested" rather than the mislabelled one corrected in
   Slice 14.
+
+---
+
+## Slice 16 — The conversation survives the window
+
+**User outcome:** Close the app, reopen it, and the agent still knows what you
+were talking about. The transcript is written to disk as it happens rather than
+saved at the end, so a crash loses nothing that was already said.
+
+**What changed:** `InMemorySessionStorage` gave way to pi's `JsonlSessionRepo`,
+which was already in the package — see
+[ticket 15](wayfinder/pi-harness/tickets/15-core-already-does-this.md). It needs
+eleven `FileSystem` methods; we had four. `joinPath` is pure string work, so
+four new Rust commands closed the gap: `agent_append_file`, `agent_create_dir`,
+`agent_list_dir`, `read_text_lines`.
+
+Sessions live at `.ade/sessions/` **inside the workspace**, as
+[ticket 09](wayfinder/pi-harness/tickets/09-session-store.md) settled — which
+is why no containment exemption is needed. `.ade/.gitignore` contains `*`, so
+the directory ignores itself and the user's own `.gitignore` is never edited by
+us. `.ade` is also hidden from the explorer tree.
+
+**Validated natively** against `deepseek-reasoner`:
+
+- **Persistence.** One turn produces a five-line JSONL: a `session` header and
+  four `message` entries in a parent-linked chain.
+- **Resume.** After a full page reload — new module graph, new provider, **zero
+  rendered turns** — "what number did I ask you to remember earlier?" answered
+  `4477`, with 1068 context tokens. The history is really being sent.
+- **No second session file.** The repo opens the newest rather than creating.
+- **Git does not see it.** `git status` in the test workspace shows only the
+  files the agent edited in earlier slices.
+- `cargo test` 6 passed; `contained` refuses `..`, absolute ids, and a
+  drive-qualified Windows path.
+
+**A defect the first run exposed.** Two session files appeared with identical
+millisecond timestamps. React's StrictMode double-invokes `useMemo`, so
+`createAgentProvider` ran twice, both calls found no stored session, and both
+created one — leaving an empty orphan at every start. Fixed by caching the
+session *promise* at module scope, so the second caller waits for the first
+rather than racing it. Worth recording because it is invisible in production
+(no StrictMode) and would have shipped as a slow leak of empty files.
+
+**Caveats and deviations**
+
+- **The transcript does not rehydrate.** After a restart the chat renders empty
+  while the model remembers everything — measured, not assumed:
+  `turnsRenderedBeforeAsking: 0` and the right answer in the same run. This is
+  the least honest state in the app right now. Mapping `SessionTreeEntry[]` back
+  to `Turn[]` is the fix and it is its own piece of work.
+- **Session list and fork are capability without UI.** `repo.list()` sorts
+  newest first and `repo.fork()` is right there; "most recent for this
+  workspace" is the entire selection policy, standing in for a picker.
+- **`remove` stays unsupported**, so `repo.delete()` fails loudly. Nothing asks
+  the app to erase files, so it cannot.
+- **Two windows on one workspace would corrupt a session.** Both would open the
+  newest and append to the same file. Nothing prevents it, and nothing needs to
+  until sessions are something the user picks.
+- **A session over 2 MiB is why `read_text_lines` exists.** `read_file` goes
+  through `resolve`, which refuses anything larger — and the transcript is the
+  one file here that grows without bound. The append cap is per chunk, not per
+  file, for the same reason.

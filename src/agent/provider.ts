@@ -9,6 +9,7 @@
 import {
 	AgentHarness,
 	InMemorySessionStorage,
+	JsonlSessionRepo,
 	Session,
 	createEditTool,
 	createReadTool,
@@ -49,6 +50,70 @@ async function checkpoint(prompt: string): Promise<void> {
 	} catch {
 		// Not a git repository, or git is not installed.
 	}
+}
+
+/**
+ * Where the transcript lives.
+ *
+ * Inside the workspace, as [ticket 09](docs/wayfinder/pi-harness/tickets/09-session-store.md)
+ * settled — which means no containment exemption is needed, because the agent's
+ * own root already covers it.
+ */
+const SESSIONS_ROOT = '/.ade/sessions';
+
+/**
+ * The session to continue, or a new one.
+ *
+ * "Most recent for this workspace" is the whole selection policy, and it is a
+ * placeholder for a session picker rather than a design: `repo.list()` sorts
+ * newest first and `fork()` is right there, so the UI is what is missing, not
+ * the capability.
+ *
+ * Failing to open a stored session must not cost you the agent. A corrupt or
+ * half-written JSONL file falls back to a fresh session — losing history is
+ * bad, but refusing to run at all is worse, and the broken file is left on disk
+ * rather than deleted.
+ */
+let sessionOnce: Promise<Session> | undefined;
+
+/**
+ * One session per window, however many times the provider is built.
+ *
+ * React's StrictMode double-invokes `useMemo` in development, so
+ * `createAgentProvider` runs twice — and both runs found no stored session and
+ * both created one, leaving an empty orphan on disk at every start. Caching the
+ * *promise* rather than the session is what makes the second caller wait for
+ * the first rather than race it.
+ *
+ * This does not make concurrent writers safe in general: two windows on the
+ * same workspace are two module instances, and both would open the newest
+ * session and append to the same file. Nothing here prevents that, and nothing
+ * needs to until sessions are something the user can pick.
+ */
+function sharedSession(env: ExecutionEnv): Promise<Session> {
+	return (sessionOnce ??= openSession(env));
+}
+
+async function openSession(env: ExecutionEnv): Promise<Session> {
+	const repo = new JsonlSessionRepo({ fs: env, sessionsRoot: SESSIONS_ROOT });
+
+	/*
+	 * A self-ignoring directory, so the transcript never reaches the user's
+	 * commits and their `.gitignore` is never edited by us. `git` reads a
+	 * `.gitignore` at any level, and `*` there covers everything beneath it.
+	 */
+	await env.createDir('/.ade');
+	await env.writeFile('/.ade/.gitignore', '*\n');
+
+	try {
+		const existing = await repo.list({ cwd: '/' });
+		if (existing[0]) {
+			return await repo.open(existing[0]);
+		}
+	} catch {
+		// Fall through to a new session.
+	}
+	return repo.create({ cwd: '/' });
 }
 
 /*
@@ -164,63 +229,94 @@ function modelsFor(choice: ModelChoice) {
  */
 function createRunner(
 	env: ExecutionEnv,
+	session: Promise<Session>,
 	models: ReturnType<typeof createModels>,
 	model: Model<Api>,
 	policy: GatePolicy
 ) {
-	const harness = new AgentHarness<{ env: ExecutionEnv }>({
-		session: new Session(new InMemorySessionStorage()),
-		models,
-		model,
-		/*
-		 * `model.reasoning: true` is not enough to get reasoning out of a model,
-		 * and the failure is silent. pi's harness defaults `thinkingLevel` to
-		 * "off", and for DeepSeek that makes its adapter send
-		 * `thinking: { type: "disabled" }` — the API then returns no
-		 * `reasoning_content` at all, so no `thinking_delta` is ever emitted and
-		 * the transcript looks exactly like a non-reasoning model.
-		 *
-		 * The level is not exposed yet; it belongs to profiles alongside the
-		 * model. "medium" until then, and only for a model that can use it —
-		 * asking a non-reasoning model to think is a request some providers
-		 * reject outright.
-		 */
-		thinkingLevel: model.reasoning ? 'medium' : 'off',
-		tools: [createReadTool(), createWriteTool(), createEditTool()],
-		toolContext: { env },
-		systemPrompt: SYSTEM_PROMPT,
-	});
+	/*
+	 * Opening the session is I/O, so the harness cannot exist until it lands.
+	 * Built once and awaited by every turn rather than per turn — `start` stays
+	 * synchronous for the UI's sake, and the first prompt absorbs whatever the
+	 * open costs.
+	 */
+	const ready = session.then(
+		(opened) =>
+			new AgentHarness<{ env: ExecutionEnv }>({
+				session: opened,
+				models,
+				model,
+				/*
+				 * `model.reasoning: true` is not enough to get reasoning out of a
+				 * model, and the failure is silent. pi's harness defaults
+				 * `thinkingLevel` to "off", and for DeepSeek that makes its adapter
+				 * send `thinking: { type: "disabled" }` — the API then returns no
+				 * `reasoning_content` at all, so no `thinking_delta` is ever emitted
+				 * and the transcript looks exactly like a non-reasoning model.
+				 *
+				 * The level is not exposed yet; it belongs to profiles alongside the
+				 * model. "medium" until then, and only for a model that can use it —
+				 * asking a non-reasoning model to think is a request some providers
+				 * reject outright.
+				 */
+				thinkingLevel: model.reasoning ? 'medium' : 'off',
+				tools: [createReadTool(), createWriteTool(), createEditTool()],
+				toolContext: { env },
+				systemPrompt: SYSTEM_PROMPT,
+			})
+	);
 
 	return function start(prompt: string, onEvent: (event: AgentEvent) => void) {
 		const gate = createGate(policy, onEvent);
-		const offHook = harness.on('tool_call', (event) => gate.onToolCall(event));
-		const offEvents = harness.subscribe((event: AgentHarnessEvent) => {
-			for (const mapped of mapEvent(event)) {
-				onEvent(mapped);
-				if (mapped.kind === 'complete' || mapped.kind === 'cancelled') {
-					// Deferred: disposing a listener from inside the dispatch pi is
-					// currently walking is the kind of thing that works until it
-					// does not.
-					queueMicrotask(release);
-				}
-			}
-		});
 
 		let released = false;
+		let stopped = false;
+		let running: AgentHarness<{ env: ExecutionEnv }> | undefined;
+		let dispose: (() => void) | undefined;
+
 		function release() {
 			if (released) {
 				return;
 			}
 			released = true;
-			offHook();
-			offEvents();
+			dispose?.();
+		}
+
+		function attach(harness: AgentHarness<{ env: ExecutionEnv }>) {
+			const offHook = harness.on('tool_call', (event) => gate.onToolCall(event));
+			const offEvents = harness.subscribe((event: AgentHarnessEvent) => {
+				for (const mapped of mapEvent(event)) {
+					onEvent(mapped);
+					if (mapped.kind === 'complete' || mapped.kind === 'cancelled') {
+						// Deferred: disposing a listener from inside the dispatch pi is
+						// currently walking is the kind of thing that works until it
+						// does not.
+						queueMicrotask(release);
+					}
+				}
+			});
+			dispose = () => {
+				offHook();
+				offEvents();
+			};
 		}
 
 		// `prompt()` rejects on failures that never reach the event stream — auth is
-		// the common one. Swallowing it would make a failed run look like an empty
-		// one, which is indistinguishable from the model having nothing to say.
-		void checkpoint(prompt)
-			.then(() => harness.prompt(prompt))
+		// the common one, and opening the session is now another. Swallowing either
+		// would make a failed run look like an empty one, which is indistinguishable
+		// from the model having nothing to say.
+		void ready
+			.then(async (harness) => {
+				// Stopped while the session was still opening. Attaching now would
+				// register listeners nothing will ever release.
+				if (stopped) {
+					return;
+				}
+				running = harness;
+				attach(harness);
+				await checkpoint(prompt);
+				await harness.prompt(prompt);
+			})
 			.catch((cause: unknown) => {
 				onEvent({
 					kind: 'error',
@@ -255,13 +351,14 @@ function createRunner(
 				if (released) {
 					return;
 				}
+				stopped = true;
 				// Abandon first. Aborting while the gate still holds a promise would
 				// leave the hook awaiting an answer that can no longer arrive, and
 				// the turn would never settle.
 				gate.abandon();
 				onEvent({ kind: 'cancelled' });
 				release();
-				void harness.abort();
+				void running?.abort();
 			},
 			resolveApproval: (approved: boolean) => gate.resolve(approved),
 		};
@@ -276,8 +373,10 @@ export function createAgentProvider(): AgentProvider {
 		// Diverts provider hosts to Rust for every adapter, including the Google
 		// ones that refuse an injected `fetch`.
 		installRustFetch();
+		const env = createTauriEnv();
 		const start = createRunner(
-			createTauriEnv(),
+			env,
+			sharedSession(env),
 			modelsFor(choice),
 			modelFor(choice),
 			readGatePolicy()
@@ -287,9 +386,12 @@ export function createAgentProvider(): AgentProvider {
 
 	// No model configured, or no native shell: the canned provider. It is the
 	// same harness and the same tool, so a bug in the mapping shows up here too.
+	// The session stays in memory here — browser mode has no disk to persist to,
+	// and inventing one would be the parallel fiction ticket 10 ruled out.
 	const canned = cannedProvider();
 	const start = createRunner(
 		createMemoryEnv(FIXTURE_FILES),
+		Promise.resolve(new Session(new InMemorySessionStorage())),
 		canned.models,
 		canned.model,
 		readGatePolicy()

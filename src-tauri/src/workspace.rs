@@ -17,7 +17,9 @@ use tauri_plugin_dialog::DialogExt;
 
 const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_DEPTH: usize = 12;
-const IGNORED: [&str; 4] = [".git", "node_modules", "target", "dist"];
+/// Hidden from the explorer's tree. `.ade` holds the agent's own session
+/// transcripts, which are ours rather than the user's project.
+const IGNORED: [&str; 5] = [".git", "node_modules", "target", "dist", ".ade"];
 const MAX_RESULTS: usize = 500;
 /// Long lines are truncated in the preview: a minified bundle would otherwise
 /// ship a megabyte of one line to the UI for a three-character match.
@@ -341,6 +343,184 @@ pub fn stat_path(
     }))
 }
 
+/// Where a root-relative id lands, with the component scan already done.
+///
+/// Extracted when the session store needed four more commands that all make the
+/// same argument: no `..`, no absolute ids, nothing outside the root. It does
+/// *not* require the path to exist, which is the whole reason `resolve` cannot
+/// be reused — every caller here creates something.
+///
+/// The returned path is not yet safe to write to: `..` cannot appear, but a
+/// symlinked *directory* along the way still can, so callers canonicalise the
+/// parent afterwards. That check has to happen after `create_dir_all`, which is
+/// why it is not folded in here.
+fn contained(root: &Path, id: &str) -> Result<PathBuf, String> {
+    let candidate = Path::new(id);
+    if candidate
+        .components()
+        .any(|c| !matches!(c, Component::Normal(_)))
+    {
+        return Err("invalid path".into());
+    }
+    Ok(root.join(candidate))
+}
+
+/// The parent directory that will actually be written to, created and checked.
+fn writable_parent(root: &Path, target: &Path) -> Result<(), String> {
+    let parent = target.parent().ok_or_else(|| "invalid path".to_string())?;
+    fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    let real_parent = canonical(parent).map_err(|e| e.to_string())?;
+    if !real_parent.starts_with(root) {
+        return Err("refusing to write outside the workspace".into());
+    }
+    Ok(())
+}
+
+/// Append text to a file, creating it and its parents when absent.
+///
+/// Exists for the session store, which is append-only by design: rewriting the
+/// whole JSONL file on every entry would make the cost of a turn grow with the
+/// length of the conversation.
+///
+/// **The 2 MiB cap applies to the appended chunk, not the file.** A session
+/// transcript is the one thing here that grows without bound, and refusing to
+/// extend it once it passed a size limit would lose the conversation rather
+/// than truncate it.
+#[tauri::command]
+pub fn agent_append_file(
+    id: String,
+    content: String,
+    state: tauri::State<'_, WorkspaceState>,
+) -> Result<(), String> {
+    use std::io::Write;
+
+    let root = root_of(&state)?;
+    let target = contained(&root, &id)?;
+    if content.len() as u64 > MAX_FILE_BYTES {
+        return Err("append is larger than 2 MiB".into());
+    }
+    writable_parent(&root, &target)?;
+
+    if let Ok(meta) = fs::symlink_metadata(&target) {
+        if meta.file_type().is_symlink() {
+            return Err("symlinks are not supported".into());
+        }
+        if !meta.is_file() {
+            return Err("not a file".into());
+        }
+    }
+
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&target)
+        .map_err(|e| e.to_string())?;
+    file.write_all(content.as_bytes()).map_err(|e| e.to_string())
+}
+
+/// Create a directory and its parents.
+#[tauri::command]
+pub fn agent_create_dir(
+    id: String,
+    state: tauri::State<'_, WorkspaceState>,
+) -> Result<(), String> {
+    let root = root_of(&state)?;
+    let target = contained(&root, &id)?;
+    fs::create_dir_all(&target).map_err(|e| e.to_string())?;
+    // Canonicalise the directory itself rather than its parent: this *is* the
+    // thing being created, and a symlinked ancestor would otherwise pass.
+    let real = canonical(&target).map_err(|e| e.to_string())?;
+    if !real.starts_with(&root) {
+        return Err("refusing to create outside the workspace".into());
+    }
+    Ok(())
+}
+
+/// Direct children of a directory, without following symlinks.
+///
+/// Unlike `list_tree` this does not recurse and does not skip `IGNORED`
+/// directories — it answers a question about one directory rather than
+/// producing a view of the project, and the session store asks it about a
+/// directory whose name begins with a dot.
+///
+/// An absent directory is an error rather than an empty list: "there is nothing
+/// here" and "there is no here" lead to different next moves.
+#[tauri::command]
+pub fn agent_list_dir(
+    id: String,
+    state: tauri::State<'_, WorkspaceState>,
+) -> Result<Vec<PathMeta>, String> {
+    let root = root_of(&state)?;
+    let target = contained(&root, &id)?;
+
+    let mut out = Vec::new();
+    for entry in fs::read_dir(&target).map_err(|_| "not found".to_string())? {
+        let Ok(entry) = entry else { continue };
+        let Ok(meta) = entry.metadata() else { continue };
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let file_type = entry.file_type().map_err(|e| e.to_string())?;
+        out.push(PathMeta {
+            path: if id.is_empty() {
+                name.clone()
+            } else {
+                format!("{id}/{name}")
+            },
+            name,
+            kind: if file_type.is_symlink() {
+                "symlink"
+            } else if meta.is_dir() {
+                "directory"
+            } else {
+                "file"
+            }
+            .into(),
+            size: meta.len(),
+            mtime_ms: meta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_millis() as f64)
+                .unwrap_or(0.0),
+        });
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(out)
+}
+
+/// Read up to `max_lines` UTF-8 lines.
+///
+/// Separate from `read_file` because that one goes through `resolve`, which
+/// refuses anything over 2 MiB — and the session transcript is exactly the file
+/// that will pass 2 MiB in a long conversation. Reading it back line by line
+/// also keeps a large session out of the renderer's memory in one lump.
+#[tauri::command]
+pub fn read_text_lines(
+    id: String,
+    max_lines: Option<usize>,
+    state: tauri::State<'_, WorkspaceState>,
+) -> Result<Vec<String>, String> {
+    use std::io::{BufRead, BufReader};
+
+    let root = root_of(&state)?;
+    let target = contained(&root, &id)?;
+
+    let meta = fs::symlink_metadata(&target).map_err(|_| "not found".to_string())?;
+    if meta.file_type().is_symlink() {
+        return Err("symlinks are not supported".into());
+    }
+    if !meta.is_file() {
+        return Err("not a file".into());
+    }
+
+    let file = fs::File::open(&target).map_err(|e| e.to_string())?;
+    let limit = max_lines.unwrap_or(usize::MAX);
+    let mut lines = Vec::new();
+    for line in BufReader::new(file).lines().take(limit) {
+        lines.push(line.map_err(|_| "file is not valid UTF-8".to_string())?);
+    }
+    Ok(lines)
+}
+
 /// Create or overwrite a file for the agent, inside the root.
 ///
 /// Separate from `write_file` because that one routes through `resolve`, which
@@ -495,6 +675,31 @@ mod tests {
         // What the user is shown and what a shell starts in.
         assert!(!real.to_string_lossy().starts_with(r"\\?\"), "{real:?}");
         assert!(real.is_dir(), "still has to open: {real:?}");
+    }
+
+    /// The session store's four commands all share `contained`, so this is the
+    /// one place their containment argument is made. `resolve` cannot be reused
+    /// for them — every one of them creates something, and `resolve` requires
+    /// the path to already exist — so the check has to be asserted separately
+    /// rather than inherited.
+    #[test]
+    fn contained_refuses_escapes() {
+        let root = canonical(&std::env::temp_dir()).unwrap();
+
+        assert!(contained(&root, "a/b.jsonl").is_ok());
+        assert!(contained(&root, ".ade/sessions/x.jsonl").is_ok());
+
+        for escape in ["../out.txt", "a/../../out.txt", "/abs.txt", r"..\out.txt"] {
+            assert!(
+                contained(&root, escape).is_err(),
+                "should have refused {escape:?}"
+            );
+        }
+
+        // Windows accepts a drive-qualified path as a `Prefix` component, not a
+        // `Normal` one, which is the case a naive `starts_with("/")` check misses.
+        #[cfg(windows)]
+        assert!(contained(&root, r"C:\Windows\System32\drivers\etc\hosts").is_err());
     }
 
     #[test]
