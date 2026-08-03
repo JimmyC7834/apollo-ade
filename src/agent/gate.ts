@@ -27,10 +27,52 @@ export function readGatePolicy(): GatePolicy {
  *
  * The gate examines what a tool *does*, not what it is called — the amendment
  * on ticket 13. Naming the mutating built-ins is how that is expressed while
- * the built-ins are all there is; once `bash` lands, its *command* is what gets
- * examined, not the fact that it is `bash`.
+ * the built-ins are all there is.
+ *
+ * **`bash` is here in full**, not only when its command matches the deny list.
+ * A shell can always change something, so under `careful` every command is a
+ * question; the deny list is the narrower thing that fires even under `auto`.
+ * Asking only about pattern matches would make `careful` quietly weaker than
+ * its name.
  */
-const MUTATING = new Set(['write', 'edit']);
+const MUTATING = new Set(['write', 'edit', 'bash']);
+
+/**
+ * Commands auto mode will not run without asking.
+ *
+ * **This is a foot-gun guard and explicitly not a security boundary.** Every
+ * pattern here is trivially evaded — a variable, a quote in the wrong place, a
+ * `sh -c` wrapper — and pretending otherwise would be worse than not having it,
+ * because someone would rely on it. It exists because the default policy is
+ * `auto`, and auto mode running `git reset --hard` on a whim is a bad afternoon
+ * that a single prompt prevents.
+ *
+ * The list is short on purpose. Every entry is *irreversible* — it destroys
+ * work that no checkpoint restores, either because it rewrites history or
+ * because it reaches outside the repository. Things that are merely dangerous
+ * do not belong; a list long enough to fire often is a list people click
+ * through.
+ */
+const DESTRUCTIVE: readonly { readonly pattern: RegExp; readonly why: string }[] = [
+	{ pattern: /\brm\s+(-[a-z]*[rf][a-z]*\s+)+/i, why: 'deletes files recursively' },
+	{ pattern: /\bgit\s+reset\s+--hard\b/i, why: 'discards uncommitted work' },
+	{ pattern: /\bgit\s+clean\s+-[a-z]*f/i, why: 'deletes untracked files' },
+	{ pattern: /\bgit\s+push\b.*(--force\b|(?<!-)-f\b)/i, why: 'rewrites a remote branch' },
+	{ pattern: /\bgit\s+checkout\s+--\s/i, why: 'discards changes to those files' },
+	{ pattern: /\b(shutdown|reboot|mkfs\.?\w*|diskpart)\b/i, why: 'affects the machine itself' },
+	// `format` needs a drive to be the dangerous one. Bare `\bformat\b` also
+	// matched `echo "format the disk"` and would have matched "format the code",
+	// which is the kind of noise that trains people to click through.
+	{ pattern: /\bformat\s+[a-z]:/i, why: 'formats a drive' },
+	{ pattern: /\bdd\s+.*\bof=/i, why: 'writes raw blocks' },
+	{ pattern: /\b(rmdir|del)\s+\/s\b/i, why: 'deletes a directory tree' },
+	{ pattern: /:\(\)\s*\{.*\}\s*;\s*:/, why: 'is a fork bomb' },
+];
+
+/** The reason this command is worth asking about, if any. */
+export function destructive(command: string): string | undefined {
+	return DESTRUCTIVE.find((rule) => rule.pattern.test(command))?.why;
+}
 
 export interface Gate {
 	/**
@@ -69,7 +111,22 @@ export function createGate(
 
 	return {
 		async onToolCall(event) {
-			if (policy === 'auto' || !MUTATING.has(event.toolName)) {
+			/*
+			 * What the tool *does*, not what it is called. `bash` is examined by
+			 * its command, which is why the deny list lives here rather than in
+			 * the tool's `prepare` hook: this is the one place that can *ask*,
+			 * and `prepare` is reserved for rewriting (rtk).
+			 *
+			 * This fires in auto mode too. Auto is the permissive end of a policy
+			 * dial, not the absence of one, and the floor is the part it cannot
+			 * cross.
+			 */
+			const reason =
+				event.toolName === 'bash' && typeof event.input.command === 'string'
+					? destructive(event.input.command)
+					: undefined;
+
+			if (!reason && (policy === 'auto' || !MUTATING.has(event.toolName))) {
 				return undefined;
 			}
 
@@ -86,6 +143,7 @@ export function createGate(
 				id: event.toolCallId,
 				name: event.toolName,
 				input: event.input,
+				reason,
 			});
 
 			const approved = await new Promise<boolean>((resolve) => {

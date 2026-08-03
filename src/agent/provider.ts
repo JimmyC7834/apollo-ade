@@ -11,6 +11,7 @@ import {
 	InMemorySessionStorage,
 	JsonlSessionRepo,
 	Session,
+	createBashTool,
 	createEditTool,
 	createReadTool,
 	createWriteTool,
@@ -28,12 +29,41 @@ import { installRustFetch } from './rustFetch';
 import { cannedProvider, FIXTURE_FILES } from './canned';
 import { createGate, readGatePolicy, type GatePolicy } from './gate';
 
-const SYSTEM_PROMPT =
-	'You are a coding assistant inside an editor. Use the `read` tool to look at files ' +
-	'before answering questions about them, and `write` or `edit` to change them. Paths ' +
-	'are relative to the workspace root. If a file is missing, say so rather than ' +
-	'guessing at its contents. Never guess at what a file contains before editing it — ' +
-	'read it first.';
+/**
+ * The system prompt, once the shell is known.
+ *
+ * Which shell the `bash` tool got **varies by machine** — Git Bash where it is
+ * installed, PowerShell where it is not — so a model told nothing writes POSIX
+ * at a PowerShell and finds out one failed command at a time. Ticket 02 called
+ * this out as a consequence of detecting rather than mandating a shell, and
+ * saying it costs a sentence.
+ */
+function systemPrompt(shell: string | undefined): string {
+	const base =
+		'You are a coding assistant inside an editor. Use the `read` tool to look at files ' +
+		'before answering questions about them, and `write` or `edit` to change them. Paths ' +
+		'are relative to the workspace root. If a file is missing, say so rather than ' +
+		'guessing at its contents. Never guess at what a file contains before editing it — ' +
+		'read it first.';
+	if (!shell) {
+		return `${base} There is no shell available, so the \`bash\` tool will always fail.`;
+	}
+	return shell === 'bash'
+		? `${base} The \`bash\` tool runs commands in bash, from the workspace root.`
+		: `${base} The \`bash\` tool runs commands in **PowerShell**, not bash, from the ` +
+				'workspace root. Write PowerShell syntax: no `&&`, no `|| true`, no `$(...)`, ' +
+				'and use `Get-ChildItem` rather than `ls -la`.';
+}
+
+/** Which shell Rust resolved, or undefined outside the native shell. */
+async function resolveShell(): Promise<string | undefined> {
+	try {
+		const { invoke } = await import('@tauri-apps/api/core');
+		return (await invoke<string | null>('agent_shell')) ?? undefined;
+	} catch {
+		return undefined;
+	}
+}
 
 /**
  * Snapshot the working tree before the turn.
@@ -61,19 +91,6 @@ async function checkpoint(prompt: string): Promise<void> {
  */
 const SESSIONS_ROOT = '/.ade/sessions';
 
-/**
- * The session to continue, or a new one.
- *
- * "Most recent for this workspace" is the whole selection policy, and it is a
- * placeholder for a session picker rather than a design: `repo.list()` sorts
- * newest first and `fork()` is right there, so the UI is what is missing, not
- * the capability.
- *
- * Failing to open a stored session must not cost you the agent. A corrupt or
- * half-written JSONL file falls back to a fresh session — losing history is
- * bad, but refusing to run at all is worse, and the broken file is left on disk
- * rather than deleted.
- */
 let sessionOnce: Promise<Session> | undefined;
 
 /**
@@ -94,6 +111,19 @@ function sharedSession(env: ExecutionEnv): Promise<Session> {
 	return (sessionOnce ??= openSession(env));
 }
 
+/**
+ * The session to continue, or a new one.
+ *
+ * "Most recent for this workspace" is the whole selection policy, and it is a
+ * placeholder for a session picker rather than a design: `repo.list()` sorts
+ * newest first and `fork()` is right there, so the UI is what is missing, not
+ * the capability.
+ *
+ * Failing to open a stored session must not cost you the agent. A corrupt or
+ * half-written JSONL file falls back to a fresh session — losing history is
+ * bad, but refusing to run at all is worse, and the broken file is left on disk
+ * rather than deleted.
+ */
 async function openSession(env: ExecutionEnv): Promise<Session> {
 	const repo = new JsonlSessionRepo({ fs: env, sessionsRoot: SESSIONS_ROOT });
 
@@ -240,8 +270,8 @@ function createRunner(
 	 * synchronous for the UI's sake, and the first prompt absorbs whatever the
 	 * open costs.
 	 */
-	const ready = session.then(
-		(opened) =>
+	const ready = Promise.all([session, resolveShell()]).then(
+		([opened, shell]) =>
 			new AgentHarness<{ env: ExecutionEnv }>({
 				session: opened,
 				models,
@@ -260,9 +290,12 @@ function createRunner(
 				 * reject outright.
 				 */
 				thinkingLevel: model.reasoning ? 'medium' : 'off',
-				tools: [createReadTool(), createWriteTool(), createEditTool()],
+				// `createBashTool` is pi's, not ours: it owns capture, truncation,
+				// throttled progress and overflow on top of `env.exec`, so Rust only
+				// has to run a command and stream chunks.
+				tools: [createReadTool(), createWriteTool(), createEditTool(), createBashTool()],
 				toolContext: { env },
-				systemPrompt: SYSTEM_PROMPT,
+				systemPrompt: systemPrompt(shell),
 			})
 	);
 

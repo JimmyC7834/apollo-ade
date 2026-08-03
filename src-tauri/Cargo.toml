@@ -22,3 +22,13 @@ futures-util = { version = "0.3.33", default-features = false }
 # Only what the provider proxy needs: a streaming body and TLS. `rustls` avoids
 # depending on the platform TLS stack, which keeps the build the same everywhere.
 reqwest = { version = "0.13", default-features = false, features = ["stream", "rustls", "http2"] }
+
+# Job objects, so aborting a command kills everything it started. Enumeration
+# cannot do it: Git Bash's fork emulation orphans grandchildren, leaving them
+# with a dangling parent id before any tree walk can reach them.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }

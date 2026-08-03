@@ -2049,3 +2049,107 @@ rather than racing it. Worth recording because it is invisible in production
   through `resolve`, which refuses anything larger — and the transcript is the
   one file here that grows without bound. The append cap is per chunk, not per
   file, for the same reason.
+
+---
+
+## Slice 17 — The agent can run commands
+
+**User outcome:** The agent can run your tests, your build, `git status` —
+anything a shell can do — and you see the output as it arrives rather than at
+the end. Stop actually stops it, including whatever it started.
+
+**What changed:** `src-tauri/src/exec.rs` (new) runs one command and streams its
+output over a Tauri v2 `Channel`. `ExecutionEnv.exec` stops returning
+`shell_unavailable`, and the tool itself is **pi's `createBashTool`** — pi owns
+capture, truncation, throttled progress and overflow on top of `exec`, so Rust
+only had to run a command and stream chunks. `createTempFile`/`createTempDir`
+are implemented in TypeScript over the existing commands, writing into the same
+gitignored `.ade/` directory, because pi hands the model the overflow file's
+path and the model then tries to `read` it.
+
+**The deviation, repeated here as
+[ticket 02](wayfinder/pi-harness/tickets/02-exec-not-terminal.md) requires it to
+be:** `exec` is **cwd-confined but not command-confined**. Rust refuses a `cwd`
+outside the workspace and starts the child inside it, then does not police what
+the command does next — `cd /` works, absolute paths work. This departs from
+`context.md`'s "Rust is the only filesystem/process authority; it stays
+root-confined". The reasoning is that a shell can always reach the filesystem,
+and a partial sandbox that reads as absolute is worse than an honest boundary.
+Containment for what a command *does* is the gate's job.
+
+**The deny list ships with it, and is not a security boundary.** Nine patterns,
+all irreversible — recursive delete, `reset --hard`, `clean -f`, force push,
+`checkout --`, drive format, `dd of=`, shutdown, fork bomb. Every one is
+trivially evaded, and saying so is the point: it exists because `auto` is the
+default policy and auto running `git reset --hard` is a bad afternoon.
+
+**`bash` is also in `MUTATING` in full**, so `careful` asks before *every*
+command rather than only listed ones. A shell can always change something;
+asking only about pattern matches would make `careful` quietly weaker than its
+name.
+
+**Validated natively** against `deepseek-reasoner`, with the gate on `careful`
+so nothing ran without an explicit approval, in a throwaway workspace:
+
+- `echo ade-bash-works` — asked, approved, ran, output returned, model quoted it.
+- `rm -rf sandbox-delete-me` — asked **with the reason leading the detail**
+  ("deletes files recursively — …"), **declined**, tool result `Failed`, turn
+  continued, and the marker file was still on disk afterwards.
+- **Streaming is incremental**: 7 characters — one `tick-N\n` — arriving each
+  second, six distinct growth steps, not one lump at the end.
+- Shell resolved to Git Bash; `agent_shell` reports it and the system prompt
+  states it, because a machine without Git Bash gets PowerShell and POSIX
+  one-liners fail there.
+- `cargo test` 6 passed, `npm run check` 9 passed.
+
+**Three ways to kill a process tree on Windows, two of which look like they
+work.** This took the whole slice's debugging budget and none of it was
+guessable from the code.
+
+- `child.kill()` — what `terminal.rs` does — kills the direct child only.
+- `taskkill /F /T` prints SUCCESS for every process it kills **and still leaks
+  grandchildren**, because it kills a process before enumerating that process's
+  children.
+- Collecting the tree first and killing leaves-first also fails, and this is the
+  finding that settles it: Git Bash's fork emulation spawns intermediates that
+  exit immediately, so a `sleep` under `bash -lc` ends up with a parent id that
+  **no longer resolves to any process** — measured directly as
+  `ppid=9568, parentName=<GONE>` while it was still running. No walk from our
+  root pid can reach it; the chain is already broken.
+- A **job object** ignores parentage entirely. `TerminateJobObject` takes every
+  process ever created inside it. Abort now returns in 2.0 s and the tree is
+  gone within 415 ms of that, against 25.4 s before.
+
+**A second bug hid behind the first.** Even with the kill working, `exec` took
+the command's full runtime to return: killing the shell does not close its
+stdout, because a grandchild inherited the write handle, so `read_until` blocked
+until *that* process exited. Waiting for EOF was waiting for the wrong event.
+The loop now polls the cancelled flag and stops waiting on the pipes; the reader
+threads are deliberately not joined on that path.
+
+**And a third, in the fix for the second.** The first tree-walk was written with
+`-Filter "ParentProcessId=$(...)"`. Rust escapes `"` as `\"` when it builds a
+command line and PowerShell's `-Command` mis-parses that, so the script silently
+did nothing and looked exactly like a kill that failed to take. The replacement
+contains no double quotes at all.
+
+**Caveats and deviations**
+
+- **The deny list is a foot-gun guard, not a boundary.** Stated in the code, in
+  the ticket, and here, because the failure mode of a list like this is someone
+  relying on it.
+- **A false positive costs a prompt; a false negative costs data.** The patterns
+  are tuned that way on purpose. `format` was originally `\bformat\b`, which
+  flagged `echo "format the disk"` — noise that trains people to click through —
+  and is now `format\s+[a-z]:`.
+- **The deny list is checked as a pure function and nothing is spawned to test
+  it.** Verifying a guard against destructive commands by running destructive
+  commands would be an absurd trade.
+- **`MAX_CAPTURE_BYTES` is 8 MiB per stream**, cut in Rust before the bytes cross
+  the IPC, and the cut is appended to stderr so the model knows its log stops
+  early rather than drawing conclusions from a partial one.
+- **The timeout path is untested end to end.** pi sets one (60 s, seen in a real
+  tool call) and the code kills through the same reaper, but no run has actually
+  hit it.
+- **`exit_code` is -1 for a signalled child**, which is not a real exit status
+  and is reported as such rather than as success.

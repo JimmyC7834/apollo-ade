@@ -1,3 +1,4 @@
+mod exec;
 mod git;
 mod provider;
 mod terminal;
@@ -9,6 +10,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(workspace::WorkspaceState::default())
         .manage(terminal::TerminalState::default())
+        .manage(exec::ExecState::default())
         .invoke_handler(tauri::generate_handler![
             workspace::choose_workspace,
             workspace::restore_workspace,
@@ -24,6 +26,9 @@ pub fn run() {
             workspace::agent_list_dir,
             workspace::read_text_lines,
             provider::provider_stream,
+            exec::agent_exec,
+            exec::agent_exec_cancel,
+            exec::agent_shell,
             terminal::terminal_create,
             terminal::terminal_write,
             terminal::terminal_resize,

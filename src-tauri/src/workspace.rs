@@ -354,7 +354,7 @@ pub fn stat_path(
 /// symlinked *directory* along the way still can, so callers canonicalise the
 /// parent afterwards. That check has to happen after `create_dir_all`, which is
 /// why it is not folded in here.
-fn contained(root: &Path, id: &str) -> Result<PathBuf, String> {
+pub(crate) fn contained(root: &Path, id: &str) -> Result<PathBuf, String> {
     let candidate = Path::new(id);
     if candidate
         .components()

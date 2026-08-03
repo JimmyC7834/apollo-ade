@@ -39,6 +39,8 @@ export type AgentEvent =
 			readonly id: string;
 			readonly name: string;
 			readonly input: unknown;
+			/** Why this is being asked, when the reason is not simply the policy. */
+			readonly reason?: string;
 	  }
 	/**
 	 * Real provider numbers, not estimates. Surfaced because compaction anchors

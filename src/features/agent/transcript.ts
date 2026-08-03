@@ -146,7 +146,11 @@ export function applyEvent(turn: Turn, event: AgentEvent): Turn {
 						kind: 'approval',
 						id: event.id,
 						label: event.name,
-						detail: JSON.stringify(event.input),
+						// The reason leads, because it is what decides the answer:
+						// "deletes untracked files" is the fact, the command is the detail.
+						detail: event.reason
+							? `${event.reason} — ${JSON.stringify(event.input)}`
+							: JSON.stringify(event.input),
 						state: 'pending',
 					},
 				],

@@ -33,6 +33,28 @@ function toId(path: string): string {
 	return path.replace(/^\/+/, '');
 }
 
+/** Scratch space, beside the session store and gitignored by the same rule. */
+const TEMP_ROOT = '/.ade/tmp';
+
+/** Enough to not collide; not a security property. */
+function scratchName(): string {
+	return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+type ExecChunk =
+	| { readonly kind: 'stdout'; readonly chunk: string }
+	| { readonly kind: 'stderr'; readonly chunk: string };
+
+interface ExecOutcome {
+	readonly stdout: string;
+	readonly stderr: string;
+	readonly exitCode: number;
+	readonly truncated: boolean;
+}
+
+/** pi's fixed vocabulary; Rust returns one of these and nothing else. */
+type ExecutionErrorCode = ConstructorParameters<typeof ExecutionError>[0];
+
 interface PathMeta {
 	readonly name: string;
 	readonly path: string;
@@ -223,6 +245,87 @@ export function createTauriEnv(): ExecutionEnv {
 			return result.ok
 				? ok(result.value.map((meta) => ({ ...meta, path: ROOT + meta.path })))
 				: result;
+		},
+
+		/*
+		 * Temporary files live *inside* the workspace, under the same gitignored
+		 * directory as the session store. pi's bash tool writes overflow output to
+		 * one and then hands the model its path — and the model will try to `read`
+		 * it, which only works if the path obeys the same containment the read
+		 * tool does. An OS temp path would be refused by the resolver.
+		 */
+		async createTempDir(prefix = 'tmp-') {
+			const path = `${TEMP_ROOT}/${prefix}${scratchName()}`;
+			const created = await this.createDir(path);
+			return created.ok ? ok(path) : created;
+		},
+
+		async createTempFile(options) {
+			const path = `${TEMP_ROOT}/${options?.prefix ?? ''}${scratchName()}${options?.suffix ?? ''}`;
+			const created = await this.writeFile(path, '');
+			return created.ok ? ok(path) : created;
+		},
+
+		/**
+		 * Run one command.
+		 *
+		 * pi owns capture, truncation, throttled progress and overflow on top of
+		 * this — `executeShellWithCapture` does all of it — so the only jobs here
+		 * are streaming chunks through and translating a rejection back into the
+		 * fixed error vocabulary pi expects.
+		 */
+		async exec(command, options) {
+			const { Channel, invoke } = await core();
+			const id = crypto.randomUUID();
+
+			const channel = new Channel<ExecChunk>();
+			channel.onmessage = (event) => {
+				if (event.kind === 'stdout') {
+					options?.onStdout?.(event.chunk);
+				} else {
+					options?.onStderr?.(event.chunk);
+				}
+			};
+
+			// Cancellation is a second command rather than anything on the first:
+			// an in-flight `invoke` cannot be withdrawn, so Rust has to be told
+			// separately which child to kill.
+			const stop = () => void invoke('agent_exec_cancel', { id }).catch(() => {});
+			options?.abortSignal?.addEventListener('abort', stop, { once: true });
+
+			try {
+				const outcome = await invoke<ExecOutcome>('agent_exec', {
+					id,
+					request: {
+						command,
+						cwd: options?.cwd ? toId(options.cwd) : null,
+						env: options?.env ?? {},
+						inheritEnv: options?.inheritEnv ?? true,
+						timeout: options?.timeout ?? null,
+					},
+					onEvent: channel,
+				});
+				return ok({
+					stdout: outcome.stdout,
+					// Said out loud rather than left as a silent short read: the
+					// model has to know its output stops early, or it will draw
+					// conclusions from a partial log.
+					stderr: outcome.truncated
+						? `${outcome.stderr}\n[output truncated at 8 MiB]`
+						: outcome.stderr,
+					exitCode: outcome.exitCode,
+				});
+			} catch (cause) {
+				const failure = cause as { code?: string; message?: string };
+				return err(
+					new ExecutionError(
+						(failure?.code as ExecutionErrorCode) ?? 'unknown',
+						failure?.message ?? String(cause)
+					)
+				);
+			} finally {
+				options?.abortSignal?.removeEventListener('abort', stop);
+			}
 		},
 
 		async writeFile(path, content) {
