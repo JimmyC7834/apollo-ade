@@ -1888,6 +1888,14 @@ in a throwaway git workspace:
 session has run long enough. The `careful` policy has only been exercised on
 `write` and `edit`, because those are the only mutating tools that exist.
 
+> **Corrected later.** "No session has run long enough" was wrong, and being
+> wrong in a comfortable direction hid it. `provider.ts` builds a new
+> `AgentHarness` and a new `Session` inside `start()`, so **every turn is a
+> fresh conversation** — there is no history to compact and never was.
+> `compacted` is unreachable, not merely unexercised. Found while surveying
+> what pi already ships; see
+> [ticket 15](wayfinder/pi-harness/tickets/15-core-already-does-this.md).
+
 **Caveats and deviations from the guide**
 
 - **A checkpoint on a clean tree saves nothing, and that is correct.**

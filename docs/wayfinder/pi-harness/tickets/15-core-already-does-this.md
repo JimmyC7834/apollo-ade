@@ -1,27 +1,35 @@
 ---
 label: wayfinder:grilling
-title: What pi-agent-core already does that we are reimplementing
+title: What pi already does that we are reimplementing
 parent: ../map.md
 blocked-by: []
 assignee: jc4649
 status: open
 ---
 
-# What pi-agent-core already does that we are reimplementing
+# What pi already does that we are reimplementing
 
 ## Question
 
 Raised by the dev while planning a slash-command system for the agent chat: *"shouldn't
-the pi agent package we use have these features?"* — and then, when the first answer was
-only half right, *"pi harness is composed of multiple packages, see what other of their
-packages we can just use."*
+the pi agent package we use have these features?"* Then twice more, because the first two
+answers were each too narrow: *"pi harness is composed of multiple packages, see what
+other of their packages we can just use"*, and *"do a comprehensive review … reuse all
+harness code we can."*
 
-Both questions are now answered factually. The second answer is **no** — and the first is
-**mostly yes**, which is the finding this ticket exists to act on.
+The survey is now complete. **Every runtime export of the two packages we depend on has
+been enumerated** against the installed 0.83.0 `dist/`, not the `pi/` clone — the map
+warns the clone is ahead of published, and every claim below must survive an upgrade
+check.
 
-### Fact 1 — no other pi package is adoptable
+The short answer: **no other pi package is adoptable, and we are using roughly a third of
+the one we already have.**
 
-All nine were surveyed in the `pi/` clone at `aa0ec808b`.
+---
+
+## Fact 1 — no other pi package is adoptable
+
+All nine surveyed.
 
 | Package | Runtime deps | Verdict |
 | --- | --- | --- |
@@ -35,26 +43,71 @@ All nine were surveyed in the `pi/` clone at `aa0ec808b`.
 | `storage/sqlite-node` | — | Node sqlite. No. |
 | `pi-evals` | none | pi's own eval harness. No. |
 
-This confirms rather than changes the map: `pi-coding-agent` was already ruled out as a
-sidecar, and `pi-server`/`pi-client` were already out of scope. What is *new* is the
-detail on `pi-coding-agent`'s command system specifically, since that is what prompted
-the question:
+This confirms the map rather than changing it — `pi-coding-agent` was already ruled out as
+a sidecar, `pi-server`/`pi-client` already out of scope. What is *new* is detail on
+`pi-coding-agent`'s command system, since that is what prompted the question:
 
-- `src/core/slash-commands.ts` is **42 lines** — a list of names and one-line
-  descriptions, plus two interfaces. It contains no dispatch.
-- The dispatch lives in `src/modes/interactive/interactive-mode.ts`, **6,125 lines**,
-  importing `node:fs`, `node:os`, `node:crypto`, `child_process`, `chalk` and
-  `@earendil-works/pi-tui`.
+- `src/core/slash-commands.ts` is **42 lines** — names and one-line descriptions, plus two
+  interfaces. No dispatch.
+- Dispatch lives in `src/modes/interactive/interactive-mode.ts`, **6,125 lines**,
+  importing `node:fs`, `node:os`, `node:crypto`, `child_process`, `chalk` and `pi-tui`.
 
-So parse-and-route is genuinely ours to write. That much of the original plan stands.
+So parse-and-route is genuinely ours to write.
 
-### Fact 2 — we use roughly 40% of the package we already depend on
+## Fact 2 — browser safety is verifiable, not just claimed
 
-`pi-agent-core`'s `dist/index.d.ts` re-exports twenty modules. These are the ones that
-land on work already queued on this map, each verified against the **installed 0.83.0
-tarball** rather than the clone:
+`grep -rl 'from "node:"' dist/**/*.js` across `pi-agent-core` returns **exactly one file**:
+`dist/harness/env/nodejs.js` (`NodeExecutionEnv`). Every other module in the package —
+harness, session, compaction, tools, prompt templates, skills — is free of Node imports.
 
-**Command parsing and user-authored commands** — `harness/prompt-templates.ts`
+This is stronger than the map's existing note that `node.ts` is 88 bytes, and it is the
+fact that makes everything below safe to adopt in a WebView.
+
+## Fact 3 — complete export inventory of `pi-agent-core`
+
+Every exported function, class and const in `dist/`, classified.
+
+### Already in use (7)
+
+`AgentHarness`, `Session`, `InMemorySessionStorage`, `createReadTool`, `createWriteTool`,
+`createEditTool`, and the `types.ts` error classes (`FileError`, `ExecutionError`) plus
+`ok`/`err` in `src/agent/env.ts`.
+
+### Adopt — lands on queued work (5 groups)
+
+**A. Session management and forking** — `harness/session/jsonl-repo.ts`
+
+```ts
+class JsonlSessionRepo {
+  create(options): Promise<Session<JsonlSessionMetadata>>
+  open(metadata): Promise<Session<JsonlSessionMetadata>>
+  list(options?): Promise<JsonlSessionMetadata[]>
+  delete(metadata): Promise<void>
+  fork(sourceMetadata, { entryId?, position?: "before" | "at", id? }): Promise<Session<…>>
+}
+```
+
+plus `JsonlSessionStorage.create/open`, `loadJsonlSessionMetadata`, `getEntriesToFork`,
+`createSessionId`, `createTimestamp`, `toSession`, and on `Session` itself:
+`moveTo(entryId, summary?)`, `getBranch(fromId?)`, `getSessionStats()`, `appendLabel`,
+`appendSessionName`, `appendCustomEntry`, `appendCustomMessageEntry`, `appendModelChange`,
+`appendThinkingLevelChange`, `appendActiveToolsChange`, `appendCompaction`.
+
+**This is the whole of session persistence, listing, resuming, branching and forking.**
+[Ticket 09](09-session-store.md) resolved "JSONL through the Rust adapter, only four FS
+methods required" — the implementation was already in the package. `appendModelChange` /
+`appendThinkingLevelChange` / `appendActiveToolsChange` are the exact entry types
+[ticket 14](14-switch-aftermath.md) named for recording a profile switch.
+
+**Cost.** `JsonlSessionRepo` needs eleven `FileSystem` methods:
+`cwd`, `absolutePath`, `joinPath`, `readTextFile`, `readTextLines`, `writeFile`,
+`appendFile`, `listDir`, `exists`, `createDir`, `remove`. We implement four and stub
+seven. Of the seven, `joinPath` and `absolutePath` are pure string operations needing no
+Rust, and `readTextLines` is `readTextFile` plus a split. **Four new Rust commands —
+`appendFile`, `listDir`, `createDir`, `remove` — buy persistence, session list, resume,
+delete and fork.**
+
+**B. Commands** — `harness/prompt-templates.ts`
 
 ```ts
 parseCommandArgs(argsString: string): string[]
@@ -67,93 +120,191 @@ loadSourcedPromptTemplates<TSource, TPromptTemplate>(env, inputs): Promise<{…}
 plus `AgentHarness.promptFromTemplate(name, args)` and
 `AgentHarnessResources.promptTemplates`. `PromptTemplate.description` is documented
 upstream as *"Optional description for command lists or autocomplete"* — pi expects the
-application to render the picker and hands it everything behind it. `loadPromptTemplates`
-takes an `ExecutionEnv`, which we already have, so reading user commands off disk through
-Rust costs nothing new.
+application to render the picker and supplies everything behind it. `loadPromptTemplates`
+takes an `ExecutionEnv`, so reading user commands off disk through Rust costs nothing new.
 
-**A bash tool** — `harness/tools/bash.ts`
-
-```ts
-createBashTool<TContext>(options?: { commandPrefix?: string; prepare?: BashPrepare }):
-  AgentHarnessTool<TContext, { command: string; timeout?: number }, BashToolDetails>
-```
-
-It is in **core**, not `pi-coding-agent`, and it runs against `ExecutionEnv.exec` — which
-our env currently stubs as `shell_unavailable`. `harness/utils/shell-output.ts` and
-`harness/utils/truncate.ts` handle the output side. The `prepare` hook is the same one
-[ticket 11](11-rtk-in-profile.md) already chose for rtk.
-
-**Session persistence** — `harness/session/jsonl-storage.ts`
+**C. A bash tool** — `harness/tools/bash.ts`, `harness/utils/shell-output.ts`,
+`harness/utils/truncate.ts`
 
 ```ts
-JsonlSessionStorage.create(fs, filePath, { cwd, sessionId, parentSessionPath?, metadata? })
-JsonlSessionStorage.open(fs, filePath)
+createBashTool<TContext>(options?: { commandPrefix?, prepare?: BashPrepare })
+executeShellWithCapture(env, command, options?): Promise<Result<ShellCaptureResult, ExecutionError>>
+sanitizeBinaryOutput, truncateHead, truncateTail, truncateLine, formatSize
+DEFAULT_MAX_LINES = 2000, DEFAULT_MAX_BYTES, GREP_MAX_LINE_LENGTH = 500
 ```
 
-where `fs` is `Pick<FileSystem, "readTextFile" | "readTextLines" | "writeFile" | "appendFile">`
-— four methods. This is [ticket 09](09-session-store.md)'s resolution ("JSONL through the
-Rust adapter … only four FS methods required") sitting implemented in the package. It also
-carries `getSessionStats()` (message count, cached/uncached tokens, cost total) and
-`getPathToRootOrCompaction()`.
+In **core**, not `pi-coding-agent`. It runs on `ExecutionEnv.exec`, which we stub as
+`shell_unavailable`. `ShellCaptureResult` carries `truncated`, `cancelled`, `exitCode`,
+`fullOutputPath` — the overflow-file behaviour [ticket 02](02-exec-not-terminal.md)
+specified is already implemented. The `prepare` hook is the same one
+[ticket 11](11-rtk-in-profile.md) chose for rtk, and is a natural second inspection point
+for the deny list.
 
-**Compaction and a context meter** — `harness/compaction/compaction.ts`
+**D. Compaction and a real context meter** — `harness/compaction/`
 
 ```ts
-shouldCompact, calculateContextTokens, estimateContextTokens, findCutPoint,
-findTurnStartIndex, prepareCompaction, generateSummary, generateSummaryWithUsage,
-getLastAssistantUsage, serializeConversation, DEFAULT_COMPACTION_SETTINGS
+shouldCompact, calculateContextTokens, estimateContextTokens, estimateTokens,
+findCutPoint, findTurnStartIndex, prepareCompaction, compact,
+generateSummary, generateSummaryWithUsage, getLastAssistantUsage,
+serializeConversation, DEFAULT_COMPACTION_SETTINGS, SUMMARIZATION_SYSTEM_PROMPT,
+collectEntriesForBranchSummary, prepareBranchEntries, generateBranchSummary,
+createFileOps, extractFileOpsFromMessage, computeFileLists, formatFileOperations
 ```
 
-plus `AgentHarness.compact(customInstructions?)` and branch summarisation
-(`generateBranchSummary`, `prepareBranchEntries`). We currently approximate the context
-meter with the provider's own `usage.totalTokens`, noted in `events.ts` as "enough for a
-meter; revisit if it has to drive compaction."
+plus `AgentHarness.compact(customInstructions?)`. `src/agent/events.ts` currently
+approximates the context meter with the provider's `usage.totalTokens` and says so:
+*"enough for a meter; revisit if it has to drive compaction."* This is that revisit.
+`computeFileLists`/`formatFileOperations` are the ledger of files read and modified that
+[ticket 14](14-switch-aftermath.md) noted pi carries forward through compaction.
 
-**Also unused**: `createImageTool`, `loadSkills`, `formatSkillInvocation`,
-`formatSkillsForSystemPrompt`, `AgentHarness.skill(name)`,
-`AgentHarness.navigateTree(targetId, …)` (which backs `/tree` and `/fork`), and the
-`memory-repo` / `memory-storage` pair.
+**E. Skills and system prompt** — `harness/skills.ts`, `harness/system-prompt.ts`,
+`harness/messages.ts`
 
-### The decisions to settle
+```ts
+loadSkills(env, dirs), loadSourcedSkills, formatSkillInvocation,
+formatSkillsForSystemPrompt(skills)
+convertToLlm, createCustomMessage, createCompactionSummaryMessage,
+createBranchSummaryMessage, bashExecutionToText
+COMPACTION_SUMMARY_PREFIX / _SUFFIX, BRANCH_SUMMARY_PREFIX / _SUFFIX
+```
 
-This is not an inventory ticket. Each item below is a live choice, and the tension running
-through all of them is the map's own standing rule from
+The map lists "Skills: composition with profiles" as fog. The *loading* half is solved.
+
+### Adopt opportunistically (2)
+
+`harness/tools/edit-diff.ts` — `generateUnifiedPatch`, `generateDiffString`,
+`detectLineEnding`, `normalizeToLF`, `restoreLineEndings`, `stripBom`, `fuzzyFindText`.
+If the transcript ever renders a diff for an `edit` approval — which is the obvious next
+step for the gate — this is the diff generator, already line-ending and BOM correct.
+
+`harness/tools/path-utils.ts` (`resolveToolPath`, `resolveReadToolPath`) and
+`harness/tools/file-mutation-queue.ts` (`withFileMutationQueue`, which serialises
+concurrent writes to one file).
+
+### Not applicable (5)
+
+`NodeExecutionEnv` (the one Node module). `Agent` / `agentLoop` / `runAgentLoop` — the
+low-level loop beneath `AgentHarness`; we want the harness. `InMemorySessionRepo` — useful
+only if browser mode grows session listing. `detectSupportedImageMimeType` / `encodeBase64`
+— image support, and note there is **no `createImageTool`**; images arrive through
+`ReadToolOptions.ReadImageProcessor`.
+
+`streamProxy` deserves a line of its own, because it looks like our architecture and is
+not. Its doc comment reads *"for apps that route LLM calls through a server. The server
+manages auth and proxies requests to LLM providers"* — pi anticipated exactly the
+credential split [ticket 06](06-credentials-and-http.md) settled. But it takes
+`{ proxyUrl, authToken }` and speaks HTTP to a remote server; ours is Tauri IPC to the
+same machine with no token at all. **Considered and set down**, recorded so nobody
+rediscovers it as a missed opportunity.
+
+### The complete tool set is four
+
+`createBashTool`, `createReadTool`, `createWriteTool`, `createEditTool`. That is all of
+`harness/tools/index.ts`. No grep, no ls, no find, no glob — those live in
+`pi-coding-agent` and are Node-bound. **Anything beyond read/write/edit/bash is ours to
+build**, which is directly relevant to [ticket 13](13-user-authored-tools.md).
+
+## Fact 4 — `pi-ai` ships model machinery we hand-rolled, and one trap
+
+`src/agent/provider.ts` hand-writes a `SHAPES` table and a `modelFor()` with two
+apologetic comments: a `reasoning: /reason|think/i.test(modelId)` heuristic ("knowingly a
+poor one") and a zeroed cost table ("wrong cost table produces confident wrong numbers").
+
+pi-ai exports the real thing: `MODELS`, `getModel`, `getModels`, `getProviders`,
+`flattenModelCatalog`, `calculateCost(model, usage)`, `getSupportedThinkingLevels(model)`,
+`clampThinkingLevel(model, level)`, `modelsAreEqual`, `InMemoryModelsStore`, and 81
+per-provider modules including `providers/deepseek` (`deepseekProvider()`).
+
+Catalog entries carry two fields our hand-written model omits entirely:
+
+```jsonc
+"compat": { "thinkingFormat": "deepseek", "requiresReasoningContentOnAssistantMessages": true, … },
+"thinkingLevelMap": { "minimal": null, "low": null, "medium": null, "high": "high", "max": "max" }
+```
+
+**The trap.** `deepseek-reasoner` — the model this repo actually runs and tested the gate
+against — **is not in pi 0.83.0's catalog at all.** It ships `deepseek-v4-flash` and
+`deepseek-v4-pro` and nothing else. And for both, `thinkingLevelMap.medium` is `null`,
+meaning the `thinkingLevel: 'medium'` we hard-code would resolve to *disabled* — the exact
+silent failure that cost this repo a debugging session.
+
+So adopting the catalog wholesale would have **broken the working setup**. This is the map's
+existing warning ("pi's bundled model catalogs go stale, and pinning does not help",
+found via `gemini-2.5-flash` 404) confirmed from the opposite direction: not only does the
+catalog list models that no longer work, it omits models that do.
+
+The lesson is to separate the two: **adopt the machinery and the field shapes; do not
+adopt the entries as truth.** `getSupportedThinkingLevels` and `clampThinkingLevel` are
+strictly better than a regex on the model id whatever catalog backs them, and
+`createModels` accepts a `fetchModels(context)` callback for a live list.
+
+## Corrections to this ticket's first draft
+
+Recorded rather than quietly edited.
+
+- **Forking and session management were under-sold.** The first draft found
+  `JsonlSessionStorage` (one session's file) and put forking in "out of scope". The
+  `JsonlSessionRepo` layer above it does `create`/`open`/`list`/`delete`/`fork`, and
+  `Session.moveTo` does branch switching. Forking is not future work; it is an unused
+  export.
+- **`createImageTool` does not exist.** The first draft listed it as unused. There are
+  four tools, not five.
+
+## The decisions to settle
+
+The tension running through all of them is the map's own rule from
 [ticket 07](07-pi-dependency.md): **wrap pi's interfaces in our own rather than
-implementing them directly**, because upstream ships a breaking change every few days.
-Every export adopted here widens the surface that breaks on upgrade. "It already exists"
-is an argument for adopting it; it is not the whole argument.
+implementing them directly**, because upstream ships a breaking change every couple of
+days. Every export adopted widens the surface that breaks on upgrade. "It already exists"
+argues for adopting; it is not the whole argument. `parseCommandArgs` is a pure
+`string → string[]` with no pi types in its signature and costs nothing to drop later;
+`JsonlSessionRepo` returns pi's `SessionTreeEntry` shapes throughout and is the deepest
+coupling on offer. **They must not be decided as one block.**
 
 Settle:
 
-- **The standing rule.** Before any slice, grep `dist/index.d.ts` for what core already
-  exports. Three consecutive plans on this map proposed building something core ships.
-  Decide whether that becomes a written rule in `context.md` or stays a habit — and
-  whether it belongs in the wayfinder ticket template rather than here.
+- **The standing rule.** Grep `dist/index.d.ts` before planning any slice. Three
+  consecutive plans on this map proposed building something core already exports. Decide
+  whether that becomes written policy in `context.md`, or a line in the ticket template,
+  or stays a habit.
 
-- **Which of the five adoptions above are in, and in what order.** Each has a different
-  cost/benefit against the wrapping rule. `parseCommandArgs` is a pure function with no
-  pi types in its signature and is nearly free to adopt or to drop later.
-  `JsonlSessionStorage` returns pi's `SessionTreeEntry` shapes and is the deepest
-  coupling of the five. They should not be decided as one block.
+- **Which of groups A–E are in, and in what order**, each weighed separately against the
+  wrapping rule.
 
-- **Whether the command system is a ticket at all**, or falls out of the two slices it
-  depends on. Its builtin half is a lookup table; its user half is `promptFromTemplate`.
-  Neither looks like a decision once the harness outlives the turn.
-
-- **The prerequisite nobody has written down.** `src/agent/provider.ts` builds a new
+- **The prerequisite nobody wrote down.** `src/agent/provider.ts` constructs a new
   `AgentHarness` and a new `Session` inside `start()`, so **every turn is a fresh
-  conversation with no memory of the last one**. `/compact` has nothing to compact,
-  `setModel` would forget itself, and `compacted` has never fired because it is
-  unreachable, not because it is untested. Decide whether the persistent harness is its
-  own slice or arrives with `JsonlSessionStorage` — the two edits touch the same lines.
+  conversation with no memory of the last.** `/compact` has nothing to compact, `setModel`
+  would forget itself, and `compacted` has never fired because it is *unreachable*, not
+  untested — `docs/DEVLOG.md` currently describes it as the latter and should be
+  corrected. Decide whether the persistent harness is its own slice or arrives with
+  `JsonlSessionRepo`; the two edits touch the same lines.
 
-- **Whether adopting core's compaction closes the map's open fog entry**, "Whether pi's
-  compaction defaults need touching." The exports make it answerable; it is currently
-  listed as unspecified.
+- **Catalog: machinery yes, entries how?** Given `deepseek-reasoner`'s absence, decide
+  between catalog-as-default-with-user-override, `fetchModels` against a live endpoint, or
+  keeping hand-written entries and taking only `calculateCost` /
+  `getSupportedThinkingLevels` / `clampThinkingLevel`. This is a profile question as much
+  as a catalog one — it interacts with [ticket 04](04-profile-data-model.md)'s `model` and
+  `thinkingLevel` fields.
 
-Out of scope: `navigateTree`, `/fork` and `/tree`. Session branching is a real feature
-with real UI, and folding it into an inventory ticket would hide it. Noted here so it is
-not forgotten — the transcript should not be assumed to be a flat list forever.
+- **Whether the command system is a ticket at all**, or falls out of the slices it depends
+  on. Its builtin half is a lookup table; its user half is `promptFromTemplate`. Neither
+  looks like a decision once the harness outlives the turn.
+
+- **Whether adopting core's compaction closes the map's fog entry** "Whether pi's
+  compaction defaults need touching."
+
+- **Whether session forking gets a UI at all in v1.** The data model is free; a branch
+  view, a session picker and a fork affordance are not. Core hands over storage and a tree;
+  nobody hands over React.
+
+## Out of scope
+
+- Adopting pi's *model entries* as authoritative — ruled out by Fact 4, though the
+  machinery is in.
+- `pi-protocol` / `pi-client` / `pi-server` / `pi-tui` / `sqlite-node` — Fact 1.
+- Tools beyond read/write/edit/bash. Core ships four; grep/ls/find are Node-bound in
+  `pi-coding-agent`. Building more belongs to
+  [user-authored tools](13-user-authored-tools.md), not here.
 
 ---
 

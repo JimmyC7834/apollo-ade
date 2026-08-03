@@ -276,6 +276,16 @@ built.
   is genuinely ours is a builtin lookup table and one branch in `AgentProvider.start`.
   Blocked behind the same ticket's prerequisite: **the harness does not currently outlive
   a single turn.**
+- **Session forking and a session picker.** `JsonlSessionRepo` ships
+  `create`/`open`/`list`/`delete`/`fork` and `Session.moveTo` in the browser-safe core
+  ([ticket 15](tickets/15-core-already-does-this.md)) — the data model is free, the UI is
+  not. Whether v1 has one is unspecified.
+- **Which model catalog is authoritative.** pi-ai ships `calculateCost`,
+  `getSupportedThinkingLevels` and `clampThinkingLevel`, all better than the regex
+  heuristic in `provider.ts` — but 0.83.0's catalog **does not contain
+  `deepseek-reasoner`**, the model this repo actually runs
+  ([ticket 15](tickets/15-core-already-does-this.md)). Machinery and entries have to be
+  decided separately.
 
 ## Out of scope
 
