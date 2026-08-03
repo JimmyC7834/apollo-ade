@@ -265,7 +265,17 @@ built.
   mid-child-process. Sharp once the event contract and `exec` are settled.
 - **Whether pi's compaction defaults need touching.** pi's is the more carefully
   engineered of the two references and it comes free. Likely nothing to decide; listed
-  so it is not silently forgotten.
+  so it is not silently forgotten. **Now answerable** —
+  [What pi-agent-core already does that we are reimplementing](tickets/15-core-already-does-this.md)
+  found `shouldCompact`, `calculateContextTokens`, `findCutPoint` and
+  `DEFAULT_COMPACTION_SETTINGS` all exported from the browser-safe core.
+- **A command system for the agent chat** (`/compact`, `/model`, user-authored `/name`).
+  Raised by the dev; its shape is mostly settled by
+  [ticket 15](tickets/15-core-already-does-this.md), which found `parseCommandArgs`,
+  `promptFromTemplate` and `AgentHarnessResources.promptTemplates` already in core. What
+  is genuinely ours is a builtin lookup table and one branch in `AgentProvider.start`.
+  Blocked behind the same ticket's prerequisite: **the harness does not currently outlive
+  a single turn.**
 
 ## Out of scope
 
