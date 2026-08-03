@@ -153,6 +153,34 @@ export const rustFetchFor = (provider: string): typeof fetch => async (input, in
 		}
 	};
 
+	/*
+	 * Honour the caller's `AbortSignal`.
+	 *
+	 * Without this, `Stop` does nothing that pi can see. `AgentHarness.abort()`
+	 * aborts its controller and then `await`s `waitForIdle()` *before* it emits
+	 * the `abort` event — so a stream that never ends means abort never settles,
+	 * no `cancelled` event is ever produced, and the turn stays open forever.
+	 * With a per-turn subscription that is worse than cosmetic: the turn is never
+	 * released, and its listener then marks the *next* turn complete and writes
+	 * that turn's text into a dead transcript.
+	 *
+	 * Erroring the body is what pi actually notices: its reader throws, the run
+	 * unwinds, and `waitForIdle` resolves.
+	 *
+	 * **Rust keeps streaming.** This ends the request on the JavaScript side
+	 * only; `provider_stream` has no cancellation, so the provider goes on
+	 * generating tokens that are billed and discarded. Stopping the HTTPS call
+	 * itself needs a Rust-side cancel and belongs with the map's open question
+	 * on cancellation semantics below the event boundary.
+	 */
+	const abort = () =>
+		close(new DOMException('The provider request was aborted.', 'AbortError'));
+	if (request.signal.aborted) {
+		abort();
+	} else {
+		request.signal.addEventListener('abort', abort, { once: true });
+	}
+
 	// A rejected `invoke` here means the command never ran — a missing key, a
 	// malformed argument. Failures *during* the stream arrive as an `error`
 	// event instead, because by then the head has already been handed out.

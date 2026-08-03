@@ -1916,3 +1916,74 @@ session has run long enough. The `careful` policy has only been exercised on
   what it advertises — so adopting it is its own piece of work.
 - **Gate policy is an env var**, like model selection. It is a per-profile field
   in the design; profiles are a later slice.
+
+---
+
+## Slice 15 — The conversation remembers
+
+**User outcome:** The agent remembers what you said in the previous turn.
+"Now do the same to the other file" is a sentence it can act on. Stopping a run
+also stops it, which turns out to be a different sentence than it used to be.
+
+**What changed:** `src/agent/provider.ts` built a new `AgentHarness` and a new
+`Session` inside `start()`, so every turn was a fresh conversation with no
+memory of the last. The harness now lives for the life of the provider; what is
+per-turn is the *subscription*, because each turn has its own `onEvent` to
+deliver into. Both registrations — the event subscription and the `tool_call`
+hook — are released when the turn settles.
+
+`src/agent/rustFetch.ts` now honours the caller's `AbortSignal`.
+
+**Validated natively** against `deepseek-reasoner`, driven over the WebView2
+debugging port:
+
+- **Memory.** Turn one: "remember 4477". Turn two: "what number?" → `4477`.
+  Context tokens climb across turns (980 → 1020 → 1157), so history really is
+  being sent rather than the model guessing.
+- **No leak between turns.** The first turn's rendered text is byte-identical
+  before and after the second turn runs. Asserted, not eyeballed.
+- **Stop.** The cancelled turn freezes at zero further growth, renders
+  `Stopped.`, and the *next* turn runs normally on the same session.
+- **Tools still run** through the per-turn hook registration.
+
+**Two defects this slice exposed rather than introduced.** Both were invisible
+while the harness lasted one turn, and both are worth recording because neither
+was found by reading the code.
+
+- **`Stop` did nothing pi could see.** `AgentHarness.abort()` aborts its
+  controller and then `await`s `waitForIdle()` *before* emitting `abort`. Our
+  `fetch` shim ignored the `AbortSignal`, so the provider stream never ended,
+  `waitForIdle` never resolved, and no `cancelled` event was ever produced. With
+  a per-turn subscription that stopped being cosmetic: the turn was never
+  released, and its listener then marked the *next* turn complete and wrote that
+  turn's text into a dead transcript. Measured, not inferred — an instrumented
+  run showed `abort` never settling and the composer re-enabling 502 ms after a
+  click that had not stopped anything.
+- **`abort` arrives after `agent_end`.** So releasing on `complete` — correct for
+  every normal turn — swallowed it. Waiting for pi's `abort` event instead would
+  simply invert the problem. Worse, the unwinding run emits a `message_end` whose
+  usage is all zeros, so a stopped turn rendered as prose cut mid-word followed
+  by `0 in · 0 out · 0 context` and no acknowledgement. `cancelled` is now
+  synthesised at the moment Stop is pressed, which is also when a Stop button
+  should respond.
+
+**Caveats and deviations**
+
+- **Rust keeps streaming after Stop.** The abort ends the request on the
+  JavaScript side only; `provider_stream` has no cancellation, so the provider
+  goes on generating tokens that are billed and discarded. Stopping the HTTPS
+  call itself needs a Rust-side cancel, and belongs with the map's open question
+  on cancellation semantics below the event boundary.
+- **The session is still in memory.** `InMemorySessionStorage`, so the
+  conversation dies with the window. `JsonlSessionRepo` — which also brings
+  session list, resume and fork — is the next slice and needs four new Rust
+  commands. See
+  [ticket 15](wayfinder/pi-harness/tickets/15-core-already-does-this.md).
+- **No check covers the disposal logic.** A check would have to import
+  `provider.ts`, which uses extensionless imports Vite resolves and `node` does
+  not, and `import.meta.env`. The two-turn native test is the substitute, and it
+  asserts the thing that matters — the first turn's text does not move while the
+  second runs.
+- **`compacted` is now reachable** for the first time, and still has not fired.
+  That is now an honest "untested" rather than the mislabelled one corrected in
+  Slice 14.

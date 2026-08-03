@@ -149,16 +149,25 @@ function modelsFor(choice: ModelChoice) {
 	return models;
 }
 
-/** One harness, one turn. Everything above this is which pieces it is given. */
-function runHarness(
+/**
+ * One harness for the whole conversation.
+ *
+ * It used to be one harness *per turn*, which meant a new `Session` per turn and
+ * therefore no memory of the last one: a follow-up like "now do the same to the
+ * other file" had nothing to refer to. It also made `compacted` unreachable
+ * rather than merely untested — there was never any history to compact.
+ *
+ * What is per-turn is the *subscription*, because each turn has its own
+ * `onEvent` to deliver into. Both registrations are disposed when the turn
+ * settles; leaking one would deliver a later turn's events into a dead
+ * transcript.
+ */
+function createRunner(
 	env: ExecutionEnv,
 	models: ReturnType<typeof createModels>,
 	model: Model<Api>,
-	policy: GatePolicy,
-	prompt: string,
-	onEvent: (event: AgentEvent) => void
+	policy: GatePolicy
 ) {
-	const gate = createGate(policy, onEvent);
 	const harness = new AgentHarness<{ env: ExecutionEnv }>({
 		session: new Session(new InMemorySessionStorage()),
 		models,
@@ -182,34 +191,80 @@ function runHarness(
 		systemPrompt: SYSTEM_PROMPT,
 	});
 
-	harness.on('tool_call', (event) => gate.onToolCall(event));
-
-	harness.subscribe((event: AgentHarnessEvent) => {
-		for (const mapped of mapEvent(event)) {
-			onEvent(mapped);
-		}
-	});
-
-	// `prompt()` rejects on failures that never reach the event stream — auth is
-	// the common one. Swallowing it would make a failed run look like an empty
-	// one, which is indistinguishable from the model having nothing to say.
-	void checkpoint(prompt).then(() => harness.prompt(prompt)).catch((cause: unknown) => {
-		onEvent({
-			kind: 'error',
-			message: cause instanceof Error ? cause.message : String(cause),
+	return function start(prompt: string, onEvent: (event: AgentEvent) => void) {
+		const gate = createGate(policy, onEvent);
+		const offHook = harness.on('tool_call', (event) => gate.onToolCall(event));
+		const offEvents = harness.subscribe((event: AgentHarnessEvent) => {
+			for (const mapped of mapEvent(event)) {
+				onEvent(mapped);
+				if (mapped.kind === 'complete' || mapped.kind === 'cancelled') {
+					// Deferred: disposing a listener from inside the dispatch pi is
+					// currently walking is the kind of thing that works until it
+					// does not.
+					queueMicrotask(release);
+				}
+			}
 		});
-		onEvent({ kind: 'complete' });
-	});
 
-	return {
-		cancel: () => {
-			// Abandon first. Aborting while the gate still holds a promise would
-			// leave the hook awaiting an answer that can no longer arrive, and
-			// the turn would never settle.
-			gate.abandon();
-			void harness.abort();
-		},
-		resolveApproval: (approved: boolean) => gate.resolve(approved),
+		let released = false;
+		function release() {
+			if (released) {
+				return;
+			}
+			released = true;
+			offHook();
+			offEvents();
+		}
+
+		// `prompt()` rejects on failures that never reach the event stream — auth is
+		// the common one. Swallowing it would make a failed run look like an empty
+		// one, which is indistinguishable from the model having nothing to say.
+		void checkpoint(prompt)
+			.then(() => harness.prompt(prompt))
+			.catch((cause: unknown) => {
+				onEvent({
+					kind: 'error',
+					message: cause instanceof Error ? cause.message : String(cause),
+				});
+				onEvent({ kind: 'complete' });
+			})
+			// Belt and braces: `release` normally runs off the terminal event, but a
+			// turn that settles without emitting one would otherwise leak both
+			// registrations into the next turn.
+			.finally(release);
+
+		return {
+			/**
+			 * Stop now, rather than when the network agrees.
+			 *
+			 * `cancelled` is synthesised here instead of waiting for pi's `abort`
+			 * event, for two reasons found by testing rather than by reading.
+			 *
+			 * **Order.** `AgentHarness.abort()` emits `abort` *after* awaiting
+			 * `waitForIdle()`, so the unwinding run's `agent_end` — mapped to
+			 * `complete` — arrives first and the turn is already released by the
+			 * time `abort` lands. Releasing on `abort` instead would invert the
+			 * problem for every normal turn.
+			 *
+			 * **Content.** That unwinding also emits a `message_end` whose usage is
+			 * all zeros, so waiting for pi renders a stopped turn as prose cut
+			 * mid-word followed by "0 in · 0 out · 0 context" and no
+			 * acknowledgement that anything was stopped.
+			 */
+			cancel: () => {
+				if (released) {
+					return;
+				}
+				// Abandon first. Aborting while the gate still holds a promise would
+				// leave the hook awaiting an answer that can no longer arrive, and
+				// the turn would never settle.
+				gate.abandon();
+				onEvent({ kind: 'cancelled' });
+				release();
+				void harness.abort();
+			},
+			resolveApproval: (approved: boolean) => gate.resolve(approved),
+		};
 	};
 }
 
@@ -221,24 +276,28 @@ export function createAgentProvider(): AgentProvider {
 		// Diverts provider hosts to Rust for every adapter, including the Google
 		// ones that refuse an injected `fetch`.
 		installRustFetch();
-		const env = createTauriEnv();
-		const models = modelsFor(choice);
-		const model = modelFor(choice);
-		const policy = readGatePolicy();
-		return {
-			start: (prompt, onEvent) => runHarness(env, models, model, policy, prompt, onEvent),
-		};
+		const start = createRunner(
+			createTauriEnv(),
+			modelsFor(choice),
+			modelFor(choice),
+			readGatePolicy()
+		);
+		return { start };
 	}
 
 	// No model configured, or no native shell: the canned provider. It is the
 	// same harness and the same tool, so a bug in the mapping shows up here too.
-	const env = createMemoryEnv(FIXTURE_FILES);
 	const canned = cannedProvider();
-	const policy = readGatePolicy();
+	const start = createRunner(
+		createMemoryEnv(FIXTURE_FILES),
+		canned.models,
+		canned.model,
+		readGatePolicy()
+	);
 	return {
 		start: (prompt, onEvent) => {
 			canned.rearm();
-			return runHarness(env, canned.models, canned.model, policy, prompt, onEvent);
+			return start(prompt, onEvent);
 		},
 	};
 }
