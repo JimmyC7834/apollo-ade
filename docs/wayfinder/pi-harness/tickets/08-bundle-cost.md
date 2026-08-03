@@ -128,3 +128,29 @@ question about when a profile's model field is resolved.
 still fail on `node:` builtins reaching the bundle, and still fail on an *accidental*
 `/compat` import if the dynamic route is chosen. Its job was never to enforce one
 provider — it was to stop a one-line import silently multiplying the bundle.
+
+## Measured — three providers, under the real Vite config
+
+The spike wired all three bundled API shapes and built through Rollup, which settles what
+the esbuild numbers could only estimate.
+
+| Chunk | gzip |
+|---|---|
+| `openai-completions` | 40.15 kB |
+| `anthropic-messages` | 27.10 kB |
+| `google-generative-ai` | 59.88 kB |
+| main chunk | 1,194.72 kB |
+
+**Adding the second and third provider cost the main chunk 0.34 kB.** Each API
+implementation lands in its own lazy chunk and loads only when a model of that shape first
+streams — pi's `lazyApi` wrapper survives Rollup intact.
+
+This resolves the amendment's open question in favour of the dynamic route, and it does so
+more strongly than expected: the estimate above assumed the "62 kB floor plus 50–100 kB on
+selection" shape, and that is what the build actually produces. **Provider count is very
+nearly free at load time**, so a profile model field that resolves lazily costs nothing
+to support.
+
+The guard's job is unchanged and now more precisely stateable: fail on `node:` builtins,
+and fail if an API implementation ever appears *in the main chunk* rather than as its own
+asset — that, not provider count, is the regression that would hurt.

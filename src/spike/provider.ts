@@ -21,32 +21,51 @@ import {
 	type AgentHarnessEvent,
 	type ExecutionEnv,
 } from '@earendil-works/pi-agent-core';
-import { createModels, createProvider, type Model, type ProviderStreams } from '@earendil-works/pi-ai';
+import {
+	createModels,
+	createProvider,
+	type Api,
+	type Model,
+	type ProviderStreams,
+} from '@earendil-works/pi-ai';
+import { anthropicMessagesApi } from '@earendil-works/pi-ai/api/anthropic-messages.lazy';
+import { googleGenerativeAIApi } from '@earendil-works/pi-ai/api/google-generative-ai.lazy';
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy';
-import { rustFetch } from './rustFetch';
+import { rustFetchFor } from './rustFetch';
 import type { AgentEvent, AgentProvider } from '../agent';
 import { createSpikeEnv } from './env';
 import { mapEvent, type PiEvent } from './events';
 import type { WorkspaceProvider } from '../workspace';
 
+/*
+ * The three bundled API shapes. The provider id has to be pi's real one, not a
+ * label of ours: `detectCompat` keys off `provider === "deepseek"` before it
+ * looks at the URL, so calling it "spike" would silently select generic OpenAI
+ * behaviour. Rust reads the same id to decide which credential to attach.
+ */
+const SHAPES = {
+	deepseek: { api: 'openai-completions', baseUrl: 'https://api.deepseek.com' },
+	anthropic: { api: 'anthropic-messages', baseUrl: 'https://api.anthropic.com/v1' },
+	google: {
+		api: 'google-generative-ai',
+		baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+	},
+} as const;
+
+export type SpikeProviderId = keyof typeof SHAPES;
+
 export interface SpikeConfig {
-	/**
-	 * The provider's real base URL — `https://api.deepseek.com`. Requests go out
-	 * from Rust, so there is no proxy in the path and no browser origin on the
-	 * request. Must still be absolute: pi streams through the official `openai`
-	 * SDK, which will not accept a relative `baseURL`.
-	 */
-	readonly baseUrl: string;
+	readonly provider: SpikeProviderId;
 	readonly modelId: string;
+	/** Overrides the shape's default. Must be absolute — pi's SDKs reject relative. */
+	readonly baseUrl: string;
 }
 
-/*
- * The provider id is "deepseek" on purpose. `detectCompat` in pi-ai keys off
- * `provider === "deepseek"` before it looks at the URL, so naming it correctly
- * applies DeepSeek's compatibility quirks. Calling it "spike" would silently
- * select generic OpenAI behaviour.
- */
-const PROVIDER_ID = 'deepseek';
+function apiFor(provider: SpikeProviderId) {
+	if (provider === 'anthropic') return anthropicMessagesApi();
+	if (provider === 'google') return googleGenerativeAIApi();
+	return openAICompletionsApi();
+}
 
 /**
  * pi's `StreamOptions` accepts a custom `fetch`, but `AgentHarnessStreamOptions`
@@ -57,9 +76,9 @@ const PROVIDER_ID = 'deepseek';
 function throughRust(inner: ProviderStreams): ProviderStreams {
 	return {
 		stream: (model, context, options) =>
-			inner.stream(model, context, { ...options, fetch: rustFetch }),
+			inner.stream(model, context, { ...options, fetch: rustFetchFor(model.provider) }),
 		streamSimple: (model, context, options) =>
-			inner.streamSimple(model, context, { ...options, fetch: rustFetch }),
+			inner.streamSimple(model, context, { ...options, fetch: rustFetchFor(model.provider) }),
 	};
 }
 
@@ -68,17 +87,24 @@ function throughRust(inner: ProviderStreams): ProviderStreams {
  * provider stays the default, so a checkout with no local model still runs.
  */
 export function readSpikeConfig(): SpikeConfig | undefined {
-	const baseUrl = import.meta.env.VITE_SPIKE_BASE_URL;
+	const provider = (import.meta.env.VITE_SPIKE_PROVIDER ?? 'deepseek') as SpikeProviderId;
 	const modelId = import.meta.env.VITE_SPIKE_MODEL;
-	return baseUrl && modelId ? { baseUrl, modelId } : undefined;
+	if (!modelId || !(provider in SHAPES)) {
+		return undefined;
+	}
+	return {
+		provider,
+		modelId,
+		baseUrl: import.meta.env.VITE_SPIKE_BASE_URL || SHAPES[provider].baseUrl,
+	};
 }
 
-function createSpikeModel(config: SpikeConfig): Model<'openai-completions'> {
+function createSpikeModel(config: SpikeConfig): Model<Api> {
 	return {
 		id: config.modelId,
 		name: config.modelId,
-		api: 'openai-completions',
-		provider: PROVIDER_ID,
+		api: SHAPES[config.provider].api,
+		provider: config.provider,
 		baseUrl: config.baseUrl,
 		reasoning: false,
 		input: ['text'],
@@ -92,15 +118,15 @@ function createSpikeModels(config: SpikeConfig) {
 	const models = createModels();
 	models.setProvider(
 		createProvider({
-			id: PROVIDER_ID,
-			name: 'DeepSeek (key held in Rust)',
+			id: config.provider,
+			name: `${config.provider} (key held in Rust)`,
 			baseUrl: config.baseUrl,
 			// The renderer holds no key. But `auth` is required, and `resolve()`
 			// returning undefined means "unconfigured", which makes every model
 			// unavailable — so it has to resolve to something.
 			auth: {
 				apiKey: {
-					name: 'DeepSeek (key held in Rust)',
+					name: `${config.provider} (key held in Rust)`,
 					// The placeholder is load-bearing, not laziness:
 					// `getClientApiKey` throws outright unless it sees a key or
 					// an authorization header. This value never leaves the
@@ -113,10 +139,21 @@ function createSpikeModels(config: SpikeConfig) {
 				},
 			},
 			models: [createSpikeModel(config)],
-			api: throughRust(openAICompletionsApi()),
+			api: throughRust(apiFor(config.provider)),
 		})
 	);
 	return models;
+}
+
+/** The text pi put in a tool result, which is what the model was told. */
+function describeResult(result: unknown): string {
+	const content = (result as { content?: { type: string; text?: string }[] })?.content;
+	const text = content
+		?.filter((part) => part.type === 'text')
+		.map((part) => part.text)
+		.join('\n')
+		.trim();
+	return text || JSON.stringify(result);
 }
 
 /**
@@ -129,17 +166,6 @@ function createSpikeModels(config: SpikeConfig) {
  * prose, and `usage` and `compacted` are dropped — but the contract itself is
  * still exercised in full, because `mapEvent` runs before this does.
  */
-/** The text pi put in a tool result, which is what the model was told. */
-function describeResult(result: unknown): string {
-	const content = (result as { content?: { type: string; text?: string }[] })?.content;
-	const text = content
-		?.filter((part) => part.type === 'text')
-		.map((part) => part.text)
-		.join('\n')
-		.trim();
-	return text || JSON.stringify(result);
-}
-
 function toChatEvents(event: PiEvent): AgentEvent[] {
 	switch (event.kind) {
 		case 'text':

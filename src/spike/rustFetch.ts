@@ -15,13 +15,17 @@ type ProviderEvent =
 	| { readonly kind: 'error'; readonly message: string };
 
 /**
- * Fetch through the Rust proxy.
+ * Fetch through the Rust proxy, for one provider.
+ *
+ * The provider id is a parameter because the credential differs by provider —
+ * Anthropic wants `x-api-key`, Google `x-goog-api-key`, OpenAI-shaped APIs a
+ * bearer token. The renderer names the provider; Rust chooses the key.
  *
  * Returns as soon as the response head arrives, with a body that is still
  * streaming — the same contract as real `fetch`. Resolving only at `end` would
  * turn a streamed turn back into a blocking one and defeat the point.
  */
-export const rustFetch: typeof fetch = async (input, init) => {
+export const rustFetchFor = (provider: string): typeof fetch => async (input, init) => {
 	const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
 	const headers: Record<string, string> = {};
 	new Headers(init?.headers).forEach((value, name) => {
@@ -89,7 +93,12 @@ export const rustFetch: typeof fetch = async (input, init) => {
 	// malformed argument. Failures *during* the stream arrive as an `error`
 	// event instead, because by then the head has already been handed out.
 	invoke('provider_stream', {
-		request: { url, headers, body: typeof init?.body === 'string' ? init.body : undefined },
+		request: {
+			provider,
+			url,
+			headers,
+			body: typeof init?.body === 'string' ? init.body : undefined,
+		},
 		onEvent: channel,
 	}).catch((cause: unknown) => {
 		close(cause instanceof Error ? cause : new Error(String(cause)));
@@ -107,5 +116,6 @@ export const rustFetch: typeof fetch = async (input, init) => {
  * transcript. A stream and a buffered response render identically.
  */
 if (import.meta.env.DEV) {
-	(globalThis as unknown as { __spikeFetch?: typeof fetch }).__spikeFetch = rustFetch;
+	(globalThis as unknown as { __spikeFetchFor?: (provider: string) => typeof fetch }).__spikeFetchFor =
+		rustFetchFor;
 }

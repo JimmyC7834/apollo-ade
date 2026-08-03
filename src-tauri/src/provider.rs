@@ -16,16 +16,54 @@ use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;
 
+/// How one provider expects its credential presented.
+///
+/// The three bundled API shapes disagree on both the header name and the
+/// format, so this cannot be one string. Kept as a plain match rather than a
+/// registry: three arms is not a lookup problem, and a table would need
+/// registration code that does nothing a `match` does not.
+struct Credential {
+    header: &'static str,
+    env_var: &'static str,
+    /// Anthropic and Google want the bare key; OpenAI-shaped APIs want a
+    /// `Bearer` prefix. Getting this wrong reads as an invalid key.
+    bearer: bool,
+}
+
+fn credential_for(provider: &str) -> Option<Credential> {
+    match provider {
+        "anthropic" => Some(Credential {
+            header: "x-api-key",
+            env_var: "ANTHROPIC_API_KEY",
+            bearer: false,
+        }),
+        "google" => Some(Credential {
+            header: "x-goog-api-key",
+            env_var: "GEMINI_API_KEY",
+            bearer: false,
+        }),
+        // Every OpenAI-compatible provider, DeepSeek included.
+        _ => Some(Credential {
+            header: "authorization",
+            env_var: "DEEPSEEK_API_KEY",
+            bearer: true,
+        }),
+    }
+}
+
 /// Where the key comes from. Ticket 06 settled: environment variable for the
 /// spike, OS keychain (`keyring`) for v1. The swap is this function.
-fn resolve_api_key() -> Option<String> {
-    std::env::var("DEEPSEEK_API_KEY").ok().filter(|key| !key.trim().is_empty())
+fn resolve_api_key(env_var: &str) -> Option<String> {
+    std::env::var(env_var).ok().filter(|key| !key.trim().is_empty())
 }
 
 #[derive(Deserialize)]
 pub struct ProviderRequest {
+    /// pi's provider id. Chooses which credential is attached — the renderer
+    /// names the provider, never the key.
+    provider: String,
     url: String,
-    /// Sent by the renderer without any credential. `Authorization` is added
+    /// Sent by the renderer without any credential. The auth header is added
     /// here; anything the renderer sends under that name is discarded rather
     /// than merged, so the renderer cannot influence what key is used.
     headers: HashMap<String, String>,
@@ -76,14 +114,27 @@ async fn stream_inner(
     request: ProviderRequest,
     on_event: &Channel<ProviderEvent>,
 ) -> Result<(), String> {
-    let key = resolve_api_key()
-        .ok_or_else(|| "DEEPSEEK_API_KEY is not set in the app's environment".to_string())?;
+    let credential = credential_for(&request.provider)
+        .ok_or_else(|| format!("no credential configured for provider `{}`", request.provider))?;
+    let key = resolve_api_key(credential.env_var).ok_or_else(|| {
+        format!("{} is not set in the app's environment", credential.env_var)
+    })?;
 
     let client = reqwest::Client::new();
-    let mut builder = client.post(&request.url).bearer_auth(key);
+    let mut builder = client.post(&request.url).header(
+        credential.header,
+        if credential.bearer { format!("Bearer {key}") } else { key },
+    );
 
     for (name, value) in &request.headers {
-        if name.eq_ignore_ascii_case("authorization") {
+        // Drop anything that would collide with the credential we just set.
+        // Checked against every known auth header rather than only this
+        // provider's, so a renderer-supplied `x-api-key` cannot ride along on a
+        // DeepSeek request.
+        if ["authorization", "x-api-key", "x-goog-api-key"]
+            .iter()
+            .any(|reserved| name.eq_ignore_ascii_case(reserved))
+        {
             continue;
         }
         builder = builder.header(name, value);
