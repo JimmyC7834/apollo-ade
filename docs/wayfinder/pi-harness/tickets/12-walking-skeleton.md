@@ -229,6 +229,36 @@ their message in `content[].text`; anything mapping them must go and get it.
 loop was unproven. The loop is proven and Rust now makes the call, so keeping both would
 have been a second way to do the same thing.
 
+### Settled by a second provider — Google, and two defects it exposed
+
+Running the same spike against `gemini-3.5-flash` was meant to be a free stand-in for the
+Anthropic run. It found more than the Anthropic run would have, because **a second provider
+is what exposes the assumptions a first provider let you keep.**
+
+**The turn works**: 7 progressive render steps, a `read` call through Google's
+`functionCall` format, and an answer grounded in the file's real contents. So
+`google-generative-ai` streaming through pi through Rust holds, and so does the
+per-provider credential path — `x-goog-api-key`, bare rather than bearer.
+
+**Two defects, both invisible to a single provider:**
+
+1. **The `options.fetch` seam does not generalise.** The Google adapters reject an injected
+   `fetch` and accept only `globalThis.fetch`. Interception moved to the global, scoped by
+   host. Recorded on [ticket 06](06-credentials-and-http.md), which had named
+   `ProviderStreams` as the seam — right for two shapes of three.
+2. **The shim silently dropped non-string request bodies.** The OpenAI SDK passes a string;
+   `@google/genai` does not. Google requests went out empty and returned `500 INTERNAL`,
+   which reads as the provider's fault. A direct `curl` returning 200 is what proved
+   otherwise.
+
+**`error` fired for the first time**, by accident: Google's free tier allows five requests
+per minute, and the 429 travelled Rust → channel → pi → `mapEvent` → transcript intact.
+That is the kind a user meets on a dropped connection or a quota wall, and it was the last
+unexercised kind that mattered.
+
+**Incidental, and a constraint on any Gemini-based testing:** the free tier's 5 rpm is low
+enough that an agent loop with a couple of tool calls can exhaust it inside one turn.
+
 ### Not settled — still needs work
 
 1. **The orphaned `tool_use` probe** is done for DeepSeek and Google — both accept orphans
@@ -236,12 +266,11 @@ have been a second way to do the same thing.
    deferred** (no free tier) and is the strict case. Results and the two incidental
    findings from that run are on [ticket 14](14-switch-aftermath.md), which owns the
    question.
-2. **Four event kinds have never fired.** `thinking`, `usage`, `compacted` and `error` are
-   all in the contract and none has been seen. The UI adapter drops `usage` and `compacted`
-   before they could be, `deepseek-chat` is not a reasoning model, and no request has
-   failed mid-stream. The contract is *unfalsified* on those four, not *confirmed* — and
-   `error` is the one that matters, because it is the path a user hits on a dropped
-   connection.
+2. **`usage` and `compacted` have never fired.** Both are in the contract; the UI adapter
+   drops them before they could be seen, so exercising them needs a consumer that does not.
+   `thinking` is *inconclusive* rather than unfired — Gemini emits reasoning content and
+   `mapEvent` maps `thinking_delta`, but the adapter renders it as ordinary prose, so the
+   transcript cannot distinguish it. **`error` is now confirmed** (below).
 3. **Key storage is still an environment variable.** `resolve_api_key()` in
    `src-tauri/src/provider.rs` reads `DEEPSEEK_API_KEY`. [Ticket 06](06-credentials-and-http.md)
    settled `keyring` for v1, and that function is the entire swap.

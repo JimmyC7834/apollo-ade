@@ -174,14 +174,42 @@ length (`pi/docs/custom-provider.md`, 27 KB) with a worked
 Built and measured on 2 Aug 2026; details in
 [Thinnest end-to-end turn](12-walking-skeleton.md).
 
-**The integration point is not `ProviderStreams.stream` itself — it is `options.fetch`.**
-pi's `StreamOptions` accepts a custom `fetch`, and `openai-completions` passes it straight
-to the official SDK. `AgentHarnessStreamOptions` does *not* forward one, so the harness
-cannot inject it; wrapping `ProviderStreams` to add it can. That wrapper is six lines, pi
-is unmodified, and every provider request goes through Rust.
+**The integration point is `globalThis.fetch`, scoped by host — not `ProviderStreams`.**
+
+The first attempt injected `options.fetch` through a `ProviderStreams` wrapper, and that
+worked for `openai-completions` and would work for `anthropic-messages`. **It cannot work
+for Google.** `google-generative-ai` and `google-vertex` delegate to `@google/genai`, which
+does its own fetching, and they reject an injected implementation outright:
+
+```js
+if (options?.fetch && options.fetch !== globalThis.fetch) {
+    throw new Error("Custom fetch is not supported by the Google Generative AI adapter");
+}
+```
+
+The comparison against `globalThis.fetch` is the escape hatch: **the global is the one
+implementation those adapters accept.** So interception is installed there, diverting
+three known provider hostnames and passing everything else through untouched.
+
+Patching a global is worth flinching at, and it is still the smaller design — one
+mechanism that covers every adapter, rather than one that covers most plus a special case
+for Google. The `ProviderStreams` wrapper was deleted rather than kept alongside it.
+
+**Corollary worth stating: adapters are not uniformly injectable, and pi says so.**
+`StreamOptions.fetch` is documented as "Provider adapters that cannot inject a custom
+implementation may reject it." Any design that assumes a per-request seam works everywhere
+is wrong; the transport-level one is what generalises.
 
 **Streaming across the IPC holds.** 14 chunks over 722 ms for a 12 kB response, head
 delivered at 428 ms — incremental, not buffered. This was the ticket's riskiest claim.
+
+**Forward the whole request, not the parts you expect.** The shim originally passed
+`init.body` only when it was already a string. The OpenAI SDK passes a string, so DeepSeek
+worked for weeks of testing; `@google/genai` does not, so Google requests went out with an
+empty body and came back `500 INTERNAL`. That reads as the provider's fault — a direct
+`curl` returning 200 is what proved otherwise. Normalising through `new Request(input,
+init)` handles every calling convention and carries the method, which Rust now honours
+instead of hardcoding POST.
 
 Three things worth keeping:
 

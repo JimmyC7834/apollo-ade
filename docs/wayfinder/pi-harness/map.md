@@ -127,8 +127,10 @@ built.
   HTTPS call, the key never enters JavaScript, and streamed bytes cross the IPC
   incrementally — 14 chunks over 722 ms, not one buffered lump. The injection point turned
   out to be `options.fetch` rather than `ProviderStreams.stream`, which makes the whole
-  integration a six-line wrapper with pi unmodified. Still an environment variable rather
-  than `keyring`, and hardcoded to one provider.
+  integration small with pi unmodified. **Amended by a second provider**: the seam is
+  `globalThis.fetch` scoped by host, not `ProviderStreams` — the Google adapters refuse an
+  injected `fetch` and accept only the global. Verified against DeepSeek and Google; still
+  an environment variable rather than `keyring`.
 - **⚠ pi's bundled model catalogs go stale, and pinning does not help.** Probing Google
   turned up that `gemini-2.5-flash` — which pi 0.83.0 ships in `GOOGLE_MODELS` — returns
   `404: no longer available to new users` for a newly issued key, and `googleProvider()`
