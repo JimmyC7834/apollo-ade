@@ -118,8 +118,10 @@ built.
   [Thinnest end-to-end turn](tickets/12-walking-skeleton.md)
   closed a real loop against DeepSeek in the native window — streamed prose, a `read` tool
   call, tool result, grounded answer — so the eleven-kind event contract and the
-  `ExecutionEnv` adapter both survived contact. Still open on that ticket: the failure
-  path, the orphan probe, and four event kinds that never fired. **Local models could not
+  `ExecutionEnv` adapter both survived contact. Since verified against Google as a second
+  provider, which is what exposed two defects a single provider had hidden. Still open:
+  `usage` and `compacted` never fire because the spike's UI adapter drops them, and
+  `thinking` is inconclusive for the same reason. **Local models could not
   run it at all** — they emit tool calls as prose, which is a template limitation, not a
   pi one, and it constrains any offline story.
 - **The credential path is built and measured.**
