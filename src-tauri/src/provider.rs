@@ -63,6 +63,9 @@ pub struct ProviderRequest {
     /// names the provider, never the key.
     provider: String,
     url: String,
+    /// Whatever the SDK asked for. Hardcoding POST worked only because every
+    /// provider request so far happened to be one.
+    method: String,
     /// Sent by the renderer without any credential. The auth header is added
     /// here; anything the renderer sends under that name is discarded rather
     /// than merged, so the renderer cannot influence what key is used.
@@ -120,8 +123,11 @@ async fn stream_inner(
         format!("{} is not set in the app's environment", credential.env_var)
     })?;
 
+    let method = reqwest::Method::from_bytes(request.method.as_bytes())
+        .map_err(|_| format!("unsupported HTTP method `{}`", request.method))?;
+
     let client = reqwest::Client::new();
-    let mut builder = client.post(&request.url).header(
+    let mut builder = client.request(method, &request.url).header(
         credential.header,
         if credential.bearer { format!("Bearer {key}") } else { key },
     );

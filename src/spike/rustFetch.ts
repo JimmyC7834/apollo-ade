@@ -2,11 +2,60 @@
 // docs/wayfinder/pi-harness/tickets/06-credentials-and-http.md.
 //
 // A `fetch`-shaped function that routes the provider request through Rust, so
-// the API key never enters JavaScript. pi accepts a custom `fetch` on its
-// stream options, so this needs no changes inside pi at all — the injection
-// point is `ProviderStreams`, which is exactly the seam ticket 06 named.
+// the API key never enters JavaScript.
+//
+// Ticket 06 expected the injection point to be pi's stream options. It is not,
+// or not only: the Google adapters refuse an injected `fetch` and accept
+// `globalThis.fetch` alone, so interception has to be global and scoped by
+// host. pi still needs no changes.
 
 import { Channel, invoke } from '@tauri-apps/api/core';
+
+/**
+ * Which host belongs to which pi provider id.
+ *
+ * Interception is by host rather than by wrapping pi's stream options, because
+ * **the stream-option seam does not generalise**. `google-generative-ai` and
+ * `google-vertex` reject a custom `fetch` outright — they delegate to
+ * `@google/genai`, which does its own fetching — and their check is
+ * `options.fetch !== globalThis.fetch`, so the global is the one implementation
+ * they will accept.
+ *
+ * The cost is a patched global, which is the kind of thing worth flinching at.
+ * It is bounded two ways: only these hosts are diverted, and everything else
+ * goes to the original `fetch` untouched.
+ */
+const PROVIDER_HOSTS: Readonly<Record<string, string>> = {
+	'api.deepseek.com': 'deepseek',
+	'api.anthropic.com': 'anthropic',
+	'generativelanguage.googleapis.com': 'google',
+};
+
+/**
+ * Route provider traffic through Rust, for every adapter regardless of whether
+ * it accepts an injected `fetch`. Idempotent — HMR re-runs module bodies, and
+ * wrapping a wrapper would nest the interception.
+ */
+export function installRustFetch(): void {
+	const patched = globalThis as unknown as { __rustFetchInstalled?: boolean };
+	if (patched.__rustFetchInstalled) {
+		return;
+	}
+	patched.__rustFetchInstalled = true;
+
+	const original = globalThis.fetch.bind(globalThis);
+	globalThis.fetch = (input, init) => {
+		const href =
+			typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+		let provider: string | undefined;
+		try {
+			provider = PROVIDER_HOSTS[new URL(href, location.href).hostname];
+		} catch {
+			// Not a URL we can parse — not ours to divert.
+		}
+		return provider ? rustFetchFor(provider)(input, init) : original(input, init);
+	};
+}
 
 type ProviderEvent =
 	| { readonly kind: 'head'; readonly status: number; readonly headers: Record<string, string> }
@@ -26,9 +75,24 @@ type ProviderEvent =
  * turn a streamed turn back into a blocking one and defeat the point.
  */
 export const rustFetchFor = (provider: string): typeof fetch => async (input, init) => {
-	const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+	/*
+	 * Normalise through `Request` rather than reading `input`/`init` directly.
+	 * The two SDKs disagree on how they call `fetch`: the OpenAI one passes a
+	 * string body in `init`, `@google/genai` does not. An earlier version only
+	 * forwarded `init.body` when it was already a string, so Google requests
+	 * went out with no body at all and came back as a 500 — a failure that
+	 * looked like Google's fault and was not.
+	 *
+	 * `Request` also merges headers, resolves relative URLs, and carries the
+	 * method, so none of those need handling separately.
+	 */
+	const request = new Request(input, init);
+	const url = request.url;
+	const method = request.method;
+	const body = method === 'GET' || method === 'HEAD' ? undefined : await request.text();
+
 	const headers: Record<string, string> = {};
-	new Headers(init?.headers).forEach((value, name) => {
+	request.headers.forEach((value, name) => {
 		headers[name] = value;
 	});
 
@@ -46,7 +110,7 @@ export const rustFetchFor = (provider: string): typeof fetch => async (input, in
 	 * queue would have to.
 	 */
 	let controller: ReadableStreamDefaultController<Uint8Array>;
-	const body = new ReadableStream<Uint8Array>({
+	const responseBody = new ReadableStream<Uint8Array>({
 		start(streamController) {
 			controller = streamController;
 		},
@@ -73,7 +137,7 @@ export const rustFetchFor = (provider: string): typeof fetch => async (input, in
 	channel.onmessage = (event) => {
 		if (event.kind === 'head') {
 			onHead(
-				new Response(body, {
+				new Response(responseBody, {
 					status: event.status,
 					headers: event.headers,
 				})
@@ -93,12 +157,7 @@ export const rustFetchFor = (provider: string): typeof fetch => async (input, in
 	// malformed argument. Failures *during* the stream arrive as an `error`
 	// event instead, because by then the head has already been handed out.
 	invoke('provider_stream', {
-		request: {
-			provider,
-			url,
-			headers,
-			body: typeof init?.body === 'string' ? init.body : undefined,
-		},
+		request: { provider, url, method, headers, body },
 		onEvent: channel,
 	}).catch((cause: unknown) => {
 		close(cause instanceof Error ? cause : new Error(String(cause)));

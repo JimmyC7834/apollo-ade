@@ -26,12 +26,11 @@ import {
 	createProvider,
 	type Api,
 	type Model,
-	type ProviderStreams,
 } from '@earendil-works/pi-ai';
 import { anthropicMessagesApi } from '@earendil-works/pi-ai/api/anthropic-messages.lazy';
 import { googleGenerativeAIApi } from '@earendil-works/pi-ai/api/google-generative-ai.lazy';
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy';
-import { rustFetchFor } from './rustFetch';
+import { installRustFetch } from './rustFetch';
 import type { AgentEvent, AgentProvider } from '../agent';
 import { createSpikeEnv } from './env';
 import { mapEvent, type PiEvent } from './events';
@@ -65,21 +64,6 @@ function apiFor(provider: SpikeProviderId) {
 	if (provider === 'anthropic') return anthropicMessagesApi();
 	if (provider === 'google') return googleGenerativeAIApi();
 	return openAICompletionsApi();
-}
-
-/**
- * pi's `StreamOptions` accepts a custom `fetch`, but `AgentHarnessStreamOptions`
- * does not forward one — so the harness cannot inject it and this is the layer
- * that can. Wrapping `ProviderStreams` is the whole integration: pi is
- * unmodified, and every request the provider makes goes through Rust.
- */
-function throughRust(inner: ProviderStreams): ProviderStreams {
-	return {
-		stream: (model, context, options) =>
-			inner.stream(model, context, { ...options, fetch: rustFetchFor(model.provider) }),
-		streamSimple: (model, context, options) =>
-			inner.streamSimple(model, context, { ...options, fetch: rustFetchFor(model.provider) }),
-	};
 }
 
 /**
@@ -139,7 +123,7 @@ function createSpikeModels(config: SpikeConfig) {
 				},
 			},
 			models: [createSpikeModel(config)],
-			api: throughRust(apiFor(config.provider)),
+			api: apiFor(config.provider),
 		})
 	);
 	return models;
@@ -195,6 +179,9 @@ export function createPiAgentProvider(
 	workspace: WorkspaceProvider,
 	config: SpikeConfig
 ): AgentProvider {
+	// Diverts provider hosts to Rust for every adapter, including the Google
+	// ones that refuse an injected `fetch`. See `rustFetch.ts`.
+	installRustFetch();
 	const env: ExecutionEnv = createSpikeEnv(workspace);
 
 	return {
