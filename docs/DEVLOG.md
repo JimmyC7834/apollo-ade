@@ -1718,3 +1718,91 @@ after it had been committed, to fold in the by-hand results. The rule in
 rewritten, so that was a breach of it, and the right shape was a follow-up entry
 like this one. Noted rather than reverted: rewriting history to hide a rewrite
 of history would be the worse of the two.
+
+---
+
+## Slice 13 — The agent is real
+
+**User outcome:** Agent Chat answers questions about the code in the open
+workspace by actually reading files, instead of replaying a scripted run.
+
+**Added**
+
+- `src/agent/` replaces `src/agent.ts`. The `AgentEvent` contract goes from
+  five kinds to eleven — `text`, `thinking`, `tool_start`/`tool_update`/
+  `tool_end`, `approval`, `usage`, `compacted`, `error`, `complete`,
+  `cancelled` — as settled in
+  `docs/wayfinder/pi-harness/tickets/05-event-contract.md`.
+- `@earendil-works/pi-agent-core` and `pi-ai`, both pinned to exactly 0.83.0,
+  running in-process in the WebView with pi's `read` tool.
+- `src-tauri/src/provider.rs`: the provider HTTPS call is made from Rust, so the
+  API key never enters JavaScript, and `stat_path` in `workspace.rs` so `exists`
+  does not have to read a whole file to answer.
+- `src/agent/env.ts`: an `ExecutionEnv` over Rust, plus an in-memory one.
+- `src/agent/canned.ts`: browser mode, using pi's own `fauxProvider`.
+
+**UI extracted / reused**
+
+Nothing extracted — the rule is two real consumers first, and there is one.
+`PartView` was split out of `AgentChat`'s map because eleven kinds inline is
+where a rule about who may answer a question stops being reviewable. Reused
+`Icon` and `Overlay` unchanged.
+
+**Adapters and dependencies**
+
+`AgentProvider` is unchanged in shape, so `AgentChat` still knows nothing about
+models or transports. Two `ExecutionEnv` implementations behind one interface.
+Two new npm dependencies; `reqwest` and `futures-util` on the Rust side.
+
+**Security boundary**
+
+Rust remains the only filesystem authority: `stat_path` reuses the same
+component scan `resolve` performs, reports symlinks without following them, and
+grants no read. The renderer never learns the workspace's real path — the agent's
+path namespace is root-relative, rooted at `/`. The API key is read in Rust from
+`DEEPSEEK_API_KEY`/`ANTHROPIC_API_KEY`/`GEMINI_API_KEY` and attached there;
+`provider_stream` discards any auth header the renderer sends rather than merging
+it. `write`, `edit` and `bash` are deliberately **not** wired: they are
+destructive and belong behind the permission gate, which is a later slice.
+
+**Accessibility behavior**
+
+Tool calls and approvals are `role="group"` with a label carrying their own
+outcome, so navigating group to group does not require reading into each one.
+Reasoning is a `<details>`, collapsed. Errors are *not* `role="alert"` — the log
+is already `aria-live="polite"` and interrupting it would talk over the answer.
+The plain-text transcript covers every new kind, including usage and compaction.
+
+**Validation performed**
+
+`npm run build`, `npm run check` (7 checks; `transcript.check.ts` gained the
+eleven-kind cases, `agent/events.check.ts` is new), `cargo test` (5).
+
+Browser mode driven through the UI: prompt → tool card updating in place →
+answer, with `198 in · 57 out · 522 context` rendered. Native mode driven over
+the WebView2 debugging port against DeepSeek: 9 progressive render steps, a real
+file read and summarised correctly, and separately a missing file producing a
+`Failed` card reading `not found` that the model recovered from.
+
+**Not validated:** no screen reader has heard any of it. `thinking` has never
+rendered — DeepSeek is not a reasoning model, and the one provider that emits
+reasoning (Gemini) was rate-limited before it could be checked in this UI.
+`compacted` has never fired; no session has been long enough. `approval` renders
+but is unreachable, since no gate is registered yet. Images are unsupported:
+`read_file` refuses non-UTF-8, so pi's image path in the read tool cannot fire.
+
+**Caveats and deviations from the guide**
+
+- **`ExecutionEnv` is partial on purpose.** Twelve of its methods return
+  `not_supported` rather than pretending — a silent empty `listDir` would read to
+  the model as "the directory is empty" and send it somewhere wrong.
+- **Model selection is two env vars**, `VITE_AGENT_PROVIDER` and
+  `VITE_AGENT_MODEL`, with no UI and no persistence. Profiles own this and are a
+  later slice; building a settings surface now would be built twice.
+- **`globalThis.fetch` is patched**, scoped to three provider hostnames.
+  Ticket 06 had named `ProviderStreams` as the credential seam; that is right for
+  two of pi's three API shapes and impossible for the third, because the Google
+  adapters reject an injected `fetch` and accept only the global. One mechanism
+  covering every adapter beat one covering most plus a special case.
+- **Model costs are zeroed rather than guessed.** A wrong cost table produces
+  confident wrong numbers, which is worse than none.

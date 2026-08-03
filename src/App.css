@@ -843,22 +843,96 @@ body {
 	white-space: pre-wrap;
 }
 
-/* Secondary by construction: smaller, muted, and never full width emphasis. */
-.ide-agent-activity {
-	display: flex;
-	align-items: center;
-	gap: var(--ide-space-2);
-	margin: 0 0 var(--ide-space-2);
+/* Reasoning is usually noise and always long, so it collapses. The answer
+   should be the thing you read. */
+.ide-agent-thinking {
+	margin: 0 0 var(--ide-space-3);
 	color: var(--ide-fg-muted);
 	font-size: var(--ide-font-size-small);
 }
 
-.ide-agent-activity-detail {
+.ide-agent-thinking > summary {
+	cursor: pointer;
+	color: var(--ide-fg-subtle);
+}
+
+.ide-agent-thinking > p {
+	margin: var(--ide-space-2) 0 0;
+	padding-left: var(--ide-space-3);
+	border-left: 1px solid var(--ide-border);
+	white-space: pre-wrap;
+}
+
+/* A tool call is secondary to the prose: smaller, muted, never emphasised. It
+   updates in place, so its state is carried by the row rather than by adding
+   another one. */
+.ide-agent-tool {
+	margin: 0 0 var(--ide-space-2);
+	font-size: var(--ide-font-size-small);
+}
+
+.ide-agent-tool-head {
+	display: flex;
+	align-items: center;
+	gap: var(--ide-space-2);
+	margin: 0;
+	color: var(--ide-fg-muted);
+}
+
+.ide-agent-tool-name {
+	font-weight: 600;
+}
+
+.ide-agent-tool-input {
 	color: var(--ide-fg-subtle);
 	font-family: var(--ide-font-family-mono);
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
+}
+
+/* Pushed to the end so the varying-width input does not shift it around. */
+.ide-agent-tool-state {
+	margin-left: auto;
+	flex: none;
+	color: var(--ide-fg-subtle);
+}
+
+.ide-agent-tool[data-state='failed'] .ide-agent-tool-state {
+	color: var(--ide-fg-danger);
+}
+
+/* Capped rather than scrolled: a long file would otherwise push the answer off
+   screen, and the answer is the point. */
+.ide-agent-tool-output {
+	margin: var(--ide-space-2) 0 0;
+	padding: var(--ide-space-2) var(--ide-space-3);
+	max-height: 12em;
+	overflow: auto;
+	border-left: 1px solid var(--ide-border);
+	color: var(--ide-fg-subtle);
+	font-family: var(--ide-font-family-mono);
+	font-size: var(--ide-font-size-small);
+	white-space: pre-wrap;
+}
+
+/* A failure the user can act on, so it is not muted like activity is. */
+.ide-agent-error {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--ide-space-2);
+	margin: var(--ide-space-2) 0;
+	padding: var(--ide-space-2) var(--ide-space-3);
+	border-left: 2px solid var(--ide-fg-danger);
+	background: var(--ide-bg-overlay);
+	color: var(--ide-fg);
+}
+
+.ide-agent-compacted,
+.ide-agent-usage {
+	margin: var(--ide-space-2) 0 0;
+	color: var(--ide-fg-subtle);
+	font-size: var(--ide-font-size-small);
 }
 
 /* Approval is the one thing in the transcript that stops the user. */

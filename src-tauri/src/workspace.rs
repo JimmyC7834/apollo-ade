@@ -275,6 +275,72 @@ pub fn read_file(id: String, state: tauri::State<'_, WorkspaceState>) -> Result<
     String::from_utf8(bytes).map_err(|_| "file is not valid UTF-8".to_string())
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PathMeta {
+    name: String,
+    /// Root-relative, so the renderer never learns the workspace's real path.
+    path: String,
+    kind: String,
+    size: u64,
+    mtime_ms: f64,
+}
+
+/// Metadata for a path, or `None` when it is absent.
+///
+/// Exists because the agent's `exists` check would otherwise have to read a
+/// whole file to find out whether it is there — and pi's read tool probes five
+/// Unicode variants of every path, so that is five full reads per tool call.
+///
+/// Absence is `Ok(None)` rather than `Err`: a missing file is an answer, not a
+/// failure, and the harness distinguishes the two. Containment is the same
+/// component scan `resolve` performs; directories are reported rather than
+/// refused, which is the one way this is looser than `resolve` and is why it
+/// grants no read.
+#[tauri::command]
+pub fn stat_path(
+    id: String,
+    state: tauri::State<'_, WorkspaceState>,
+) -> Result<Option<PathMeta>, String> {
+    let root = root_of(&state)?;
+    let candidate = Path::new(&id);
+    if candidate
+        .components()
+        .any(|c| !matches!(c, Component::Normal(_)))
+    {
+        return Err("invalid path".into());
+    }
+
+    let Ok(meta) = fs::symlink_metadata(root.join(candidate)) else {
+        return Ok(None);
+    };
+    let file_type = meta.file_type();
+    Ok(Some(PathMeta {
+        name: candidate
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        path: id,
+        // Symlinks are reported as such and never followed, matching `resolve`,
+        // which refuses them outright.
+        kind: if file_type.is_symlink() {
+            "symlink"
+        } else if file_type.is_dir() {
+            "directory"
+        } else {
+            "file"
+        }
+        .into(),
+        size: meta.len(),
+        mtime_ms: meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_millis() as f64)
+            .unwrap_or(0.0),
+    }))
+}
+
 /// Overwrite an existing file in the workspace.
 ///
 /// `resolve` requires the target to already exist as a regular file, so this

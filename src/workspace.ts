@@ -75,7 +75,12 @@ declare global {
 	}
 }
 
-const FIXTURE: Record<string, string> = {
+/**
+ * The browser-mode disk. Exported because the agent's in-memory `ExecutionEnv`
+ * reads from the same map — if the explorer and the agent disagreed about what
+ * exists, dev mode would be lying about one of them.
+ */
+export const FIXTURE: Record<string, string> = {
 	'README.md': '# Fixture workspace\n\nBrowser mode. Run `npm run tauri dev` to open a real folder.\n',
 	'src/main.ts': "console.log('hello from the fixture');\n",
 	'src/util.ts': 'export const noop = (): void => {};\n',

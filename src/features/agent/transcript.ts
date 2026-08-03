@@ -8,21 +8,51 @@ import type { AgentEvent } from '../../agent';
 
 export type ApprovalState = 'pending' | 'approved' | 'skipped';
 
+/**
+ * A tool call, from request to outcome.
+ *
+ * One part rather than a start part and an end part, because a call *is* one
+ * thing that changes state — rendering two would make the transcript grow a
+ * line every time a tool reported progress, and would leave no way to show a
+ * call that never finished.
+ */
+export interface ToolPart {
+	readonly kind: 'tool';
+	readonly id: string;
+	readonly name: string;
+	readonly input: unknown;
+	readonly state: 'running' | 'done' | 'failed';
+	/** Live output while running, then the final result. */
+	readonly output?: string;
+}
+
 export type Part =
 	| { readonly kind: 'text'; readonly text: string }
-	| { readonly kind: 'activity'; readonly label: string; readonly detail?: string }
+	| { readonly kind: 'thinking'; readonly text: string }
+	| ToolPart
+	| { readonly kind: 'error'; readonly message: string; readonly code?: string }
+	| { readonly kind: 'compacted'; readonly tokensBefore: number; readonly summary: string }
 	| {
 			readonly kind: 'approval';
+			readonly id: string;
 			readonly label: string;
 			readonly detail: string;
 			readonly state: ApprovalState;
 	  };
+
+export interface Usage {
+	readonly inputTokens: number;
+	readonly outputTokens: number;
+	readonly contextTokens: number;
+}
 
 export interface Turn {
 	readonly id: number;
 	readonly prompt: string;
 	readonly parts: readonly Part[];
 	readonly status: 'running' | 'complete' | 'cancelled';
+	/** Last reported usage for the turn. Absent until the provider reports any. */
+	readonly usage?: Usage;
 }
 
 /**
@@ -41,29 +71,111 @@ export function canAnswer(part: Part, turn: Turn): boolean {
 	return part.kind === 'approval' && part.state === 'pending' && turn.status === 'running';
 }
 
+/** Replace the tool part with this id, or leave the parts untouched. */
+function patchTool(
+	turn: Turn,
+	id: string,
+	patch: (part: ToolPart) => ToolPart
+): readonly Part[] {
+	let found = false;
+	const parts = turn.parts.map((part) => {
+		if (part.kind !== 'tool' || part.id !== id) {
+			return part;
+		}
+		found = true;
+		return patch(part);
+	});
+	// A result for a call we never saw start would otherwise vanish. That
+	// should not happen, and silently dropping it is how you never find out.
+	return found ? parts : turn.parts;
+}
+
 /** Fold one event into the running turn. Text chunks merge; the rest append. */
 export function applyEvent(turn: Turn, event: AgentEvent): Turn {
-	if (event.kind === 'complete' || event.kind === 'cancelled') {
-		// A pending approval is deliberately left pending. Cancelling is not an
-		// answer, and writing one in would put words in the user's mouth in a
-		// transcript they can read back. `approvalLabel` is what makes it read
-		// correctly; the stored state stays truthful.
-		return { ...turn, status: event.kind === 'complete' ? 'complete' : 'cancelled' };
+	switch (event.kind) {
+		case 'complete':
+			return { ...turn, status: 'complete' };
+		case 'cancelled':
+			// A pending approval is deliberately left pending. Cancelling is not
+			// an answer, and writing one in would put words in the user's mouth
+			// in a transcript they can read back. `approvalLabel` is what makes
+			// it read correctly; the stored state stays truthful.
+			return { ...turn, status: 'cancelled' };
+		case 'text':
+		case 'thinking': {
+			// Prose and reasoning each merge into their own run of text, so
+			// switching between them starts a new block rather than splicing
+			// reasoning into a sentence.
+			const last = turn.parts.at(-1);
+			return {
+				...turn,
+				parts:
+					last?.kind === event.kind
+						? [...turn.parts.slice(0, -1), { kind: event.kind, text: last.text + event.text }]
+						: [...turn.parts, { kind: event.kind, text: event.text }],
+			};
+		}
+		case 'tool_start':
+			return {
+				...turn,
+				parts: [
+					...turn.parts,
+					{ kind: 'tool', id: event.id, name: event.name, input: event.input, state: 'running' },
+				],
+			};
+		case 'tool_update':
+			return {
+				...turn,
+				parts: patchTool(turn, event.id, (part) => ({ ...part, output: event.partial })),
+			};
+		case 'tool_end':
+			return {
+				...turn,
+				parts: patchTool(turn, event.id, (part) => ({
+					...part,
+					state: event.isError ? 'failed' : 'done',
+					output: event.result,
+				})),
+			};
+		case 'approval':
+			return {
+				...turn,
+				parts: [
+					...turn.parts,
+					{
+						kind: 'approval',
+						id: event.id,
+						label: event.name,
+						detail: JSON.stringify(event.input),
+						state: 'pending',
+					},
+				],
+			};
+		case 'usage':
+			// Replaces rather than accumulates: the provider reports totals for
+			// the turn, so adding them would double-count on a multi-message turn.
+			return {
+				...turn,
+				usage: {
+					inputTokens: event.inputTokens,
+					outputTokens: event.outputTokens,
+					contextTokens: event.contextTokens,
+				},
+			};
+		case 'compacted':
+			return {
+				...turn,
+				parts: [
+					...turn.parts,
+					{ kind: 'compacted', tokensBefore: event.tokensBefore, summary: event.summary },
+				],
+			};
+		case 'error':
+			return {
+				...turn,
+				parts: [...turn.parts, { kind: 'error', message: event.message, code: event.code }],
+			};
 	}
-	if (event.kind === 'text') {
-		const last = turn.parts.at(-1);
-		return {
-			...turn,
-			parts:
-				last?.kind === 'text'
-					? [...turn.parts.slice(0, -1), { kind: 'text', text: last.text + event.text }]
-					: [...turn.parts, { kind: 'text', text: event.text }],
-		};
-	}
-	if (event.kind === 'activity') {
-		return { ...turn, parts: [...turn.parts, event] };
-	}
-	return { ...turn, parts: [...turn.parts, { ...event, state: 'pending' }] };
 }
 
 /**
@@ -82,6 +194,18 @@ export function approvalLabel(state: ApprovalState, status: Turn['status']): str
 		return 'Skipped';
 	}
 	return status === 'running' ? 'Waiting for you' : 'Not answered';
+}
+
+/** How a tool call reads. Derived for the same reason `approvalLabel` is. */
+export function toolLabel(part: ToolPart, status: Turn['status']): string {
+	if (part.state === 'failed') {
+		return 'Failed';
+	}
+	if (part.state === 'done') {
+		return 'Done';
+	}
+	// A run that ended with a tool still "running" did not finish it.
+	return status === 'running' ? 'Running' : 'Did not finish';
 }
 
 /**
@@ -120,17 +244,32 @@ export function resolveApproval(turns: readonly Turn[], approved: boolean): read
 export function asPlainText(turns: readonly Turn[]): string {
 	return turns
 		.map((turn) => {
-			const body = turn.parts.map((part) =>
-				part.kind === 'text'
-					? part.text
-					: part.kind === 'activity'
-						? `\n[tool] ${part.label}${part.detail ? ` — ${part.detail}` : ''}\n`
-						: `\n[approval] ${part.label} — ${part.detail} (${approvalLabel(
-								part.state,
-								turn.status
-							).toLowerCase()})\n`
-			);
-			return `You: ${turn.prompt}\n\nAgent: ${body.join('')}\n[${turn.status}]`;
+			const body = turn.parts.map((part) => {
+				switch (part.kind) {
+					case 'text':
+						return part.text;
+					case 'thinking':
+						return `\n[thinking] ${part.text.trim()}\n`;
+					case 'tool':
+						return `\n[tool] ${part.name} ${JSON.stringify(part.input)} — ${toolLabel(
+							part,
+							turn.status
+						).toLowerCase()}${part.output ? `\n${part.output}` : ''}\n`;
+					case 'error':
+						return `\n[error] ${part.message}\n`;
+					case 'compacted':
+						return `\n[compacted ${part.tokensBefore} tokens] ${part.summary}\n`;
+					case 'approval':
+						return `\n[approval] ${part.label} — ${part.detail} (${approvalLabel(
+							part.state,
+							turn.status
+						).toLowerCase()})\n`;
+				}
+			});
+			const usage = turn.usage
+				? `\n[usage] ${turn.usage.inputTokens} in, ${turn.usage.outputTokens} out, ${turn.usage.contextTokens} context`
+				: '';
+			return `You: ${turn.prompt}\n\nAgent: ${body.join('')}\n[${turn.status}]${usage}`;
 		})
 		.join('\n\n———\n\n');
 }

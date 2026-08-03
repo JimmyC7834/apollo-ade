@@ -1,4 +1,4 @@
-// SPIKE — delete with `rm -r src/spike`. See
+// Provider HTTP, made from Rust. See
 // docs/wayfinder/pi-harness/tickets/06-credentials-and-http.md.
 //
 // A `fetch`-shaped function that routes the provider request through Rust, so
@@ -165,16 +165,3 @@ export const rustFetchFor = (provider: string): typeof fetch => async (input, in
 
 	return head;
 };
-
-/*
- * Reachable from the WebView2 debugging port, so the proxy can be exercised
- * without driving the chat UI. Dev-only, and it goes when the spike does.
- *
- * This exists because the interesting property — that chunks arrive
- * incrementally rather than in one lump at the end — is invisible in the
- * transcript. A stream and a buffered response render identically.
- */
-if (import.meta.env.DEV) {
-	(globalThis as unknown as { __spikeFetchFor?: (provider: string) => typeof fetch }).__spikeFetchFor =
-		rustFetchFor;
-}

@@ -13,6 +13,8 @@ import {
 	asPlainText,
 	canAnswer,
 	resolveApproval,
+	toolLabel,
+	type Part,
 	type Turn,
 } from './transcript';
 
@@ -20,6 +22,103 @@ export interface AgentChatProps {
 	readonly provider: AgentProvider;
 	/** Routed to the workbench live region for state changes worth hearing. */
 	readonly onAnnounce?: (message: string) => void;
+}
+
+/**
+ * One transcript part.
+ *
+ * Extracted from the map that used to render three kinds inline, because
+ * eleven kinds inside JSX is where a rule about who can answer a question
+ * stops being reviewable — which is the mistake `transcript.ts` exists to
+ * prevent.
+ */
+function PartView({
+	part,
+	turn,
+	onResolve,
+}: {
+	readonly part: Part;
+	readonly turn: Turn;
+	readonly onResolve: (approved: boolean) => void;
+}) {
+	if (part.kind === 'text') {
+		return <p className="ide-agent-text">{part.text}</p>;
+	}
+
+	if (part.kind === 'thinking') {
+		// A disclosure rather than prose: reasoning is usually noise, and it is
+		// long. Collapsed by default so the answer stays the thing you read.
+		return (
+			<details className="ide-agent-thinking">
+				<summary>Thinking</summary>
+				<p>{part.text}</p>
+			</details>
+		);
+	}
+
+	if (part.kind === 'tool') {
+		const status = toolLabel(part, turn.status);
+		return (
+			<div
+				className="ide-agent-tool"
+				data-state={part.state}
+				// Carries its own outcome, so navigating group to group does not
+				// require reading into each one to find out how it ended.
+				aria-label={`Tool: ${part.name} — ${status}`}
+				role="group"
+			>
+				<p className="ide-agent-tool-head">
+					<Icon name="tools" />
+					<span className="ide-agent-tool-name">{part.name}</span>
+					<span className="ide-agent-tool-input">{JSON.stringify(part.input)}</span>
+					<span className="ide-agent-tool-state">{status}</span>
+				</p>
+				{part.output ? <pre className="ide-agent-tool-output">{part.output}</pre> : null}
+			</div>
+		);
+	}
+
+	if (part.kind === 'error') {
+		// `role="alert"` would interrupt whatever the live region is already
+		// reading. The log is `aria-live="polite"` and announces this anyway.
+		return (
+			<p className="ide-agent-error">
+				<Icon name="warning" />
+				<span>{part.message}</span>
+			</p>
+		);
+	}
+
+	if (part.kind === 'compacted') {
+		return (
+			<p className="ide-agent-compacted">
+				Earlier messages were summarised to save {part.tokensBefore} tokens of context.
+			</p>
+		);
+	}
+
+	return (
+		<div
+			className="ide-agent-approval"
+			role="group"
+			aria-label={`Approval: ${part.label} — ${approvalLabel(part.state, turn.status)}`}
+		>
+			<p className="ide-agent-approval-title">{part.label}</p>
+			<p className="ide-agent-approval-detail">{part.detail}</p>
+			{canAnswer(part, turn) ? (
+				<div className="ide-agent-approval-actions">
+					<button type="button" className="ide-button" onClick={() => onResolve(true)}>
+						Continue
+					</button>
+					<button type="button" className="ide-button" onClick={() => onResolve(false)}>
+						Skip
+					</button>
+				</div>
+			) : (
+				<p className="ide-agent-approval-state">{approvalLabel(part.state, turn.status)}</p>
+			)}
+		</div>
+	);
 }
 
 export function AgentChat({ provider, onAnnounce }: AgentChatProps) {
@@ -61,7 +160,7 @@ export function AgentChat({ provider, onAnnounce }: AgentChatProps) {
 			);
 			if (event.kind === 'approval') {
 				setAwaitingApproval(true);
-				onAnnounce?.(`Approval required: ${event.label}`);
+				onAnnounce?.(`Approval required: ${event.name}`);
 			} else if (event.kind === 'complete' || event.kind === 'cancelled') {
 				setRunning(false);
 				setAwaitingApproval(false);
@@ -108,61 +207,22 @@ export function AgentChat({ provider, onAnnounce }: AgentChatProps) {
 				{turns.map((turn) => (
 					<article className="ide-agent-turn" key={turn.id}>
 						<p className="ide-agent-prompt">{turn.prompt}</p>
-						{turn.parts.map((part, index) =>
-							part.kind === 'text' ? (
-								<p className="ide-agent-text" key={index}>
-									{part.text}
-								</p>
-							) : part.kind === 'activity' ? (
-								<p className="ide-agent-activity" key={index}>
-									<Icon name="tools" />
-									<span>{part.label}</span>
-									{part.detail ? (
-										<span className="ide-agent-activity-detail">{part.detail}</span>
-									) : null}
-								</p>
-							) : (
-								<div
-									className="ide-agent-approval"
-									key={index}
-									role="group"
-									// Carries its own outcome: navigating group to group
-									// should not require reading into each one to find
-									// out which questions are still being asked.
-									aria-label={`Approval: ${part.label} — ${approvalLabel(
-										part.state,
-										turn.status
-									)}`}
-								>
-									<p className="ide-agent-approval-title">{part.label}</p>
-									<p className="ide-agent-approval-detail">{part.detail}</p>
-									{canAnswer(part, turn) ? (
-										<div className="ide-agent-approval-actions">
-											<button
-												type="button"
-												className="ide-button"
-												onClick={() => resolve(true)}
-											>
-												Continue
-											</button>
-											<button
-												type="button"
-												className="ide-button"
-												onClick={() => resolve(false)}
-											>
-												Skip
-											</button>
-										</div>
-									) : (
-										<p className="ide-agent-approval-state">
-											{approvalLabel(part.state, turn.status)}
-										</p>
-									)}
-								</div>
-							)
-						)}
+						{turn.parts.map((part, index) => (
+							<PartView
+								key={index}
+								part={part}
+								turn={turn}
+								onResolve={resolve}
+							/>
+						))}
 						{turn.status === 'cancelled' ? (
 							<p className="ide-agent-status">Stopped.</p>
+						) : null}
+						{turn.usage ? (
+							<p className="ide-agent-usage">
+								{turn.usage.inputTokens} in · {turn.usage.outputTokens} out ·{' '}
+								{turn.usage.contextTokens} context
+							</p>
 						) : null}
 					</article>
 				))}

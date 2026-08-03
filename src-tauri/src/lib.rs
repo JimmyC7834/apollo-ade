@@ -17,6 +17,7 @@ pub fn run() {
             workspace::read_file,
             workspace::write_file,
             workspace::search_workspace,
+            workspace::stat_path,
             provider::provider_stream,
             terminal::terminal_create,
             terminal::terminal_write,
