@@ -44,6 +44,8 @@ export interface Usage {
 	readonly inputTokens: number;
 	readonly outputTokens: number;
 	readonly contextTokens: number;
+	/** What `contextTokens` is a share of, when anyone has said. */
+	readonly contextWindow?: number;
 }
 
 export interface Turn {
@@ -164,6 +166,7 @@ export function applyEvent(turn: Turn, event: AgentEvent): Turn {
 					inputTokens: event.inputTokens,
 					outputTokens: event.outputTokens,
 					contextTokens: event.contextTokens,
+					contextWindow: event.contextWindow,
 				},
 			};
 		case 'compacted':

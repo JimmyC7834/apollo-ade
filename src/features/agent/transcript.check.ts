@@ -218,8 +218,20 @@ const started = (): Turn => ({ id: 1, prompt: 'go', parts: [], status: 'running'
 		inputTokens: 30,
 		outputTokens: 9,
 		contextTokens: 39,
+		contextWindow: 128_000,
 	});
-	assert.deepEqual(turn.usage, { inputTokens: 30, outputTokens: 9, contextTokens: 39 });
+	assert.deepEqual(turn.usage, {
+		inputTokens: 30,
+		outputTokens: 9,
+		contextTokens: 39,
+		contextWindow: 128_000,
+	});
+
+	// An unknown window replaces a known one rather than lingering. The window is
+	// carried on the usage event, so a stale one would keep a percentage on
+	// screen that nothing is computing any more.
+	turn = applyEvent(turn, { kind: 'usage', inputTokens: 31, outputTokens: 9, contextTokens: 40 });
+	assert.equal(turn.usage?.contextWindow, undefined);
 	assert.equal(turn.parts.length, 0, 'usage is turn state, not a transcript entry');
 }
 

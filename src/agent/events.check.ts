@@ -90,6 +90,42 @@ assert.deepEqual(
 	['usage']
 );
 
+// An overflow is relabelled; every other failure keeps the provider's own words.
+// Getting this backwards would send a user to compact a conversation that was
+// never the problem — an expired key reading as "too long" is a worse lie than
+// the raw string it replaced.
+{
+	const overflowed = mapEvent(
+		{
+			type: 'message_end',
+			message: assistant({
+				stopReason: 'error',
+				errorMessage: 'prompt is too long: 203914 tokens > 131072 maximum',
+			}),
+		} as never,
+		128_000
+	);
+	assert.match((overflowed[1] as { message: string }).message, /\/compact/);
+
+	const other = mapEvent(
+		{
+			type: 'message_end',
+			message: assistant({ stopReason: 'error', errorMessage: '401 invalid api key' }),
+		} as never,
+		128_000
+	);
+	assert.equal((other[1] as { message: string }).message, '401 invalid api key');
+}
+
+// The window rides along on usage so the meter can show a share. Absent when it
+// was never configured, rather than defaulted to something plausible.
+{
+	const [known] = mapEvent({ type: 'message_end', message: assistant() } as never, 128_000);
+	assert.equal((known as { contextWindow?: number }).contextWindow, 128_000);
+	const [unknown] = mapEvent({ type: 'message_end', message: assistant() } as never);
+	assert.equal((unknown as { contextWindow?: number }).contextWindow, undefined);
+}
+
 // A user message ending is not the assistant's usage.
 assert.deepEqual(mapEvent({ type: 'message_end', message: { role: 'user' } } as never), []);
 

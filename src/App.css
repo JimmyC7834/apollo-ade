@@ -935,6 +935,24 @@ body {
 	font-size: var(--ide-font-size-small);
 }
 
+/* The summary is what the model still knows. Quiet, but reachable. */
+.ide-agent-compacted > summary {
+	cursor: pointer;
+}
+
+.ide-agent-compacted-summary {
+	margin: var(--ide-space-2) 0 0;
+	padding-left: var(--ide-space-3);
+	border-left: 2px solid var(--ide-border);
+	white-space: pre-wrap;
+}
+
+/* Context pressure is the one number in the footer worth looking at. */
+.ide-agent-usage-warn {
+	color: var(--ide-fg);
+	font-weight: 600;
+}
+
 /* Approval is the one thing in the transcript that stops the user. */
 .ide-agent-approval {
 	margin: var(--ide-space-3) 0;

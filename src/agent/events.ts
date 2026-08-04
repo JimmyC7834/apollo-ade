@@ -5,6 +5,10 @@
 // which is the vocabulary that breaks in minor releases every couple of days.
 
 import type { AgentHarnessEvent } from '@earendil-works/pi-agent-core';
+// Explicit extension: `events.check.ts` runs this file under plain node, which
+// does not resolve extensionless paths. Type-only imports are erased and so do
+// not need it; this one is a value.
+import { overflowMessage } from './compaction.ts';
 import type { AgentEvent } from './index';
 
 /**
@@ -39,8 +43,13 @@ export function resultText(result: unknown): string {
  * `approval` is not produced here. It comes from the `tool_call` *hook*, which
  * is a different channel with a return value — mapping it as an event would
  * lose the ability to answer it.
+ *
+ * `contextWindow` is passed rather than read so this stays a pure function; it
+ * is optional because *not knowing the window is a supported state*, and both
+ * things it feeds — the meter's percentage and overflow detection — degrade to
+ * what they were before rather than to something invented.
  */
-export function mapEvent(event: AgentHarnessEvent): AgentEvent[] {
+export function mapEvent(event: AgentHarnessEvent, contextWindow?: number): AgentEvent[] {
 	switch (event.type) {
 		case 'message_update': {
 			const inner = event.assistantMessageEvent;
@@ -80,10 +89,14 @@ export function mapEvent(event: AgentHarnessEvent): AgentEvent[] {
 					kind: 'usage',
 					inputTokens: usage.input,
 					outputTokens: usage.output,
-					// The provider's own total rather than pi's
-					// `calculateContextTokens`, which needs the whole session.
-					// Enough for a meter; revisit if it has to drive compaction.
+					// The provider's own total. Revisited when this had to drive
+					// compaction, and it turned out to need no change:
+					// `calculateContextTokens` is `usage.totalTokens` with a
+					// fallback for providers that omit it, not a richer number.
 					contextTokens: usage.totalTokens,
+					// Carried alongside so the meter can render a share rather
+					// than a bare count. Absent when nobody has configured one.
+					contextWindow,
 				},
 			];
 			// A failed turn still ends with a message — the failure is a field on
@@ -92,7 +105,13 @@ export function mapEvent(event: AgentHarnessEvent): AgentEvent[] {
 			if (message.stopReason === 'error') {
 				events.push({
 					kind: 'error',
-					message: message.errorMessage ?? 'The model returned an error.',
+					// An overflow is named as one. It is the single failure the
+					// user can actually fix from here, and left raw it reads like
+					// any other provider string — including a bad key.
+					message:
+						overflowMessage(message, contextWindow) ??
+						message.errorMessage ??
+						'The model returned an error.',
 				});
 			}
 			return events;

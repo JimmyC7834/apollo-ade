@@ -23,6 +23,13 @@ import { anthropicMessagesApi } from '@earendil-works/pi-ai/api/anthropic-messag
 import { googleGenerativeAIApi } from '@earendil-works/pi-ai/api/google-generative-ai.lazy';
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy';
 import type { AgentEvent, AgentProvider } from './index';
+import {
+	compactionMessage,
+	FALLBACK_CONTEXT_WINDOW,
+	needsCompaction,
+	readAutoCompact,
+	readContextWindow,
+} from './compaction';
 import { createMemoryEnv, createTauriEnv } from './env';
 import { mapEvent } from './events';
 import { installRustFetch } from './rustFetch';
@@ -214,7 +221,11 @@ function modelFor(choice: ModelChoice): Model<Api> {
 		// wrong numbers in the UI, which is worse than none — and the real
 		// figures belong with the catalog work, not here.
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-		contextWindow: 128_000,
+		// pi needs a number here — it clamps `maxTokens` against it — so the
+		// guess survives where the type demands one. Nothing that decides *when
+		// to compact* reads this field; that reads `readContextWindow()`, which
+		// is allowed to answer "unknown". See ticket 16.
+		contextWindow: readContextWindow() ?? FALLBACK_CONTEXT_WINDOW,
 		maxTokens: 8_192,
 	};
 }
@@ -299,13 +310,65 @@ function createRunner(
 			})
 	);
 
-	return function start(prompt: string, onEvent: (event: AgentEvent) => void) {
+	const contextWindow = readContextWindow();
+	const autoCompact = readAutoCompact();
+
+	/*
+	 * One harness, one thing at a time.
+	 *
+	 * `prompt()` and `compact()` both throw `AgentHarnessError("busy")` unless
+	 * the harness is idle, and there are now two ways for the user to reach it
+	 * — sending, and `/compact`. Serialising here is four lines and removes the
+	 * whole class: the alternative is a `busy` error surfacing as a failed turn
+	 * whenever someone types while a compaction is running, which they cannot
+	 * see and cannot stop.
+	 */
+	let queue: Promise<unknown> = Promise.resolve();
+	function enqueue<T>(work: () => Promise<T>): Promise<T> {
+		const next = queue.then(work, work);
+		queue = next.catch(() => undefined);
+		return next;
+	}
+
+	/**
+	 * Compact, reporting failure as an event rather than throwing.
+	 *
+	 * `AgentHarness.compact()` throws for three different reasons — a busy
+	 * harness, nothing to compact, and a failed summary — and only the last is
+	 * unexpected. A caller that let any of them escape would turn "your
+	 * conversation is short" into an unhandled rejection.
+	 *
+	 * The `compacted` event is not emitted here. It arrives through whichever
+	 * subscription is live, mapped from pi's `session_compact`, which is what
+	 * keeps the marker landing in the right turn.
+	 */
+	async function compactWith(
+		harness: AgentHarness<{ env: ExecutionEnv }>,
+		onEvent: (event: AgentEvent) => void
+	) {
+		try {
+			await harness.compact();
+		} catch (cause: unknown) {
+			onEvent({ kind: 'error', message: compactionMessage(cause) });
+		}
+	}
+
+	function start(prompt: string, onEvent: (event: AgentEvent) => void) {
 		const gate = createGate(policy, onEvent);
 
 		let released = false;
 		let stopped = false;
 		let running: AgentHarness<{ env: ExecutionEnv }> | undefined;
 		let dispose: (() => void) | undefined;
+
+		// The turn's latest context reading, and whether its `complete` is being
+		// withheld while an automatic compaction finishes. Withholding is what
+		// keeps the composer disabled across the compaction: releasing the turn
+		// first would let the user send a prompt into a harness that is about to
+		// throw `busy`, and would deliver the `compacted` marker into a turn the
+		// UI had already finished with.
+		let contextTokens = 0;
+		let heldComplete = false;
 
 		function release() {
 			if (released) {
@@ -318,7 +381,24 @@ function createRunner(
 		function attach(harness: AgentHarness<{ env: ExecutionEnv }>) {
 			const offHook = harness.on('tool_call', (event) => gate.onToolCall(event));
 			const offEvents = harness.subscribe((event: AgentHarnessEvent) => {
-				for (const mapped of mapEvent(event)) {
+				for (const mapped of mapEvent(event, contextWindow)) {
+					if (mapped.kind === 'usage') {
+						contextTokens = mapped.contextTokens;
+					}
+					/*
+					 * The one moment compaction can run: the turn is over, so the
+					 * harness is idle, and the usage just reported is real rather
+					 * than estimated. `complete` is held back until it is done —
+					 * see `heldComplete` above.
+					 */
+					if (
+						mapped.kind === 'complete' &&
+						autoCompact &&
+						needsCompaction(contextTokens, contextWindow)
+					) {
+						heldComplete = true;
+						continue;
+					}
 					onEvent(mapped);
 					if (mapped.kind === 'complete' || mapped.kind === 'cancelled') {
 						// Deferred: disposing a listener from inside the dispatch pi is
@@ -339,17 +419,33 @@ function createRunner(
 		// would make a failed run look like an empty one, which is indistinguishable
 		// from the model having nothing to say.
 		void ready
-			.then(async (harness) => {
-				// Stopped while the session was still opening. Attaching now would
-				// register listeners nothing will ever release.
-				if (stopped) {
-					return;
-				}
-				running = harness;
-				attach(harness);
-				await checkpoint(prompt);
-				await harness.prompt(prompt);
-			})
+			.then((harness) =>
+				enqueue(async () => {
+					// Stopped while the session was still opening, or while an
+					// earlier operation held the queue. Attaching now would
+					// register listeners nothing will ever release.
+					if (stopped) {
+						return;
+					}
+					running = harness;
+					attach(harness);
+					await checkpoint(prompt);
+					await harness.prompt(prompt);
+					// Deliberately after `prompt()` resolves rather than inside the
+					// event handler: `compact()` refuses a harness that is not idle,
+					// and `message_end` fires while the agent loop is still running.
+					//
+					// Re-checking `stopped` matters: Stop cannot interrupt a
+					// compaction, but it can arrive during one, and a turn that
+					// reported `cancelled` must not then report `complete`.
+					if (heldComplete) {
+						await compactWith(harness, onEvent);
+						if (!stopped) {
+							onEvent({ kind: 'complete' });
+						}
+					}
+				})
+			)
 			.catch((cause: unknown) => {
 				onEvent({
 					kind: 'error',
@@ -395,7 +491,38 @@ function createRunner(
 			},
 			resolveApproval: (approved: boolean) => gate.resolve(approved),
 		};
-	};
+	}
+
+	/**
+	 * `/compact`, typed by the user.
+	 *
+	 * Its own subscription, because there is no turn running to borrow one from
+	 * — and its own `complete`, because the UI ends a run on that event and
+	 * nothing else will send one.
+	 */
+	function compact(onEvent: (event: AgentEvent) => void) {
+		void ready
+			.then((harness) =>
+				enqueue(async () => {
+					const off = harness.subscribe((event: AgentHarnessEvent) => {
+						for (const mapped of mapEvent(event, contextWindow)) {
+							onEvent(mapped);
+						}
+					});
+					try {
+						await compactWith(harness, onEvent);
+					} finally {
+						off();
+					}
+				})
+			)
+			.catch((cause: unknown) => {
+				onEvent({ kind: 'error', message: compactionMessage(cause) });
+			})
+			.finally(() => onEvent({ kind: 'complete' }));
+	}
+
+	return { start, compact };
 }
 
 export function createAgentProvider(): AgentProvider {
@@ -407,14 +534,13 @@ export function createAgentProvider(): AgentProvider {
 		// ones that refuse an injected `fetch`.
 		installRustFetch();
 		const env = createTauriEnv();
-		const start = createRunner(
+		return createRunner(
 			env,
 			sharedSession(env),
 			modelsFor(choice),
 			modelFor(choice),
 			readGatePolicy()
 		);
-		return { start };
 	}
 
 	// No model configured, or no native shell: the canned provider. It is the
@@ -422,7 +548,7 @@ export function createAgentProvider(): AgentProvider {
 	// The session stays in memory here — browser mode has no disk to persist to,
 	// and inventing one would be the parallel fiction ticket 10 ruled out.
 	const canned = cannedProvider();
-	const start = createRunner(
+	const runner = createRunner(
 		createMemoryEnv(FIXTURE_FILES),
 		Promise.resolve(new Session(new InMemorySessionStorage())),
 		canned.models,
@@ -432,7 +558,12 @@ export function createAgentProvider(): AgentProvider {
 	return {
 		start: (prompt, onEvent) => {
 			canned.rearm();
-			return start(prompt, onEvent);
+			return runner.start(prompt, onEvent);
 		},
+		// Not rearmed: compaction asks the model for a summary, and the canned
+		// script has no answer for that. It reports "not enough conversation"
+		// or the script's own failure, which is the honest browser-mode answer
+		// rather than a fake summary the real path would never produce.
+		compact: runner.compact,
 	};
 }

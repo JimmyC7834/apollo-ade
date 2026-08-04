@@ -51,6 +51,12 @@ export type AgentEvent =
 			readonly inputTokens: number;
 			readonly outputTokens: number;
 			readonly contextTokens: number;
+			/**
+			 * What `contextTokens` is a share of. Absent when nobody has said what
+			 * the model's window is, which is a supported state rather than a gap
+			 * to fill with a plausible number.
+			 */
+			readonly contextWindow?: number;
 	  }
 	/** History was summarised. Without this the transcript silently loses detail. */
 	| { readonly kind: 'compacted'; readonly tokensBefore: number; readonly summary: string }
@@ -66,6 +72,15 @@ export interface AgentRun {
 
 export interface AgentProvider {
 	start(prompt: string, onEvent: (event: AgentEvent) => void): AgentRun;
+	/**
+	 * Summarise history now, on the user's instruction.
+	 *
+	 * Returns nothing rather than an `AgentRun`, because there is nothing to
+	 * return: **pi's compaction takes no abort signal**, so it cannot be
+	 * cancelled and offering a handle that could only lie would be worse than
+	 * offering none. It ends with `complete` like a turn does.
+	 */
+	compact(onEvent: (event: AgentEvent) => void): void;
 }
 
 export { createAgentProvider } from './provider';

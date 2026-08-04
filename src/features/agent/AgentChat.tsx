@@ -5,7 +5,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import type { AgentProvider, AgentRun } from '../../agent';
+import type { AgentEvent, AgentProvider, AgentRun } from '../../agent';
+import { pressure } from '../../agent/compaction';
 import { Icon, Overlay } from '../../ui';
 import {
 	applyEvent,
@@ -16,6 +17,7 @@ import {
 	toolLabel,
 	type Part,
 	type Turn,
+	type Usage,
 } from './transcript';
 
 export interface AgentChatProps {
@@ -89,11 +91,26 @@ function PartView({
 		);
 	}
 
+	/*
+	 * Compaction changes what the *model* sees; the transcript above still shows
+	 * every message. So the summary is not decoration — it is the only record of
+	 * what the agent still knows, and the place to look when it later forgets
+	 * something. Collapsed rather than hidden, and the history above is left
+	 * fully legible: dimming it would imply discarded.
+	 *
+	 * The count is the size before compacting, not the amount saved. It used to
+	 * say "to save {tokensBefore} tokens", which overstated it by whatever was
+	 * retained — roughly 20k, every time.
+	 */
 	if (part.kind === 'compacted') {
 		return (
-			<p className="ide-agent-compacted">
-				Earlier messages were summarised to save {part.tokensBefore} tokens of context.
-			</p>
+			<details className="ide-agent-compacted">
+				<summary>
+					Earlier messages were summarised. Context was {part.tokensBefore.toLocaleString()}{' '}
+					tokens.
+				</summary>
+				<p className="ide-agent-compacted-summary">{part.summary}</p>
+			</details>
 		);
 	}
 
@@ -121,12 +138,37 @@ function PartView({
 	);
 }
 
+/**
+ * The turn's footer: tokens in, out, and how full the context now is.
+ *
+ * The share is shown only when someone has configured a real context window.
+ * `41,830 context` means very little to a reader; `86% context` means
+ * something — but only if the denominator is true, so an unconfigured window
+ * keeps the bare count rather than inventing a percentage from a guess.
+ */
+function UsageView({ usage }: { readonly usage: Usage }) {
+	const meter = pressure(usage.contextTokens, usage.contextWindow);
+	return (
+		<p className={meter?.warn ? 'ide-agent-usage ide-agent-usage-warn' : 'ide-agent-usage'}>
+			{usage.inputTokens.toLocaleString()} in · {usage.outputTokens.toLocaleString()} out ·{' '}
+			{meter
+				? `${meter.percent}% context`
+				: `${usage.contextTokens.toLocaleString()} context`}
+			{meter?.warn ? ' · run /compact' : null}
+		</p>
+	);
+}
+
 export function AgentChat({ provider, onAnnounce }: AgentChatProps) {
 	const [turns, setTurns] = useState<readonly Turn[]>([]);
 	const [prompt, setPrompt] = useState('');
 	const [running, setRunning] = useState(false);
 	const [awaitingApproval, setAwaitingApproval] = useState(false);
 	const [transcriptOpen, setTranscriptOpen] = useState(false);
+	// Tracked separately from `running` because compaction cannot be stopped —
+	// pi's `compact()` takes no abort signal — so the Stop button must be gone
+	// rather than present and inert.
+	const [compacting, setCompacting] = useState(false);
 
 	const runRef = useRef<AgentRun>(null);
 	const promptRef = useRef<HTMLTextAreaElement>(null);
@@ -144,34 +186,62 @@ export function AgentChat({ provider, onAnnounce }: AgentChatProps) {
 	// A run outliving its view would keep emitting into dead state.
 	useEffect(() => () => runRef.current?.cancel(), []);
 
+	/**
+	 * Open a turn and return the sink its events go into.
+	 *
+	 * Shared by sending and by `/compact`, because both produce something the
+	 * user reads in the transcript. Only one of them has a run to cancel.
+	 */
+	const beginTurn = useCallback(
+		(label: string) => {
+			const turn: Turn = { id: Date.now(), prompt: label, parts: [], status: 'running' };
+			setTurns((current) => [...current, turn]);
+			setRunning(true);
+
+			return (event: AgentEvent) => {
+				setTurns((current) =>
+					current.map((item) => (item.id === turn.id ? applyEvent(item, event) : item))
+				);
+				if (event.kind === 'approval') {
+					setAwaitingApproval(true);
+					onAnnounce?.(`Approval required: ${event.name}`);
+				} else if (event.kind === 'complete' || event.kind === 'cancelled') {
+					setRunning(false);
+					setCompacting(false);
+					setAwaitingApproval(false);
+					runRef.current = null;
+					onAnnounce?.(event.kind === 'complete' ? 'Agent finished' : 'Agent stopped');
+					// The composer is where the next action starts; a keyboard user
+					// should not have to find their way back to it.
+					promptRef.current?.focus();
+				}
+			};
+		},
+		[onAnnounce]
+	);
+
 	const send = useCallback(() => {
 		const text = prompt.trim();
 		if (!text || running) {
 			return;
 		}
-		const turn: Turn = { id: Date.now(), prompt: text, parts: [], status: 'running' };
-		setTurns((current) => [...current, turn]);
 		setPrompt('');
-		setRunning(true);
 
-		runRef.current = provider.start(text, (event) => {
-			setTurns((current) =>
-				current.map((item) => (item.id === turn.id ? applyEvent(item, event) : item))
-			);
-			if (event.kind === 'approval') {
-				setAwaitingApproval(true);
-				onAnnounce?.(`Approval required: ${event.name}`);
-			} else if (event.kind === 'complete' || event.kind === 'cancelled') {
-				setRunning(false);
-				setAwaitingApproval(false);
-				runRef.current = null;
-				onAnnounce?.(event.kind === 'complete' ? 'Agent finished' : 'Agent stopped');
-				// The composer is where the next action starts; a keyboard user
-				// should not have to find their way back to it.
-				promptRef.current?.focus();
-			}
-		});
-	}, [onAnnounce, prompt, provider, running]);
+		/*
+		 * The command lives here rather than in the workbench palette: slash
+		 * commands are typed where the prompt is, and the user-authored half that
+		 * follows — `promptFromTemplate(name, args)` — needs a command line to
+		 * take arguments from. See ticket 16.
+		 */
+		if (text === '/compact') {
+			setCompacting(true);
+			onAnnounce?.('Summarising the conversation');
+			provider.compact(beginTurn(text));
+			return;
+		}
+
+		runRef.current = provider.start(text, beginTurn(text));
+	}, [beginTurn, onAnnounce, prompt, provider, running]);
 
 	const resolve = useCallback(
 		(approved: boolean) => {
@@ -218,12 +288,7 @@ export function AgentChat({ provider, onAnnounce }: AgentChatProps) {
 						{turn.status === 'cancelled' ? (
 							<p className="ide-agent-status">Stopped.</p>
 						) : null}
-						{turn.usage ? (
-							<p className="ide-agent-usage">
-								{turn.usage.inputTokens} in · {turn.usage.outputTokens} out ·{' '}
-								{turn.usage.contextTokens} context
-							</p>
-						) : null}
+						{turn.usage ? <UsageView usage={turn.usage} /> : null}
 					</article>
 				))}
 			</div>
@@ -259,7 +324,13 @@ export function AgentChat({ provider, onAnnounce }: AgentChatProps) {
 					>
 						Plain text transcript
 					</button>
-					{running ? (
+					{running && compacting ? (
+						// Not a Stop button that quietly does nothing: pi's compaction
+						// takes no abort signal, so there is nothing to offer.
+						<button type="button" className="ide-button" disabled>
+							Summarising…
+						</button>
+					) : running ? (
 						<button
 							type="button"
 							className="ide-button ide-button-danger"

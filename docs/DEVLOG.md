@@ -2153,3 +2153,118 @@ contains no double quotes at all.
   hit it.
 - **`exit_code` is -1 for a signalled child**, which is not a real exit status
   and is reported as such rather than as success.
+
+---
+
+## Slice 18 — The conversation can be summarised before it overflows
+
+**User outcome:** `/compact` summarises the conversation so far and the agent
+keeps going with the summary instead of the whole history. The per-turn footer
+now says how full the context is rather than only how many tokens went by, and
+when a turn does die of overflow it says so in those words instead of returning
+a raw provider string.
+
+**What changed:** `src/agent/compaction.ts` (new) holds the policy —
+`needsCompaction`, `pressure`, `overflowMessage`, `compactionMessage`, and the
+two config readers. `AgentProvider` gains `compact(onEvent)`. `mapEvent` takes an
+optional `contextWindow` and uses it for two things: a `contextWindow` field on
+the `usage` event, and naming an overflow as an overflow. `AgentChat` parses a
+leading `/compact` in its submit path and renders the compaction marker as a
+`<details>` holding the summary.
+
+**Adapters and dependencies:** every expensive part is pi's —
+`AgentHarness.compact()`, `shouldCompact`, `DEFAULT_COMPACTION_SETTINGS`, and
+`isContextOverflow` from `pi-ai` with its per-provider pattern table. **Two of
+those four are exported by pi and called by neither pi package.** pi ships
+context-pressure primitives and deliberately owns none of the policy; the policy
+is this slice, and most of it is a refusal to guess. Settled in
+[ticket 16](wayfinder/pi-harness/tickets/16-compaction.md).
+
+**The window is explicit or absent — never guessed.** `contextWindow` was
+hard-coded to `128_000` for every model. `shouldCompact` divides against it, so
+that number silently set the compaction threshold. Three candidates existed: our
+`128_000` with no source, pi's `1_000_000` for `deepseek-reasoner`'s nearest
+catalogued neighbours, and the truth, which nobody has verified. **Both available
+numbers err upward, and upward is the direction where compaction never fires and
+the turn dies anyway.** So `VITE_AGENT_CONTEXT_WINDOW` (a profile field once
+profiles exist) is required, and unset means auto-compaction cannot fire and the
+meter shows a raw count. The `128_000` survives only as `FALLBACK_CONTEXT_WINDOW`
+where pi's `Model` type demands a number for `clampMaxTokensToContext`, and
+nothing that decides *when to compact* reads it.
+
+**Auto-compaction is opt-in and holds the turn open.** `VITE_AGENT_AUTOCOMPACT=on`
+checks on `agent_end`, when the harness is idle and the usage just reported is
+real rather than estimated — which is why `estimateContextTokens` was **not**
+adopted: post-turn there is nothing left to estimate. The turn's `complete` event
+is withheld until the compaction finishes, so the composer stays disabled across
+it. Releasing first would let a prompt reach a harness about to throw `busy`, and
+would deliver the marker into a turn the UI had already closed.
+
+**One harness, one thing at a time.** `prompt()` and `compact()` both throw
+`AgentHarnessError("busy")` unless the harness is idle, and there are now two
+ways for a user to reach it. A four-line promise queue in `createRunner`
+serialises them and removes the whole class.
+
+**Security boundary:** unchanged. Compaction is a model call over the existing
+Rust-held credential path and touches no new native surface.
+
+**Accessibility:** the compaction marker is a native `<details>` — keyboard
+operable, announced as a disclosure, no ARIA needed. Starting a `/compact`
+announces "Summarising the conversation" into the live region. During one the
+Stop button is **replaced** by a disabled "Summarising…" rather than left
+present: pi's `compact()` takes no abort signal, so there is genuinely nothing to
+offer, and this repo has already shipped one Stop button that did nothing.
+
+**Validation performed** — `npm run build`, `npm run check` (10 checks), and four
+native runs against `deepseek-reasoner`:
+
+- **`/compact` on a resumed session** — compacted, marker rendered, a 968-char
+  summary behind the disclosure, "Summarising…" disabled and no Stop offered.
+- **Automatic, window forced to 18,000** — the turn ran, `complete` was held, and
+  the button went Stop → Send only at 6.9 s with the marker already in the same
+  turn. Summary 1,316 chars.
+- **It actually reduced the context.** The next turn read 8% (1,440 tokens),
+  below the 1,616 threshold, and auto-compaction correctly did not fire again.
+- **Unconfigured default** — `739 in · 4 out · 1,767 context`: raw count, no
+  percentage, no warning, no compaction. This is what everyone gets out of the
+  box.
+
+**A wrong number was fixed on the way through.** The marker read *"summarised to
+save {tokensBefore} tokens"*, but `tokensBefore` is the size of the context
+*before* compacting, not the saving — overstated by whatever was retained,
+roughly 20k every time. It now states the size and says so.
+
+**A suspicion that did not survive checking.** After the first automatic
+compaction the footer read `25 in` where an ordinary turn had read `900 in`, and
+the obvious explanation was that the summariser's own model call was overwriting
+the turn's usage. Sampling the footer across a compacting turn showed it
+unchanged at `61 in · 289 out` before and after — the summariser does not emit
+usage through the harness subscription, and the differing numbers were just
+differing histories. Recorded because the fix for the bug that was not there
+would have been to suppress real events.
+
+**Caveats and deviations**
+
+- **Out of the box this slice protects nobody.** With no window and no
+  auto-compaction configured, the only thing shipped here is a better error
+  message after the turn has already died. That is the honest consequence of
+  refusing to guess the window, and it should not be read as "compaction is
+  handled".
+- **`keepRecentTokens: 20000` is not tunable.** `compact()` hard-codes
+  `DEFAULT_COMPACTION_SETTINGS` internally when it calls `prepareCompaction`,
+  while `shouldCompact` takes settings we supply. **The profile can say when,
+  never how much.**
+- **Compaction cannot be interrupted.** pi passes `undefined` where the abort
+  signal goes. Stop during one ends the *turn*; the summarisation still finishes.
+- **pi will summarise nothing, at full price.** The first `/compact` returned a
+  structured summary whose content was *"No conversation content was provided to
+  summarize. The `<conversation>` block is empty."* `prepareCompaction` returned
+  a preparation rather than `undefined`, so the "Nothing to compact" guard never
+  fired and a model call was spent on an empty conversation. Observed once, not
+  yet understood, and not worked around.
+- **The overflow path is untested live.** The three provider patterns are
+  asserted in `compaction.check.ts` against real error strings, but no run has
+  actually overflowed a model — that costs a deliberately oversized request.
+- **A small window makes the warning look silly.** With the reserve fixed at
+  16,384, an 18,000-token window warns at 9%. That is an artifact of the test
+  setting; a real 128k window warns at 87%.
