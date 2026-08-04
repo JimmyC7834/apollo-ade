@@ -14,6 +14,7 @@ import assert from 'node:assert/strict';
 import type { AssistantMessage } from '@earendil-works/pi-ai';
 import {
 	compactionMessage,
+	CONTEXT_WINDOWS,
 	needsCompaction,
 	overflowMessage,
 	pressure,
@@ -103,6 +104,27 @@ const failed = (errorMessage: string) =>
 	// Anything else is passed through: inventing friendlier words for a failure
 	// we did not anticipate loses the only diagnostic there was.
 	assert.equal(compactionMessage(new Error('summary request failed')), 'summary request failed');
+}
+
+// The window table is data, not logic, so what is asserted is that it is
+// *reachable*: a mistyped key does not fail anywhere, it just makes the window
+// unknown, and an unknown window silently disables auto-compaction forever.
+// `contextWindowFor` itself is an env reader and stays unexercised for the reason
+// at the top of this file; the lookup it falls through to is this table.
+{
+	assert.equal(
+		CONTEXT_WINDOWS['deepseek-reasoner'],
+		128_000,
+		'the model this repo actually runs must resolve'
+	);
+	assert.equal(CONTEXT_WINDOWS['gpt-4o'], undefined, 'a model we do not list has no window');
+
+	// Every entry is a plausible window. The failure this catches is a typo in the
+	// literal — 1_000_00 rather than 1_000_000 is a valid number and a threshold
+	// that fires on the first turn.
+	for (const [id, window] of Object.entries(CONTEXT_WINDOWS)) {
+		assert.ok(Number.isInteger(window) && window >= 8_000, `${id}: implausible window ${window}`);
+	}
 }
 
 console.log('agent/compaction.check.ts: ok');

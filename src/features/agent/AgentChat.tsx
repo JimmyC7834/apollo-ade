@@ -141,10 +141,11 @@ function PartView({
 /**
  * The turn's footer: tokens in, out, and how full the context now is.
  *
- * The share is shown only when someone has configured a real context window.
- * `41,830 context` means very little to a reader; `86% context` means
- * something — but only if the denominator is true, so an unconfigured window
- * keeps the bare count rather than inventing a percentage from a guess.
+ * The share is shown only when the model's real context window is known —
+ * listed in `CONTEXT_WINDOWS` or given by env var. `41,830 context` means very
+ * little to a reader; `86% context` means something — but only if the
+ * denominator is true, so an unknown window keeps the bare count rather than
+ * inventing a percentage from a guess.
  */
 function UsageView({ usage }: { readonly usage: Usage }) {
 	const meter = pressure(usage.contextTokens, usage.contextWindow);

@@ -25,10 +25,10 @@ import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completio
 import type { AgentEvent, AgentProvider } from './index';
 import {
 	compactionMessage,
+	contextWindowFor,
 	FALLBACK_CONTEXT_WINDOW,
 	needsCompaction,
 	readAutoCompact,
-	readContextWindow,
 } from './compaction';
 import { createMemoryEnv, createTauriEnv } from './env';
 import { mapEvent } from './events';
@@ -222,10 +222,11 @@ function modelFor(choice: ModelChoice): Model<Api> {
 		// figures belong with the catalog work, not here.
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		// pi needs a number here — it clamps `maxTokens` against it — so the
-		// guess survives where the type demands one. Nothing that decides *when
-		// to compact* reads this field; that reads `readContextWindow()`, which
-		// is allowed to answer "unknown". See ticket 16.
-		contextWindow: readContextWindow() ?? FALLBACK_CONTEXT_WINDOW,
+		// fallback survives where the type demands one, but it is now the last
+		// resort rather than the only answer. Nothing that decides *when to
+		// compact* reads this field; that reads `contextWindowFor`, which is
+		// allowed to answer "unknown". See ticket 16.
+		contextWindow: contextWindowFor(choice.modelId) ?? FALLBACK_CONTEXT_WINDOW,
 		maxTokens: 8_192,
 	};
 }
@@ -323,7 +324,14 @@ function createRunner(
 			})
 	);
 
-	const contextWindow = readContextWindow();
+	/*
+	 * Read off the model rather than the environment, so the compaction
+	 * threshold and the meter are measured against the window the model
+	 * actually has. `model.contextWindow` is deliberately not used: it has the
+	 * fallback baked in and can no longer say "unknown", which is the one answer
+	 * that keeps auto-compaction from firing against a fabricated denominator.
+	 */
+	const contextWindow = contextWindowFor(model.id);
 	const autoCompact = readAutoCompact();
 
 	/*

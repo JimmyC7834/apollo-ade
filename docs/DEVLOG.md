@@ -2310,3 +2310,65 @@ that could have broken.
 **No check file.** A one-line callback with no branches; `context.md` asks for a
 runnable check where there is logic, and there is none here. Ticket 17 will bring
 the logic and the check together.
+
+## Slice 20 — The context meter stops measuring against a guess
+
+**User outcome:** the turn footer reads `1% context` instead of `1,767 context`
+without anyone configuring anything, and auto-compaction has a real threshold to
+fire against rather than one that only existed if you set an env var by hand.
+
+**What changed:** a `CONTEXT_WINDOWS` table in `src/agent/compaction.ts` and a
+`contextWindowFor(modelId)` that consults it, with the env var still winning.
+`provider.ts` reads it in the two places that were previously answering `128_000`
+for every model on earth — the `Model.contextWindow` pi clamps `maxTokens`
+against, and the number the compaction threshold and the meter divide by.
+
+**This was the loose end, not a new idea.**
+[Ticket 15](wayfinder/pi-harness/tickets/15-core-already-does-this.md) decided
+*machinery in, entries ours*: take `calculateCost` and the thinking-level
+helpers, keep hand-written catalog entries. The entries half was never built, and
+[ticket 16](wayfinder/pi-harness/tickets/16-compaction.md) inherited the
+consequence — a compaction system whose denominator was fabricated unless the
+user happened to know to set `VITE_AGENT_CONTEXT_WINDOW`.
+
+**Every number but one is copied, not remembered.** pi ships its catalog as JSON
+at `pi-ai/dist/providers/data/*.json`, so the Anthropic and Google windows were
+read off disk rather than recalled — including the detail that Google's is
+1,048,576 and not 1,000,000, and that the Claude 4-5 line splits (Sonnet 1M,
+Haiku and Opus 200K). The table is still hand-written, because a stale or missing
+upstream entry must not silently move a threshold, and because importing pi's
+catalog at runtime is a megabyte of JSON for providers we do not offer — which
+[ticket 08](wayfinder/pi-harness/tickets/08-bundle-cost.md) already ruled on.
+
+**The one number with no in-repo source is `deepseek-reasoner: 128_000`**, and it
+is also the model this repo actually runs. pi 0.83.0's DeepSeek catalog contains
+only `deepseek-v4-flash` and `deepseek-v4-pro`, both at 1,000,000 — exactly the
+upward error `compaction.ts` was written to refuse, since upward is the direction
+in which `shouldCompact` silently never fires. Flagged here rather than smoothed
+over.
+
+**An unlisted model still has an unknown window.** That property is the point of
+the whole file and survived the change: `contextWindowFor` returns `undefined`
+rather than falling back, so browser mode's `browser-fixture` model shows a raw
+count and never auto-compacts. `FALLBACK_CONTEXT_WINDOW` remains, but only where
+pi's type demands a number — it is no longer the only answer.
+
+**Validated natively** against `deepseek-reasoner` with `VITE_AGENT_CONTEXT_WINDOW`
+deliberately unset — the case that previously read `739 in · 4 out · 1,767
+context`. It now reads `62 in · 3 out · 1% context`. The env var being absent is
+what proves the table was consulted.
+
+**A caveat the run turned up for free.** The second turn failed with DeepSeek's
+own `503 Service is too busy`, surfaced verbatim rather than relabelled as an
+overflow — which is the behaviour `overflowMessage` is arranged to produce and
+had not previously been seen live. Its footer read `0 in · 0 out · 0% context`: a
+failed turn reports zero usage, and the meter faithfully shows 0%. Pre-existing,
+not introduced here, and arguably right, but it does mean a reader cannot tell a
+failed turn's meter from a genuinely empty context.
+
+**The check asserts reachability, not arithmetic.** The table is data, so what is
+worth checking is that a mistyped key does not fail loudly anywhere — it just
+makes the window unknown, which disables auto-compaction invisibly and forever.
+`compaction.check.ts` asserts the model this repo runs resolves, that an unlisted
+one does not, and that no entry is implausibly small (`1_000_00` is a valid
+number and a threshold that fires on turn one).

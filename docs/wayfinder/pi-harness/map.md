@@ -286,9 +286,12 @@ built.
   ([ticket 15](tickets/15-core-already-does-this.md)) — take `calculateCost`,
   `getSupportedThinkingLevels`, `clampThinkingLevel`; keep hand-written entries, because
   0.83.0's catalog **does not contain `deepseek-reasoner`**, the model this repo runs.
-  What remains open is a consequence rather than the decision:
-  [ticket 16](tickets/16-compaction.md) needs a true `contextWindow` per entry, and
-  `provider.ts` currently hard-codes `128_000` for every model.
+  The consequence that remained — [ticket 16](tickets/16-compaction.md) needing a true
+  `contextWindow` per entry, against a `provider.ts` that hard-coded `128_000` for every
+  model — **is now shipped**: `CONTEXT_WINDOWS` in `src/agent/compaction.ts` holds the
+  entries, every number but DeepSeek's copied from pi's own catalog data rather than
+  remembered. An unlisted model still has an *unknown* window, which is the answer that
+  keeps auto-compaction from firing against a fabricated denominator.
 - **Skills: which profile composes them.** Loading is solved —
   [ticket 15](tickets/15-core-already-does-this.md) put `loadSkills` and
   `formatSkillsForSystemPrompt` in the adopt list but **deferred them**, because skills
