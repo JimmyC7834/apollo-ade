@@ -238,7 +238,8 @@ built.
   data model.
 - **Skills: composition with profiles.** pi loads skills into the system prompt up
   front and ships `formatSkillsForSystemPrompt`. How a profile adds, removes, or
-  overrides them is unspecifiable until the profile exists.
+  overrides them is unspecifiable until the profile exists. The *loading* half is
+  solved and deliberately not adopted yet — see the skills entry below.
 - **System-prompt assembly** — what composes into it, in what order, and whether a
   profile's `instructions` append or replace. pi's `preset.ts` chose one; we have not.
 - **Worker-hosted user scripts.** Deferred by
@@ -268,24 +269,30 @@ built.
   so it is not silently forgotten. **Now answerable** —
   [What pi-agent-core already does that we are reimplementing](tickets/15-core-already-does-this.md)
   found `shouldCompact`, `calculateContextTokens`, `findCutPoint` and
-  `DEFAULT_COMPACTION_SETTINGS` all exported from the browser-safe core.
-- **A command system for the agent chat** (`/compact`, `/model`, user-authored `/name`).
-  Raised by the dev; its shape is mostly settled by
-  [ticket 15](tickets/15-core-already-does-this.md), which found `parseCommandArgs`,
-  `promptFromTemplate` and `AgentHarnessResources.promptTemplates` already in core. What
-  is genuinely ours is a builtin lookup table and one branch in `AgentProvider.start`.
-  Blocked behind the same ticket's prerequisite: **the harness does not currently outlive
-  a single turn.**
-- **Session forking and a session picker.** `JsonlSessionRepo` ships
-  `create`/`open`/`list`/`delete`/`fork` and `Session.moveTo` in the browser-safe core
-  ([ticket 15](tickets/15-core-already-does-this.md)) — the data model is free, the UI is
-  not. Whether v1 has one is unspecified.
-- **Which model catalog is authoritative.** pi-ai ships `calculateCost`,
-  `getSupportedThinkingLevels` and `clampThinkingLevel`, all better than the regex
-  heuristic in `provider.ts` — but 0.83.0's catalog **does not contain
-  `deepseek-reasoner`**, the model this repo actually runs
-  ([ticket 15](tickets/15-core-already-does-this.md)). Machinery and entries have to be
-  decided separately.
+  `DEFAULT_COMPACTION_SETTINGS` all exported from the browser-safe core. **Closed
+  provisionally** by that ticket: ship the defaults untouched, reopen on the first
+  session that compacts badly. *Who calls `shouldCompact`* is a different question and
+  is now [ticket 16](tickets/16-compaction.md) — core never calls it itself.
+- ~~**A command system for the agent chat.**~~ **Deleted from the queue** by
+  [ticket 15](tickets/15-core-already-does-this.md). Its builtin half is a lookup table
+  over harness methods that now exist; its user half is one `promptFromTemplate` call.
+  Nothing in it is a decision, so it ships alongside
+  [ticket 16](tickets/16-compaction.md) rather than being planned.
+- ~~**Session forking and a session picker.**~~ **Decided: no UI in v1**
+  ([ticket 15](tickets/15-core-already-does-this.md)). The data model is in and costs
+  nothing to carry; a branch view, picker and fork affordance are three UI surfaces for
+  a feature nobody has asked for twice.
+- **Which model catalog is authoritative.** **Decided: machinery in, entries ours**
+  ([ticket 15](tickets/15-core-already-does-this.md)) — take `calculateCost`,
+  `getSupportedThinkingLevels`, `clampThinkingLevel`; keep hand-written entries, because
+  0.83.0's catalog **does not contain `deepseek-reasoner`**, the model this repo runs.
+  What remains open is a consequence rather than the decision:
+  [ticket 16](tickets/16-compaction.md) needs a true `contextWindow` per entry, and
+  `provider.ts` currently hard-codes `128_000` for every model.
+- **Skills: which profile composes them.** Loading is solved —
+  [ticket 15](tickets/15-core-already-does-this.md) put `loadSkills` and
+  `formatSkillsForSystemPrompt` in the adopt list but **deferred them**, because skills
+  compose with profiles and profiles do not exist yet. Returns with profiles.
 
 ## Out of scope
 

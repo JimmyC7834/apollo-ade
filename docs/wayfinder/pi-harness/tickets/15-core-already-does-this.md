@@ -4,7 +4,7 @@ title: What pi already does that we are reimplementing
 parent: ../map.md
 blocked-by: []
 assignee: jc4649
-status: open
+status: closed
 ---
 
 # What pi already does that we are reimplementing
@@ -310,4 +310,109 @@ Settle:
 
 ## Resolution
 
-<!-- filled on close -->
+**Three of the five groups are in — two of them already shipped while this ticket was
+open. Two queued items are deleted rather than built. The catalog gives up its entries and
+keeps its machinery.**
+
+### 1. The standing rule becomes policy, not habit
+
+`context.md` gains one line: **grep
+`node_modules/@earendil-works/pi-agent-core/dist/index.d.ts` before planning any slice.**
+
+It is written down rather than remembered because it has already failed three times as a
+habit — three consecutive plans on this map proposed building something core exports. A
+habit with that record is not a habit.
+
+### 2. Groups A–E, weighed separately
+
+The wrapping rule from [ticket 07](07-pi-dependency.md) applies per group, as the ticket
+demanded. It produced different answers, which is the evidence it was worth applying.
+
+| Group | Decision | Coupling taken |
+|---|---|---|
+| **A. Session + forking** | **In — shipped**, slice 16 | Deepest on the map, unwrapped |
+| **B. Commands** | **In, but not as a ticket** | None yet |
+| **C. bash** | **In — shipped**, slice 17 | None; `ExecutionEnv` is the wrapper |
+| **D. Compaction + context meter** | **In — next slice** | Moderate |
+| **E. Skills** | **Deferred** | — |
+
+**A is recorded honestly rather than favourably.** `JsonlSessionRepo` went into
+`src/agent/provider.ts` directly, returning pi's `SessionTreeEntry` shapes, with no
+adapter between. That is the deepest coupling this map has taken and it violates the
+letter of the wrapping rule. It was still right — reimplementing JSONL session
+persistence, listing, resume, delete and fork to avoid a type import would have been the
+exact mistake this ticket exists to name — but **the upgrade risk is real and it is
+concentrated in one file**, and pretending otherwise would leave the next upgrade
+surprising.
+
+**C is the case where wrapping cost nothing**, and it is worth naming as the contrast.
+`createBashTool` runs on `ExecutionEnv.exec`; our `exec` is the adapter, so pi never sees
+Rust, Windows job objects, or the deny list. Same rule, opposite outcome, because the
+seam already existed.
+
+**E is deferred, not rejected.** `loadSkills` works and is cheap. But skills compose with
+*profiles*, and profiles do not exist yet — adopting the loader now widens the upgrade
+surface for a feature with no consumer. It comes back with profiles.
+
+### 3. The prerequisite — resolved, as its own slice
+
+Settled while this ticket was open. The persistent harness shipped as **slice 16**, ahead
+of `JsonlSessionRepo` rather than with it. Splitting them was the right call for a reason
+that only showed up afterwards: when `Stop` turned out to be broken — `rustFetch` ignored
+`AbortSignal`, so `harness.abort()` never settled — it broke in a slice small enough to
+find it in. Landed together with session persistence, that bug would have had two
+plausible homes.
+
+The `compacted` claim in `docs/DEVLOG.md` was corrected in place, with a
+`> **Corrected later.**` block rather than an edit, per this map's habit of leaving wrong
+answers visible.
+
+### 4. Catalog — machinery in, entries out
+
+Take **`calculateCost`, `getSupportedThinkingLevels`, `clampThinkingLevel`**. Keep
+hand-written model entries.
+
+The two alternatives are both refused:
+
+- **`fetchModels` against a live endpoint** — a network call at startup, and a startup
+  failure mode, for data that moves monthly.
+- **Catalog-as-default-with-user-override** — refused because `deepseek-reasoner` is
+  absent from 0.83.0's catalog entirely, and `thinkingLevel: "medium"` maps to `null` for
+  the deepseek models it *does* ship. The default is wrong for the model actually in use.
+  A default that is wrong for the primary case is a bug with a fallback attached.
+
+This removes the one genuine duplication the survey found: `SHAPES` and `modelFor()` in
+`src/agent/provider.ts` hand-write pricing and thinking-level logic that `pi-ai` already
+has. The *entries* stay ours; the arithmetic over them does not.
+
+### 5. The command system is not a ticket — deleted from the queue
+
+Its builtin half is a lookup table over `compact()` / `setModel` / `setThinkingLevel`,
+all of which now exist on a harness that outlives the turn. Its user half is one call to
+`promptFromTemplate`. Nothing in either half is a decision, so there is nothing to grill.
+It falls out of group D and ships alongside it.
+
+This is the ticket answering the question that created it. The slash-command plan that
+prompted *"shouldn't the pi agent package we use have these features?"* is now a lookup
+table, and the four sessions between the question and this line were spent discovering
+that.
+
+### 6. The compaction fog entry closes provisionally
+
+`DEFAULT_COMPACTION_SETTINGS` ships untouched. The map's fog entry *"whether pi's
+compaction defaults need touching"* closes on the answer **no, not yet** — and reopens the
+first time a real session compacts badly. Tuning defaults that have not been observed
+failing is guessing with extra steps.
+
+### 7. No forking UI in v1
+
+The data model is in and costs nothing to carry. A branch view, a session picker and a
+fork affordance are three UI surfaces, and core hands over storage and a tree but nobody
+hands over React. Storage sits there until someone asks for the feature twice.
+
+### What this closes and what it opens
+
+Deleted from the queue: **the command system**, **forking UI**.
+Opened: **[ticket 16 — compaction and the context meter](16-compaction.md)**.
+Deferred with a named trigger: **skills** (returns with profiles), **compaction defaults**
+(returns on first bad summary).

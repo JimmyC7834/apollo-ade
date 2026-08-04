@@ -68,6 +68,9 @@ to be useful it is too long to answer "what is broken right now?".
 - Extract a UI primitive only after two real consumers show the same behavior.
 - Accessibility is part of the slice, not follow-up work.
 - Rust is the only filesystem/process authority; it stays root-confined.
+- Before planning any slice that touches the agent, grep
+  `node_modules/@earendil-works/pi-agent-core/dist/index.d.ts` for what you are about
+  to build. Three consecutive plans proposed building something core already exports.
 
 ## Validation
 
