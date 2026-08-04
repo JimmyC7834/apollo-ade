@@ -221,6 +221,16 @@ built.
   fill whole argv slots and are never shell-parsed, closing an injection hole. Rewriting
   pi's built-ins into the same format was considered and rejected; what is shared is the
   Rust floor, not the tool format.
+- [What the system prompt is made of](tickets/17-system-prompt-assembly.md) —
+  **`instructions` appends, only appends**, and the order is base → instructions →
+  skills → **shell and workspace facts last**. That inverts the ticket's own premise:
+  pi protects the floor by putting it last, not first. Grilling turned up that pi answers
+  this at *three* layers — a pure builder, a chaining hook over extensions, and a
+  per-turn override that is cleared — and that `preset.ts` appends after the facts only
+  because an extension cannot reach the builder. A profile can, so it composes there.
+  `before_agent_start` is wired as the **extension** point, with our own chaining runner,
+  because core's `emitHook` hands every handler the same string and keeps only the last.
+
 - [What a profile switch leaves behind](tickets/14-switch-aftermath.md) — **tolerate the
   debris**: history is never filtered (filtering is rewriting), narrowing is never
   refused, and pi is confirmed to pass history through untouched. The active profile is
@@ -240,8 +250,10 @@ built.
   front and ships `formatSkillsForSystemPrompt`. How a profile adds, removes, or
   overrides them is unspecifiable until the profile exists. The *loading* half is
   solved and deliberately not adopted yet — see the skills entry below.
-- **System-prompt assembly** — what composes into it, in what order, and whether a
-  profile's `instructions` append or replace. pi's `preset.ts` chose one; we have not.
+- **Prompt-change mode as a setting** — append vs replace chosen *per profile* rather
+  than fixed. [Ticket 17](tickets/17-system-prompt-assembly.md) settled append as the
+  rule; this is the question of whether that is a default or a ceiling. Listed so that
+  choosing append does not later read as never having considered replace.
 - **Worker-hosted user scripts.** Deferred by
   [How a user adds their own tool](tickets/13-user-authored-tools.md) as the largest
   single piece of work on this map: a capability protocol over `postMessage`, worker

@@ -2372,3 +2372,80 @@ makes the window unknown, which disables auto-compaction invisibly and forever.
 `compaction.check.ts` asserts the model this repo runs resolves, that an unlisted
 one does not, and that no entry is implausibly small (`1_000_00` is a valid
 number and a threshold that fires on turn one).
+
+## Slice 21 — The system prompt is composed, and the profile has a slot in it
+
+**User outcome:** set `VITE_AGENT_INSTRUCTIONS` and the agent obeys it, with the
+shell guidance still intact underneath. The first half of a profile that works
+before profiles exist.
+
+**What changed:** a new `src/agent/systemPrompt.ts` holding
+`composeSystemPrompt({ shell, skills, instructions })`, the interim env reader,
+and a contributor chain; `provider.ts` lost its inline prompt builder and gained
+a `before_agent_start` handler.
+
+**The grilling overturned the ticket's own premise.**
+[Ticket 17](wayfinder/pi-harness/tickets/17-system-prompt-assembly.md) was
+written fearing that *"a floor placed first is a floor a profile can talk over"* —
+i.e. that guidance needs to come first to survive. pi does the opposite:
+`buildSystemPrompt` appends project context, skills and `Current working
+directory:` **after** whatever the caller added, because later text is weighted
+more heavily. So the shell sentence was split out of the base string and moved to
+the **end**, which is where it now protects itself.
+
+**pi answers this at three layers, and only the middle one is a hook.** A pure
+builder (`coding-agent/src/core/system-prompt.ts`); a chaining walk over
+extensions (`core/extensions/runner.ts:1080`); and a per-turn override that is
+cleared afterwards (`agent-session.ts:1069`). `preset.ts` — the closest analogue
+to our profiles — appends *after the facts* only because an extension cannot
+reach the builder. Ours can, so `instructions` composes at layer one, in the slot
+pi calls `appendSystemPrompt`, before skills and the facts.
+
+**The chaining is ours because pi's core does not chain.**
+`AgentHarness.emitHook` hands every handler the same string and keeps only the
+last non-undefined result — a second handler returning a `systemPrompt` silently
+discards the first. So the hook carries one handler and `applyContributors`
+threads the running string by hand, which is what `runner.ts` does minus the
+extension loader. Registering the hook was settled against the recommendation to
+leave it unwired; the reason it is right anyway is that the profile field and the
+extension surface are two different features, and the callback alone serves only
+the first.
+
+**`instructions` appends and only appends.** No `customPrompt` equivalent, so no
+profile can delete the read-before-edit rule or the PowerShell warning. That
+makes our profiles deliberately weaker than pi's CLI, and it keeps
+[ticket 04](wayfinder/pi-harness/tickets/04-profile-data-model.md) at eight
+fields. Whether that is a default or a ceiling went to the map as fog.
+
+**Skills got their position, not their contents.** `formatSkillsForSystemPrompt`
+is exported by pi's core and called by neither pi package — the same shape as
+`shouldCompact` and `isContextOverflow` — so the slot costs a call and a
+position. `resources.skills` stays empty until ticket 15's deferred loading
+lands. Settling the order now is the point: an order with a hole in it is the
+situation this ticket was written about.
+
+**Validated natively, and the first attempt looked like a failure.** With
+`VITE_AGENT_INSTRUCTIONS` set to *"Begin every reply with the word BANANA"*, the
+first turn ignored it entirely. Composing the prompt inside the running app
+(`import('/src/agent/systemPrompt.ts')` over CDP) showed the text present and
+correctly ordered, so delivery was fine and the model simply was not complying —
+the session had resumed with a history of terse one-word answers. The next turn
+settled it: the reasoning trace read *"my instructions say every reply must begin
+with BANANA on its own line"*, and the reply did.
+
+**Which is the caveat worth keeping.** An appended instruction is *guidance, not
+enforcement* — prior conversation can outweigh it, and did. Anything that must
+hold regardless belongs in the base guidance or below the tool layer in Rust, not
+in a profile's `instructions`.
+
+**Two things this does not do.** A profile cannot remove the floor, by design.
+And no transcript can say what a turn was told — the prompt is persisted nowhere
+(`AgentState.systemPrompt` is live state, `AgentContext.systemPrompt` is
+per-request), which becomes real the moment the prompt can differ between
+adjacent turns.
+
+**`systemPrompt.check.ts`** asserts the order by position rather than presence —
+an assertion on presence alone would pass on the exact arrangement the ticket
+rejected — plus that the floor survives a hostile instruction, that unset
+segments vanish instead of leaving blank paragraphs, and that contributors chain,
+rewrite rather than only append, and dispose cleanly.

@@ -35,32 +35,7 @@ import { mapEvent } from './events';
 import { installRustFetch } from './rustFetch';
 import { cannedProvider, FIXTURE_FILES } from './canned';
 import { createGate, readGatePolicy, type GatePolicy } from './gate';
-
-/**
- * The system prompt, once the shell is known.
- *
- * Which shell the `bash` tool got **varies by machine** — Git Bash where it is
- * installed, PowerShell where it is not — so a model told nothing writes POSIX
- * at a PowerShell and finds out one failed command at a time. Ticket 02 called
- * this out as a consequence of detecting rather than mandating a shell, and
- * saying it costs a sentence.
- */
-function systemPrompt(shell: string | undefined): string {
-	const base =
-		'You are a coding assistant inside an editor. Use the `read` tool to look at files ' +
-		'before answering questions about them, and `write` or `edit` to change them. Paths ' +
-		'are relative to the workspace root. If a file is missing, say so rather than ' +
-		'guessing at its contents. Never guess at what a file contains before editing it — ' +
-		'read it first.';
-	if (!shell) {
-		return `${base} There is no shell available, so the \`bash\` tool will always fail.`;
-	}
-	return shell === 'bash'
-		? `${base} The \`bash\` tool runs commands in bash, from the workspace root.`
-		: `${base} The \`bash\` tool runs commands in **PowerShell**, not bash, from the ` +
-				'workspace root. Write PowerShell syntax: no `&&`, no `|| true`, no `$(...)`, ' +
-				'and use `Get-ChildItem` rather than `ls -la`.';
-}
+import { applyContributors, composeSystemPrompt, readInstructions } from './systemPrompt';
 
 /** Which shell Rust resolved, or undefined outside the native shell. */
 async function resolveShell(): Promise<string | undefined> {
@@ -313,14 +288,18 @@ function createRunner(
 				 * reached and the walking skeleton, which predates it, did not
 				 * honour. There is no `setSystemPrompt`; `createTurnState()` awaits
 				 * this once per turn, so a callback reading live state is the *only*
-				 * way a profile's `instructions` can ever reach the model.
+				 * way a profile's `instructions` can reach the model.
 				 *
-				 * It composes nothing yet and returns the same text every turn. That
-				 * is the point: what it composes, and in what order, is
-				 * [ticket 17](docs/wayfinder/pi-harness/tickets/17-system-prompt-assembly.md),
-				 * deferred. Passing a string would have decided it by foreclosure.
+				 * `resources.skills` is the harness's own, so the prompt describes
+				 * the skills actually loaded rather than a list we kept in parallel.
+				 * It is empty until ticket 15's deferred loading lands.
 				 */
-				systemPrompt: () => systemPrompt(shell),
+				systemPrompt: (context) =>
+					composeSystemPrompt({
+						shell,
+						skills: context.resources.skills,
+						instructions: readInstructions(),
+					}),
 			})
 	);
 
@@ -401,6 +380,21 @@ function createRunner(
 
 		function attach(harness: AgentHarness<{ env: ExecutionEnv }>) {
 			const offHook = harness.on('tool_call', (event) => gate.onToolCall(event));
+			/*
+			 * The extension point for the system prompt
+			 * ([ticket 17](docs/wayfinder/pi-harness/tickets/17-system-prompt-assembly.md)).
+			 * The profile's own `instructions` do not come through here — they
+			 * compose inside `composeSystemPrompt`, before the shell facts. This is
+			 * for everything after that, and it is a *rewrite* rather than an
+			 * append, following pi's extension contract.
+			 *
+			 * One handler, because `emitHook` keeps only the last non-undefined
+			 * result; the chaining lives in `applyContributors`.
+			 */
+			const offPrompt = harness.on('before_agent_start', async (event) => {
+				const composed = await applyContributors(event.systemPrompt);
+				return composed === event.systemPrompt ? undefined : { systemPrompt: composed };
+			});
 			const offEvents = harness.subscribe((event: AgentHarnessEvent) => {
 				for (const mapped of mapEvent(event, contextWindow)) {
 					if (mapped.kind === 'usage') {
@@ -431,6 +425,7 @@ function createRunner(
 			});
 			dispose = () => {
 				offHook();
+				offPrompt();
 				offEvents();
 			};
 		}
