@@ -306,7 +306,20 @@ function createRunner(
 				// has to run a command and stream chunks.
 				tools: [createReadTool(), createWriteTool(), createEditTool(), createBashTool()],
 				toolContext: { env },
-				systemPrompt: systemPrompt(shell),
+				/*
+				 * A callback, never a string — the decision
+				 * [ticket 04](docs/wayfinder/pi-harness/tickets/04-profile-data-model.md)
+				 * reached and the walking skeleton, which predates it, did not
+				 * honour. There is no `setSystemPrompt`; `createTurnState()` awaits
+				 * this once per turn, so a callback reading live state is the *only*
+				 * way a profile's `instructions` can ever reach the model.
+				 *
+				 * It composes nothing yet and returns the same text every turn. That
+				 * is the point: what it composes, and in what order, is
+				 * [ticket 17](docs/wayfinder/pi-harness/tickets/17-system-prompt-assembly.md),
+				 * deferred. Passing a string would have decided it by foreclosure.
+				 */
+				systemPrompt: () => systemPrompt(shell),
 			})
 	);
 

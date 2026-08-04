@@ -2268,3 +2268,45 @@ would have been to suppress real events.
 - **A small window makes the warning look silly.** With the reserve fixed at
   16,384, an 18,000-token window warns at 9%. That is an artifact of the test
   setting; a real 128k window warns at 87%.
+
+---
+
+## Slice 19 — The system prompt stops being frozen
+
+**User outcome:** None yet, and that is the honest summary. This removes a
+foreclosure rather than adding a capability.
+
+**What changed:** one line in `src/agent/provider.ts` — `systemPrompt:
+systemPrompt(shell)` became `systemPrompt: () => systemPrompt(shell)`.
+
+**Why it was worth its own slice.**
+[Ticket 04](wayfinder/pi-harness/tickets/04-profile-data-model.md) resolved, in
+bold, *"pass a callback, never a string — a string forecloses `instructions`
+switching permanently."* The walking skeleton passed a string. It predates that
+resolution, which explains it and does not fix it. There is no
+`setSystemPrompt`: `createTurnState()` awaits the callback once per turn, so a
+callback is the **only** mechanism by which a profile's `instructions` can ever
+reach the model. Every remaining question about what the prompt contains is
+answerable later; this one was answerable only before profiles get built on top
+of it.
+
+This is the same shape as the mistakes
+[ticket 15](wayfinder/pi-harness/tickets/15-core-already-does-this.md) was
+written about — building against an assumption a closed ticket had already
+corrected — except the ticket contradicted here was our own rather than pi's.
+
+**The callback composes nothing and returns the same text every turn.** That is
+deliberate. What composes into the prompt, in what order, and whether a profile's
+`instructions` append or replace is
+[ticket 17](wayfinder/pi-harness/tickets/17-system-prompt-assembly.md), written
+and deferred at the dev's instruction. Passing a string would have decided it by
+foreclosure; passing a callback that does nothing decides nothing.
+
+**Validated natively** against `deepseek-reasoner`: two consecutive turns in one
+session, both asked which shell the `bash` tool uses, both answered "bash", both
+clean. The guidance survives being recomputed per turn, which is the only thing
+that could have broken.
+
+**No check file.** A one-line callback with no branches; `context.md` asks for a
+runnable check where there is logic, and there is none here. Ticket 17 will bring
+the logic and the check together.
