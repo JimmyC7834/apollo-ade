@@ -4,7 +4,7 @@ title: How a tool asks a question
 parent: ../map.md
 blocked-by: []
 assignee: jc4649
-status: open
+status: closed
 ---
 
 # How a tool asks a question
@@ -37,14 +37,53 @@ That ordering was on purpose. It exercises asking where asking is *the point*,
 rather than where it is a rescue from a refusal — so the mechanism is proven by
 a feature that wants it, not by the edge case that provoked the ticket.
 
-## Question — what is left
+## Settled — a tool asks
 
-The motivating defect is **unchanged**: a user tool resolving to `rm -rf {dir}`
-still throws. The mechanism it was said to be blocked on is no longer missing,
-so what remains is only the policy question below, and the third position in the
-first bullet is now the live one — a hand-authored manifest could reasonably
-have its *parameters* checked rather than its whole command. Nothing else in
-this ticket is blocked on anything.
+`gate.confirm(id, name, input, reason)` is the door. The gate became
+runner-scoped like the asker, with `begin(policy, emit)` per turn, and the
+emit-and-hold body of `onToolCall` is now shared by both callers. `userTools.ts`
+swapped its `throw` for `if (why && !(await gate.confirm(...))) throw`.
+
+**Through the gate, not the asker** — which was the first proposal and was
+wrong. `ask.ts` answers a list of strings; an approval answers a boolean.
+Merging them produces a union every caller has to narrow, which is the stated
+reason `answerQuestion` and `resolveApproval` are separate one layer up. The two
+share only a *shape* — one outstanding promise, abandoned if the run stops —
+and that is ten lines each, not an abstraction.
+
+**Per-tool `confirm: true` was not built.** It is a different feature from the
+deny list firing, nothing has asked for it, and the deny list answers the case
+this ticket was written about.
+
+**What the approval shows** is the argv as an array, because that is what the
+approval card already renders `input` as. The ambiguity this ticket worried
+about — `["echo","a b"]` and `["echo","a","b"]` reading identically once joined
+— is avoided rather than solved, by never joining it.
+
+**Under `auto`, it still asks.** `confirm` is only reached because the deny list
+matched, and the deny list is the floor rather than the policy, so there is no
+policy branch in `confirm` at all.
+
+### Why refusing was not the safer end of the trade
+
+The ticket assumed the refusal was strictly safer and merely inconvenient. It is
+not, and this is the argument that actually settled it:
+
+Refusing never stopped anyone deleting the directory. It made them write
+`["python3", "cleanup.py"]` instead — where the deny list cannot read the
+command, never matches, and never asks. Strictness bought indirection and cost
+the one case a foot-gun guard is any use for: the destruction written plainly
+enough to show someone. A visible `["rm","-rf","{dir}"]` that raises a card is a
+better outcome than an opaque script that raises nothing.
+
+That also disposes of the third position in the first bullet below —
+parameters-only checking. It was the way to make user tools usable without
+asking; asking makes it unnecessary rather than wrong, and it is not built.
+
+**The honest limit, unchanged.** `clean_build` asks. `python3 cleanup.py` does
+not and never will. That is the documented non-boundary in `gate.ts`, it applies
+to `bash` identically, and what actually holds regardless is Rust refusing
+writes outside the workspace root and the git checkpoint per turn.
 
 ## Original question
 

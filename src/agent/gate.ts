@@ -72,6 +72,26 @@ export function destructive(command: string): string | undefined {
 
 export interface Gate {
 	/**
+	 * Point the gate at the running turn, with the policy that turn opened on.
+	 *
+	 * The gate used to be *built* per turn, which was right while the hook was
+	 * its only caller. A tool's `execute` is the second caller and tools are
+	 * built once — see `ask.ts` for why rebuilding one per turn is not an option
+	 * — so the gate now has the asker's lifetime and the same per-turn sink.
+	 */
+	begin(policy: GatePolicy, emit: (event: AgentEvent) => void): void;
+	/**
+	 * Ask about something a tool is about to do. `true` means run it.
+	 *
+	 * The same question, the same event and the same card as the hook's — a
+	 * destructive command is a yes/no about an imminent action whoever noticed
+	 * it. Deliberately *not* routed through `ask.ts`: that answers a list of
+	 * strings, and merging the two would produce a union every caller has to
+	 * narrow, which is the reason `answerQuestion` and `resolveApproval` are
+	 * separate one layer up.
+	 */
+	confirm(id: string, name: string, input: unknown, reason: string): Promise<boolean>;
+	/**
 	 * pi's `tool_call` hook. Returning `undefined` lets the call proceed;
 	 * returning `{ block: true }` produces an ordinary error `tool_result` the
 	 * model sees and can adapt to.
@@ -93,10 +113,9 @@ export interface Gate {
 	abandon(): void;
 }
 
-export function createGate(
-	policy: GatePolicy,
-	emit: (event: AgentEvent) => void
-): Gate {
+export function createGate(): Gate {
+	let policy: GatePolicy = 'auto';
+	let emit: ((event: AgentEvent) => void) | undefined;
 	let pending: ((approved: boolean) => void) | undefined;
 
 	const settle = (approved: boolean) => {
@@ -105,7 +124,39 @@ export function createGate(
 		resolve?.(approved);
 	};
 
+	/** Emit the question and hold until it is answered. Both callers' body. */
+	async function ask(
+		id: string,
+		name: string,
+		input: unknown,
+		reason?: string
+	): Promise<boolean> {
+		emit?.({ kind: 'approval', id, name, input, reason });
+		return await new Promise<boolean>((resolve) => {
+			pending = resolve;
+		});
+	}
+
 	return {
+		begin(next, sink) {
+			// A turn starting while an approval is outstanding can only mean the
+			// last one was never settled. Declining it here is what stops this
+			// turn's user from answering a question they were never shown.
+			settle(false);
+			policy = next;
+			emit = sink;
+		},
+
+		async confirm(id, name, input, reason) {
+			// Refused rather than queued, for the reason below — but as a `false`,
+			// because this caller's failure path is a thrown tool error rather than
+			// a blocked hook, and it must not be a hung turn either way.
+			if (pending) {
+				return false;
+			}
+			return await ask(id, name, input, reason);
+		},
+
 		async onToolCall(event) {
 			/*
 			 * What the tool *does*, not what it is called. `bash` is examined by
@@ -134,18 +185,7 @@ export function createGate(
 				return { block: true, reason: 'another approval is already pending' };
 			}
 
-			emit({
-				kind: 'approval',
-				id: event.toolCallId,
-				name: event.toolName,
-				input: event.input,
-				reason,
-			});
-
-			const approved = await new Promise<boolean>((resolve) => {
-				pending = resolve;
-			});
-
+			const approved = await ask(event.toolCallId, event.toolName, event.input, reason);
 			return approved ? undefined : { block: true, reason: 'The user declined this change.' };
 		},
 

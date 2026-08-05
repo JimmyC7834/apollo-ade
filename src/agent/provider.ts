@@ -293,6 +293,14 @@ function createRunner(
 	 */
 	const asker = createAsker();
 
+	/*
+	 * And the gate, on the same terms. It was built per turn while the
+	 * `tool_call` hook was its only caller; a user tool's `execute` is the second
+	 * one, and tools are built once. `begin` in `start()` is what still makes the
+	 * policy a per-turn reading.
+	 */
+	const gate = createGate();
+
 	const builtins = [
 		createReadTool(),
 		createWriteTool(),
@@ -310,7 +318,7 @@ function createRunner(
 	 * that knows both halves — pi's built-ins are constructed here, and the
 	 * store is what refuses a profile naming something outside the union.
 	 */
-	let tools = [...builtins, ...userToolDefinitions()];
+	let tools = [...builtins, ...userToolDefinitions(gate)];
 	const declare = () =>
 		setCapabilities({
 			tools: tools.map((tool) => tool.name),
@@ -462,7 +470,7 @@ function createRunner(
 	 * changing under a run in flight.
 	 */
 	onUserToolsChange(() => {
-		tools = [...builtins, ...userToolDefinitions()];
+		tools = [...builtins, ...userToolDefinitions(gate)];
 		declare();
 		void ready.then((harness) =>
 			enqueue(() => harness.setTools(tools, activeToolNames(activeProfile())))
@@ -495,9 +503,9 @@ function createRunner(
 	function start(prompt: string, onEvent: (event: AgentEvent) => void) {
 		// Read at turn start, not at construction: switching to `careful` has to
 		// apply to the next turn rather than to the next window.
-		const gate = createGate(activeProfile().gatePolicy, onEvent);
-		// Point the asker at this turn. Any question left outstanding by a previous
-		// turn is abandoned here rather than answered by this turn's user.
+		gate.begin(activeProfile().gatePolicy, onEvent);
+		// Point both at this turn. Anything left outstanding by a previous turn is
+		// abandoned here rather than answered by this turn's user.
 		asker.begin(onEvent);
 
 		let released = false;

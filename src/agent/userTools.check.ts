@@ -7,8 +7,15 @@
 // what arms a tool.
 
 import assert from 'node:assert/strict';
-import { installUserTools, resolveArgv, userTools, type UserTool } from './userTools.ts';
-import { destructive } from './gate.ts';
+import {
+	installUserTools,
+	resolveArgv,
+	userToolDefinitions,
+	userTools,
+	type UserTool,
+} from './userTools.ts';
+import { createGate, destructive } from './gate.ts';
+import type { AgentEvent } from './index.ts';
 import {
 	activateProfile,
 	activeToolNames,
@@ -148,6 +155,56 @@ const profileNamed = (name: string): Profile => {
 		{ name: 'nuke', description: 'clean up', argv: ['rm', '-rf', '{dir}'], parameters: { dir: 'what' } },
 	]);
 	assert.ok(destructive(resolveArgv(only(), { dir: 'build' }).join(' ')));
+}
+
+// And it *asks* rather than refuses (ticket 18). Refusing did not stop anyone
+// deleting the directory — it moved the deletion into `python3 cleanup.py`,
+// where the deny list cannot read it and never asks at all.
+//
+// Nothing is spawned either way: under node there is no `__TAURI_INTERNALS__`,
+// so an approved call fails at the shell instead. That difference is the
+// assertion — it is how "the gate let it past" is observable without running
+// `rm -rf` to find out.
+{
+	installUserTools([
+		{ name: 'nuke', description: 'clean up', argv: ['rm', '-rf', '{dir}'], parameters: { dir: 'what' } },
+	]);
+	const events: AgentEvent[] = [];
+	const gate = createGate();
+	gate.begin('auto', (event) => void events.push(event));
+	const [nuke] = userToolDefinitions(gate);
+
+	const declined = nuke.execute('c1', { dir: 'build' }, undefined, undefined, {} as never);
+	assert.equal(events.length, 1, 'the user was asked');
+	assert.deepEqual(events[0], {
+		kind: 'approval',
+		id: 'c1',
+		name: 'nuke',
+		// The argv as an array, not joined into a command string.
+		input: ['rm', '-rf', 'build'],
+		reason: 'deletes files recursively',
+	});
+	gate.resolve(false);
+	await assert.rejects(declined, /declined/);
+
+	const approved = nuke.execute('c2', { dir: 'build' }, undefined, undefined, {} as never);
+	gate.resolve(true);
+	await assert.rejects(approved, /native shell/, 'approved gets past the gate');
+}
+
+// An ordinary tool is never asked about. A guard that fires on `grep` is one
+// people learn to click through.
+{
+	installUserTools([GREP]);
+	const events: AgentEvent[] = [];
+	const gate = createGate();
+	gate.begin('auto', (event) => void events.push(event));
+	const [grep] = userToolDefinitions(gate);
+	await assert.rejects(
+		grep.execute('c1', { pattern: 'TODO' }, undefined, undefined, {} as never),
+		/native shell/
+	);
+	assert.equal(events.length, 0, 'no question for ordinary work');
 }
 
 // What a manifest may not be. Every one of these is rejected whole rather than

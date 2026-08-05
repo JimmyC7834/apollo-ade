@@ -22,7 +22,7 @@ import { Type, type TSchema } from 'typebox';
 import type { AgentHarnessTool } from '@earendil-works/pi-agent-core';
 // Explicit extension, like `events.ts` — this module is reachable from a check
 // script, which node resolves without Vite's help.
-import { destructive } from './gate.ts';
+import { destructive, type Gate } from './gate.ts';
 import { ASK_TOOL } from './ask.ts';
 
 /** Model-visible tool names travel in the request; keep them boring. */
@@ -356,7 +356,7 @@ function report(argv: readonly string[], outcome: ExecOutcome): string {
  * is pi's contract for `AgentTool`, and the harness turns the throw into a
  * `tool_result` the model sees and can adapt to.
  */
-function createUserTool(tool: UserTool): AgentHarnessTool<{ env: unknown }> {
+function createUserTool(tool: UserTool, gate: Gate): AgentHarnessTool<{ env: unknown }> {
 	const parameters = Type.Object(
 		Object.fromEntries(Object.entries(tool.parameters).map(([key, spec]) => [key, schemaFor(spec)]))
 	) as TSchema;
@@ -366,7 +366,9 @@ function createUserTool(tool: UserTool): AgentHarnessTool<{ env: unknown }> {
 		label: tool.name,
 		description: tool.description,
 		parameters,
-		async execute(_id, params, signal, onUpdate) {
+		// `callId` rather than `id`: the exec below has an `id` of its own, and it
+		// is a different identifier — pi's tool call versus Rust's process handle.
+		async execute(callId, params, signal, onUpdate) {
 			const argv = resolveArgv(tool, params as Record<string, unknown>);
 
 			/*
@@ -376,20 +378,25 @@ function createUserTool(tool: UserTool): AgentHarnessTool<{ env: unknown }> {
 			 * `bash` would be — and being trusted enough to be in a profile does
 			 * not lift it.
 			 *
-			 * Refused rather than asked about, unlike the bash path. The gate can
-			 * ask because a turn owns it; a tool has no way to. That makes user
-			 * tools strictly stricter than bash here, which is the safe direction:
-			 * `bash` is still there for someone who means it.
+			 * **Asked about, not refused** — the same question `bash` gets, on the
+			 * same event and the same card, now that `gate.confirm` exists
+			 * (ticket 18). It used to throw, because a tool had no way to ask.
 			 *
-			 * Refuse-only, and that is a known gap rather than the end of the
-			 * argument: a tool that legitimately clears a build directory is
-			 * permanently dead here, not merely gated. Ticket 18
-			 * (docs/wayfinder/pi-harness/tickets/18-tool-reaches-the-gate.md)
-			 * settles whether a tool should be able to ask, and how.
+			 * Refusing was never the safer end of the trade, which is what settled
+			 * it. It did not stop anyone deleting the directory; it made them move
+			 * the deletion into `["python3", "cleanup.py"]`, where the deny list
+			 * cannot read it and never asks at all. Strictness here bought
+			 * indirection and cost the one case a foot-gun guard is any use for:
+			 * the destruction written plainly enough to show you.
+			 *
+			 * A decline still throws, so the model's recovery path is unchanged.
+			 * The approval carries the argv as the array it is, rather than joined
+			 * — `["echo", "a b"]` and `["echo", "a", "b"]` read identically once
+			 * joined, and that is the whole reason the array exists.
 			 */
 			const why = destructive(argv.join(' '));
-			if (why) {
-				throw new Error(`refused: this ${why}. Run it through the bash tool if you mean it.`);
+			if (why && !(await gate.confirm(callId, tool.name, argv, why))) {
+				throw new Error(`refused: this ${why}, and you declined it.`);
 			}
 
 			if (!('__TAURI_INTERNALS__' in globalThis)) {
@@ -482,9 +489,14 @@ export function onUserToolsChange(listener: (tools: readonly UserTool[]) => void
 	return () => listeners.delete(listener);
 }
 
-/** The pi tools for whatever is currently installed. */
-export function userToolDefinitions(): AgentHarnessTool<{ env: unknown }>[] {
-	return tools.map(createUserTool);
+/**
+ * The pi tools for whatever is currently installed.
+ *
+ * The gate is passed in rather than imported: it is the *runner's* gate, and a
+ * module-level one would be a second gate answering to nothing.
+ */
+export function userToolDefinitions(gate: Gate): AgentHarnessTool<{ env: unknown }>[] {
+	return tools.map((tool) => createUserTool(tool, gate));
 }
 
 /**

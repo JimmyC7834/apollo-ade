@@ -17,14 +17,14 @@ session runs under and can switch to mid-run), a **permission gate** on tool cal
 The map is done when every decision needed to *build* that is made — not when it is
 built.
 
-That line held: all seventeen charted tickets closed. Two things it did not anticipate,
-both open under "Not yet specified". [Ticket 18](tickets/18-tool-reaches-the-gate.md) is
-a decision charting could not have raised, because it fell out of *building*.
+That line held: all seventeen charted tickets closed. Two things it did not anticipate
+followed. [Ticket 18](tickets/18-tool-reaches-the-gate.md) is a decision charting could
+not have raised, because it fell out of *building* — now closed.
 [Ticket 19](tickets/19-model-entries.md) is the opposite failure and the more instructive
 one: the map stated the obligation plainly in its own Notes and no ticket ever owned it,
-so it survived seventeen closures by belonging to none of them. A closed map is not a
-finished one — and "every decision is made" is only true of the decisions something was
-accountable for making.
+so it survived seventeen closures by belonging to none of them. It is still open. A closed
+map is not a finished one — and "every decision is made" is only true of the decisions
+something was accountable for making.
 
 ## Notes
 
@@ -286,20 +286,16 @@ accountable for making.
   list, so a dead id fails as the provider's own error — and cost is deliberately zeroed
   while nothing displays it. Three questions, one of them actually wrong today.
 - **How a tool asks a question** — [ticket 18](tickets/18-tool-reaches-the-gate.md),
-  **mechanism built, policy open**. It did not come from charting; it fell out of
-  *building* ticket 13, which is why it arrives after the other seventeen closed.
-  The mechanism is settled and shipped: `src/agent/ask.ts` holds one `Asker` per runner,
-  each turn points it at its own event sink, and a twelfth event kind — `question` —
-  carries the ask out with `answerQuestion` carrying the answer back. Built on it is
-  `ask_user`, one built-in with a `multiSelect` parameter and a free-text box the model
-  cannot withhold. Not `toolContext`, which this ticket expected to be smallest: the
-  context is per turn but the *tool* is built once, so closing over `onEvent` would mean
-  a `setTools` inside every run.
-  What is left is only policy. A user tool resolving to `["rm", "-rf", "{dir}"]` still
-  refuses rather than asks — the handle it was blocked on now exists, so the open
-  question is whether a hand-authored manifest should have its *parameters* checked
-  rather than its whole command. Worth landing alongside **approval memory** below,
-  since a tool that can ask is a second caller for whatever that becomes.
+  **closed**. It did not come from charting; it fell out of *building* ticket 13, which
+  is why it arrives after the other seventeen closed. `gate.confirm` is the door: the
+  gate became runner-scoped like the asker, and a user tool whose resolved argv trips the
+  deny list now raises the same approval card `bash` does instead of throwing.
+  What settled it was not the mechanism but an argument the ticket had not made.
+  Refusing never stopped anyone deleting the directory — it made them write
+  `["python3", "cleanup.py"]`, where the deny list cannot read the command and never asks
+  at all. Strictness bought indirection and cost the one case a foot-gun guard is any use
+  for. Still worth landing **approval memory** below beside it: a tool that can ask is a
+  second caller for whatever that becomes.
 - **Profiles as subagent definitions.** The same payload (tools + prompt + model)
   configures both a session and a spawned child. Claude Code unifies them; whether
   pi's core even supports subagent forking is unverified. Blocked behind the profile

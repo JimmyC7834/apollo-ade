@@ -8,7 +8,7 @@
 // rather than only written in a comment, because a comment cannot fail.
 
 import assert from 'node:assert/strict';
-import { createGate, destructive } from './gate.ts';
+import { createGate, destructive, type GatePolicy } from './gate.ts';
 import type { AgentEvent } from './index.ts';
 
 /*
@@ -66,11 +66,24 @@ function recorder() {
 	return { events, emit: (event: AgentEvent) => void events.push(event) };
 }
 
+/**
+ * A gate pointed at one turn.
+ *
+ * The gate is built per *runner* now — a user tool's `execute` is a second
+ * caller and tools are built once — so opening it is two calls rather than one.
+ * Every case below is about a single turn, so they share this.
+ */
+function openGate(policy: GatePolicy, emit: (event: AgentEvent) => void) {
+	const gate = createGate();
+	gate.begin(policy, emit);
+	return gate;
+}
+
 // Auto never asks. This is the default, so "never asks" is the behaviour almost
 // every session gets.
 {
 	const log = recorder();
-	const gate = createGate('auto', log.emit);
+	const gate = openGate('auto', log.emit);
 	assert.equal(await gate.onToolCall(call('write')), undefined);
 	assert.equal(await gate.onToolCall(call('edit')), undefined);
 	assert.equal(log.events.length, 0, 'auto mode emits no approval');
@@ -80,7 +93,7 @@ function recorder() {
 // would train the user to dismiss prompts, which is how a gate stops working.
 {
 	const log = recorder();
-	const gate = createGate('careful', log.emit);
+	const gate = openGate('careful', log.emit);
 	assert.equal(await gate.onToolCall(call('read')), undefined);
 	assert.equal(log.events.length, 0, 'reading is not a question');
 }
@@ -88,7 +101,7 @@ function recorder() {
 // Approving lets the call through, and the question reached the UI first.
 {
 	const log = recorder();
-	const gate = createGate('careful', log.emit);
+	const gate = openGate('careful', log.emit);
 	const decision = gate.onToolCall(call('write'));
 	assert.equal(log.events.length, 1);
 	assert.deepEqual(log.events[0], {
@@ -108,7 +121,7 @@ function recorder() {
 // rather than the tool being refused — the single easiest mistake to make here.
 {
 	const log = recorder();
-	const gate = createGate('careful', log.emit);
+	const gate = openGate('careful', log.emit);
 	const decision = gate.onToolCall(call('write'));
 	gate.resolve(false);
 	const result = await decision;
@@ -120,7 +133,7 @@ function recorder() {
 // worse than wrongly allowing or wrongly blocking, because nothing recovers.
 {
 	const log = recorder();
-	const gate = createGate('careful', log.emit);
+	const gate = openGate('careful', log.emit);
 	const decision = gate.onToolCall(call('write'));
 	gate.abandon();
 	assert.equal((await decision)?.block, true, 'abandoning declines rather than hanging');
@@ -130,7 +143,7 @@ function recorder() {
 // Refused loudly rather than silently queued.
 {
 	const log = recorder();
-	const gate = createGate('careful', log.emit);
+	const gate = openGate('careful', log.emit);
 	const first = gate.onToolCall(call('write', 'c1'));
 	const second = await gate.onToolCall(call('edit', 'c2'));
 	assert.equal(second?.block, true);
@@ -143,7 +156,7 @@ function recorder() {
 // than a policy. Nothing is spawned here — the gate is asked, and told no.
 {
 	const log = recorder();
-	const gate = createGate('auto', log.emit);
+	const gate = openGate('auto', log.emit);
 	const decision = gate.onToolCall({
 		toolCallId: 'c9',
 		toolName: 'bash',
@@ -158,7 +171,7 @@ function recorder() {
 // An ordinary command in auto mode is not a question.
 {
 	const log = recorder();
-	const gate = createGate('auto', log.emit);
+	const gate = openGate('auto', log.emit);
 	const decision = await gate.onToolCall({
 		toolCallId: 'c10',
 		toolName: 'bash',
@@ -172,7 +185,7 @@ function recorder() {
 // always change something.
 {
 	const log = recorder();
-	const gate = createGate('careful', log.emit);
+	const gate = openGate('careful', log.emit);
 	void gate.onToolCall({
 		toolCallId: 'c11',
 		toolName: 'bash',
@@ -185,8 +198,104 @@ function recorder() {
 // Answering when nothing was asked is harmless — the UI can fire this from a
 // stale click after a run has ended.
 {
-	const gate = createGate('careful', recorder().emit);
+	const gate = openGate('careful', recorder().emit);
 	gate.resolve(true);
+	gate.abandon();
+}
+
+// --- `confirm`, the door a tool comes in through ---------------------------
+
+// The same card as the hook's, with the argv carried as the array it is. Joined
+// for display, `["echo","a b"]` and `["echo","a","b"]` read identically — which
+// is the whole reason the array exists.
+{
+	const log = recorder();
+	const gate = openGate('auto', log.emit);
+	const running = gate.confirm('c1', 'clean_build', ['rm', '-rf', 'dist'], 'deletes files recursively');
+	assert.equal(log.events.length, 1);
+	assert.deepEqual(log.events[0], {
+		kind: 'approval',
+		id: 'c1',
+		name: 'clean_build',
+		input: ['rm', '-rf', 'dist'],
+		reason: 'deletes files recursively',
+	});
+	gate.resolve(true);
+	assert.equal(await running, true, 'approving runs it');
+}
+
+// Declining answers false rather than throwing. The tool turns that into its own
+// error; a rejection here would be a second failure mode for the same event.
+{
+	const log = recorder();
+	const gate = openGate('auto', log.emit);
+	const running = gate.confirm('c1', 'clean_build', ['rm', '-rf', 'dist'], 'deletes files recursively');
+	gate.resolve(false);
+	assert.equal(await running, false);
+}
+
+// Auto mode asks too. `confirm` is only ever reached because the deny list
+// matched, and the deny list is the floor rather than the policy — so there is
+// no policy branch here at all.
+{
+	const log = recorder();
+	const gate = openGate('auto', log.emit);
+	void gate.confirm('c1', 'clean_build', ['rm', '-rf', 'dist'], 'deletes files recursively');
+	assert.equal(log.events.length, 1, 'the floor holds in auto');
+	gate.abandon();
+}
+
+// Cancelling a run declines it, for the same reason the hook is abandoned: a
+// tool awaiting an answer that can no longer arrive is a turn that never ends.
+{
+	const gate = openGate('auto', recorder().emit);
+	const running = gate.confirm('c1', 'clean_build', ['rm', '-rf', 'x'], 'deletes files recursively');
+	gate.abandon();
+	assert.equal(await running, false);
+}
+
+// One pending slot, shared with the hook. A second question would strand the
+// first promise, so it is declined rather than queued — `false` here rather than
+// the hook's `{ block: true }`, because this caller's refusal path is a throw.
+{
+	const log = recorder();
+	const gate = openGate('careful', log.emit);
+	const first = gate.onToolCall(call('write'));
+	assert.equal(await gate.confirm('c2', 'clean_build', ['rm', '-rf', 'x'], 'why'), false);
+	assert.equal(log.events.length, 1, 'the second question was never shown');
+	gate.resolve(true);
+	assert.equal(await first, undefined, 'the first still answers');
+}
+
+// A new turn declines what the last one left outstanding, rather than letting
+// this turn's user answer a question they were never shown.
+{
+	const gate = createGate();
+	gate.begin('auto', recorder().emit);
+	const stale = gate.confirm('c1', 'clean_build', ['rm', '-rf', 'x'], 'why');
+
+	const next = recorder();
+	gate.begin('auto', next.emit);
+	assert.equal(await stale, false);
+
+	// And the gate is usable again rather than stuck believing one is pending.
+	const fresh = gate.confirm('c2', 'clean_build', ['rm', '-rf', 'y'], 'why');
+	assert.equal(next.events.length, 1);
+	gate.resolve(true);
+	assert.equal(await fresh, true);
+}
+
+// The policy is re-read per turn, which is what `begin` is for: switching to
+// `careful` applies to the next turn rather than the next window.
+{
+	const log = recorder();
+	const gate = createGate();
+	gate.begin('auto', log.emit);
+	assert.equal(await gate.onToolCall(call('write')), undefined, 'auto does not ask');
+
+	gate.begin('careful', log.emit);
+	void gate.onToolCall(call('write', 'c2'));
+	assert.equal(log.events.length, 1, 'the switch reached the next turn');
 	gate.abandon();
 }
 

@@ -2956,3 +2956,76 @@ would have constructed a `MouseEvent` with `detail: 1`, asserted the predicate
 returned true, and been green for twenty-six slices, because the wrong belief
 was never about the condition — it was about which real events carry a `detail`
 at all. Only a trusted event could have said so, and that is not a unit test.
+
+## Slice 28 — A user tool asks instead of refusing
+
+Ticket 18's other half, and the half it was actually written about. A user tool
+whose resolved argv trips the deny list used to throw; it now raises the same
+approval card `bash` does.
+
+**The argument that settled it was not the one on the ticket.** The ticket
+framed the refusal as strictly safer and merely inconvenient, so the question
+looked like a trade. It is not one, and the counter came from asking what the
+refusal actually causes:
+
+> A user can work around it by putting it in a script, so the tool is like
+> `python3 cleanup.py`, right?
+
+Yes — and that is the whole case. `argv.join(' ')` is `"python3 cleanup.py"`,
+which matches nothing. Refusing never stopped anyone deleting the directory. It
+made them move the deletion somewhere the deny list cannot read, where it never
+asks at all. Strictness bought indirection and cost the one case a foot-gun
+guard is any use for: the destruction written plainly enough to show someone. A
+visible `["rm","-rf","{dir}"]` that raises a card beats an opaque script that
+raises nothing.
+
+That also disposed of the ticket's third position — checking a manifest's
+*parameters* rather than its whole command. It existed to make user tools usable
+without asking. Asking makes it unnecessary rather than wrong, so it is not
+built, and "trust does not lift the floor" was never reopened.
+
+**Through the gate, not the asker — which was the first proposal here and was
+wrong.** Extending `ask.ts` to carry approvals would have made it answer
+`readonly string[] | boolean`: two emit shapes, two settle shapes, a union every
+caller narrows. That is the stated reason `answerQuestion` and `resolveApproval`
+are separate one layer up, so proposing it a layer down contradicted a rule this
+slice had written three days earlier. Caught in review, not by the compiler.
+
+They are separate things and stay separate at every layer. What they share is a
+*shape* — one outstanding promise, abandoned if the run stops — and that is ten
+lines each. A `Pending<T>` to hold it would save nothing.
+
+**The change.** `createGate()` becomes runner-scoped like `createAsker()`, with
+`begin(policy, emit)` per turn so the policy is still read per turn. The
+emit-and-hold body of `onToolCall` is extracted as `ask` and exposed as
+`confirm`; `userTools.ts` swaps its throw for
+`if (why && !(await gate.confirm(...))) throw`. The hook's signature does not
+change, so the bash path is untouched. One pending slot, shared: a second
+question is declined rather than queued, `false` for `confirm` because that
+caller's refusal is a throw, `{ block: true }` for the hook because its refusal
+is a blocked call.
+
+The approval carries the argv as an **array**, which is what the card already
+renders `input` as — so the display ambiguity the ticket worried about
+(`["echo","a b"]` versus `["echo","a","b"]`) is avoided rather than solved.
+
+**Tested live without running anything destructive.** The standing rule is that
+no destructive command is executed in testing, gated so a bug cannot cause one.
+The manifest's argv was
+`["node","-e","console.log('SAFE STUB, deleted nothing: rm -rf ' + process.argv[1])","{dir}"]`
+— it trips the deny list on the joined string, and `argv[0]` is fixed, so the
+worst case if every guard failed at once is that it prints a sentence. Verified
+the predicate matched *before* launching, not after.
+
+Skip → the tool fails with "refused: this deletes files recursively, and you
+declined it", card reads Skipped. Continue → the tool completes and the output
+is `SAFE STUB, deleted nothing: rm -rf dist`, card reads Approved. Both under
+`auto`, which is the point: `confirm` is only reached because the deny list
+matched, and the deny list is the floor rather than the policy.
+
+**The honest limit, restated because it is easy to lose.** `clean_build` asks.
+`python3 cleanup.py` does not and never will. `gate.ts` has always said the deny
+list is a foot-gun guard and explicitly not a security boundary; this slice does
+not change that, it just stops the guard being worse than useless in the one
+case it can see. What holds regardless is Rust refusing writes outside the
+workspace root, and the git checkpoint taken every turn.
