@@ -12,10 +12,17 @@ export function Titlebar({ title, controls, actions }: TitlebarProps) {
 	return (
 		<header className="ide-titlebar">
 			{/* The drag region also handles double-click to maximize, which a
-			    frameless window must reimplement itself. */}
+			    frameless window must reimplement itself.
+
+			    `onMouseDown`, not `onPointerDown`: `detail` is the click count on a
+			    mouse event and **0 on every pointer event**, which the spec requires
+			    and Chromium honours. So the guard below was never true and the window
+			    never dragged — from slice 1 until it was measured. The guard itself is
+			    worth keeping: without it the second press of a double-click starts a
+			    drag, which swallows the maximize. */}
 			<div
 				className="ide-titlebar-drag"
-				onPointerDown={(event) => {
+				onMouseDown={(event) => {
 					if (event.button === 0 && event.detail === 1) {
 						controls.startDragging();
 					}

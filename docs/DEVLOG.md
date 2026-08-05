@@ -2905,3 +2905,54 @@ also raised and never settled — whether a hand-authored manifest should have i
 *parameters* checked against the deny list rather than its whole command.
 Building the mechanism does not answer that, and answering it by reflex, now
 that it is cheap to, is how a floor stops being one.
+
+## Slice 27 — The titlebar had never dragged
+
+Reported as a missing feature; it was a dead line of code, present since slice 1
+and never once true.
+
+```tsx
+onPointerDown={(event) => {
+  if (event.button === 0 && event.detail === 1) { controls.startDragging(); }
+}}
+```
+
+`detail` is the click count — on a **mouse** event. On a pointer event it is 0,
+which the Pointer Events spec requires and Chromium honours. The condition was
+therefore false on every press, and `startDragging()` had never been called in
+the life of the project. `onMouseDown` is the whole fix.
+
+The guard is kept rather than dropped. Without it the second press of a
+double-click also starts a drag, which swallows the maximize the very next event
+would have performed — measured: a double-click now produces exactly one
+`startDragging` and still toggles the window.
+
+**Measuring it took three wrong instruments, which is the part worth recording.**
+
+1. A synthetic `PointerEvent` reported `detail: 0` — proving nothing, since
+   synthetic events default to 0 whatever the spec says. Redone through CDP
+   `Input.dispatchMouseEvent`, where `isTrusted: true` and `pointerdown` still
+   reported 0 next to `mousedown`'s 1.
+2. Patching `window.__TAURI_INTERNALS__.invoke` recorded nothing — not even for
+   a call made deliberately to test the spy. A spy that cannot see a known call
+   is not evidence of absence, which is the only reason the next step happened
+   instead of a wrong conclusion.
+3. Patching `Window.prototype.startDragging` after `import('/@id/@tauri-apps/api/window')`
+   also recorded nothing — the **module-identity skew** this log has hit before.
+   `performance.getEntriesByType('resource')` showed the app had loaded
+   `/node_modules/.vite/deps/@tauri-apps_api_window.js?v=5c710189` while the bare
+   specifier resolved to a second, separate instance. Importing the URL the app
+   actually loaded, the press recorded `["startDragging"]`, a press in the body
+   recorded none, and a right-click recorded none.
+
+The intermediate step that saved it was checking whether React saw the element
+at all: a double-click on the same div maximized the window, so the handler
+wiring was fine and only the instrument was lying.
+
+**No check script for this one**, deliberately, and against the instinct — this
+is exactly the "a rule that lives in a `.tsx` cannot be checked" failure that
+`transcript.ts` exists to prevent. But a check here would have *passed*. It
+would have constructed a `MouseEvent` with `detail: 1`, asserted the predicate
+returned true, and been green for twenty-six slices, because the wrong belief
+was never about the condition — it was about which real events carry a `detail`
+at all. Only a trusted event could have said so, and that is not a unit test.
