@@ -42,6 +42,7 @@ import { mapEvent } from './events';
 import { installRustFetch } from './rustFetch';
 import { cannedProvider, FIXTURE_FILES } from './canned';
 import { createGate } from './gate';
+import { createAskTool, createAsker } from './ask';
 import { applyContributors, composeSystemPrompt } from './systemPrompt';
 import {
 	activeProfile,
@@ -284,7 +285,21 @@ function createRunner(
 	 * progress and overflow on top of `env.exec`, so Rust only has to run a
 	 * command and stream chunks.
 	 */
-	const builtins = [createReadTool(), createWriteTool(), createEditTool(), createBashTool()];
+	/*
+	 * One asker for the runner, pointed at each turn's sink as it opens — the
+	 * mechanism ticket 18 settled on, and the reason the tool below can be built
+	 * once. The gate is per turn because it is cheap; a *tool* is not, because
+	 * rebuilding one means `setTools` inside a run.
+	 */
+	const asker = createAsker();
+
+	const builtins = [
+		createReadTool(),
+		createWriteTool(),
+		createEditTool(),
+		createBashTool(),
+		createAskTool(asker),
+	];
 
 	/*
 	 * The user's own tools sit beside them, and the two sets are told apart
@@ -481,6 +496,9 @@ function createRunner(
 		// Read at turn start, not at construction: switching to `careful` has to
 		// apply to the next turn rather than to the next window.
 		const gate = createGate(activeProfile().gatePolicy, onEvent);
+		// Point the asker at this turn. Any question left outstanding by a previous
+		// turn is abandoned here rather than answered by this turn's user.
+		asker.begin(onEvent);
 
 		let released = false;
 		let stopped = false;
@@ -627,11 +645,15 @@ function createRunner(
 				// leave the hook awaiting an answer that can no longer arrive, and
 				// the turn would never settle.
 				gate.abandon();
+				// Same reason as the gate: a tool awaiting an answer that can no
+				// longer arrive is a turn that never settles.
+				asker.abandon();
 				onEvent({ kind: 'cancelled' });
 				release();
 				void running?.abort();
 			},
 			resolveApproval: (approved: boolean) => gate.resolve(approved),
+			answerQuestion: (chosen: readonly string[]) => asker.answer(chosen),
 		};
 	}
 

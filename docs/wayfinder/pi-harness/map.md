@@ -286,15 +286,20 @@ accountable for making.
   list, so a dead id fails as the provider's own error — and cost is deliberately zeroed
   while nothing displays it. Three questions, one of them actually wrong today.
 - **How a tool asks a question** — [ticket 18](tickets/18-tool-reaches-the-gate.md),
-  **open**. It did not come from charting; it fell out of *building* ticket 13, which is
-  why it arrives after the other seventeen closed.
-  A user tool that hits the deny list refuses rather than asks, because `createGate` is
-  built per turn and reached through the `tool_call` hook while a tool's `execute()` has
-  no handle on either. Safe and honest, and it makes a legitimate tool — `["rm", "-rf",
-  "{dir}"]` for a build directory — permanently dead rather than merely gated. The
-  ticket settles whether a tool should be able to ask at all, and by what mechanism if
-  so. Worth landing alongside **approval memory** below, since a tool that can ask is a
-  second caller for whatever that becomes.
+  **mechanism built, policy open**. It did not come from charting; it fell out of
+  *building* ticket 13, which is why it arrives after the other seventeen closed.
+  The mechanism is settled and shipped: `src/agent/ask.ts` holds one `Asker` per runner,
+  each turn points it at its own event sink, and a twelfth event kind — `question` —
+  carries the ask out with `answerQuestion` carrying the answer back. Built on it is
+  `ask_user`, one built-in with a `multiSelect` parameter and a free-text box the model
+  cannot withhold. Not `toolContext`, which this ticket expected to be smallest: the
+  context is per turn but the *tool* is built once, so closing over `onEvent` would mean
+  a `setTools` inside every run.
+  What is left is only policy. A user tool resolving to `["rm", "-rf", "{dir}"]` still
+  refuses rather than asks — the handle it was blocked on now exists, so the open
+  question is whether a hand-authored manifest should have its *parameters* checked
+  rather than its whole command. Worth landing alongside **approval memory** below,
+  since a tool that can ask is a second caller for whatever that becomes.
 - **Profiles as subagent definitions.** The same payload (tools + prompt + model)
   configures both a session and a spawned child. Claude Code unifies them; whether
   pi's core even supports subagent forking is unverified. Blocked behind the profile

@@ -1,7 +1,7 @@
 // The agent seam. The chat UI talks to `AgentProvider` and never to a model, a
 // network client, or a native command.
 //
-// The eleven kinds below are the contract settled in
+// The twelve kinds below are the contract settled in
 // docs/wayfinder/pi-harness/tickets/05-event-contract.md and falsified against
 // three live providers by the spike that preceded this slice. Providers adapt
 // *down* to them; the contract does not widen to match whatever pi emits. That
@@ -43,6 +43,22 @@ export type AgentEvent =
 			readonly reason?: string;
 	  }
 	/**
+	 * The run is paused until `answerQuestion` is called. A sibling of `approval`
+	 * rather than a widening of it: an approval is a yes/no about something the
+	 * agent is *about to do*, and this is a choice the agent cannot make at all.
+	 * Merging them would give every approval an option list it has no use for.
+	 *
+	 * The free-text box the UI always renders is not in `options`, because it is
+	 * not the model's to withhold — see `ask.ts`.
+	 */
+	| {
+			readonly kind: 'question';
+			readonly id: string;
+			readonly question: string;
+			readonly options: readonly string[];
+			readonly multiSelect: boolean;
+	  }
+	/**
 	 * Real provider numbers, not estimates. Surfaced because compaction anchors
 	 * on them, so a context meter is free here and expensive to retrofit.
 	 */
@@ -68,6 +84,9 @@ export type AgentEvent =
 export interface AgentRun {
 	cancel(): void;
 	resolveApproval(approved: boolean): void;
+	/** Answer the outstanding `question`. One or more of the offered choices,
+	 * and/or whatever the user typed in the free-text box. */
+	answerQuestion(chosen: readonly string[]): void;
 }
 
 export interface AgentProvider {

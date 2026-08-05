@@ -2840,3 +2840,68 @@ overridden: a tool that legitimately clears a build directory is permanently
 unusable, because refusing is the only thing a tool can do without a way to
 reach the gate's approval path. That is real plumbing rather than a tweak, and
 it is the only thing on this ticket that is.
+
+## Slice 26 — The agent can ask you a question
+
+Ticket 18 asked whether a tool should be able to ask the user something, and by
+what mechanism. It now can, and the mechanism turned out to be smaller than any
+of the three the ticket proposed.
+
+**What was actually missing.** `createGate` can pause a turn because a turn owns
+it: it is built per turn in `start()` and reaches the model through the
+`tool_call` hook, which holds a promise open until the user answers. A tool's
+`execute()` gets `(toolCallId, params, signal, onUpdate, context)` and has no
+way to emit anything or await anything. That is the whole gap.
+
+`src/agent/ask.ts` closes it with one `Asker` per runner that each turn points
+at its own event sink. A twelfth event kind, `question`, carries the ask out;
+`AgentRun.answerQuestion` carries the answer back.
+
+**Not `toolContext`, which the ticket expected to be the small option.** The
+context resolves per turn, so it looked free. But the *tool* is built once —
+`setTools` is what the harness holds — and a tool rebuilt every turn to
+re-close over `onEvent` means a tool-set change inside every run, which is
+exactly what the profile-switch queue exists to prevent. A per-runner object
+with a per-turn sink has the same lifetime and none of that. The second option,
+another `tool_call` hook, fails for a different reason: a hook sees params, and
+what a question needs to carry is not params.
+
+**What was built on it first is not the thing that provoked the ticket.**
+`ask_user` — the agent asking you a multiple-choice question — rather than the
+user-tool destructive refusal. Deliberately: it exercises asking where asking is
+the point, not where it is a rescue from a refusal, so the mechanism is proven
+by a feature that wants it.
+
+One tool with a `multiSelect` parameter rather than two tools. Everything either
+would hold is identical — the prompt, the options, the box, the result shape —
+and a model choosing between two near-identical tools chooses wrong more often
+than one setting a boolean. Radios when it is off, checkboxes when it is on.
+
+**The free-text box is always rendered and is deliberately not one of the
+options.** A model that could omit it would, and the case it covers is precisely
+the one the model failed to anticipate — which is the reason it is asking rather
+than deciding. It is also not a fifth radio button labelled "Other": ticking a
+box and then typing is two actions where one will do. It travels to the model as
+`Other: …` so a written answer is not mistaken for a chosen one.
+
+Live, against DeepSeek: the single-select variant answered entirely through the
+box — "none of those, use bunyan" reached the model, which is the case the whole
+argument above is about. The multi-select variant returned two ticked options as
+two lines.
+
+**One thing only using it found.** The exchange rendered three times: the tool
+call row with its arguments as JSON, the question card, then the same row again
+with the answer as its output. The card is a strictly better rendering of all
+three, so `applyEvent` drops `tool_start` for this one tool — and only
+`tool_start`, because `tool_update` and `tool_end` already leave the parts alone
+when they find no part with that id. Asserted in the check, since it was found by
+using the app rather than by reading it.
+
+**What is left on ticket 18.** The defect that provoked it is unchanged: a user
+tool resolving to `["rm", "-rf", "{dir}"]` still refuses rather than asks. That
+was the right place to stop. The ticket said the refusal was blocked on a
+mechanism; it is not blocked any more, so what remains is the policy question it
+also raised and never settled — whether a hand-authored manifest should have its
+*parameters* checked against the deny list rather than its whole command.
+Building the mechanism does not answer that, and answering it by reflex, now
+that it is cheap to, is how a floor stops being one.

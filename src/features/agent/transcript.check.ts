@@ -5,13 +5,18 @@
 
 import assert from 'node:assert/strict';
 
+import { ASK_TOOL } from '../../agent/ask.ts';
+
 import {
+	answerQuestion,
 	applyEvent,
 	approvalLabel,
 	asPlainText,
 	canAnswer,
+	questionLabel,
 	resolveApproval,
 	toolLabel,
+	type QuestionPart,
 	type Turn,
 } from './transcript.ts';
 
@@ -126,7 +131,7 @@ function awaiting(id: number): Turn {
 
 console.log('transcript.check.ts: ok');
 
-// --- The eleven-kind contract ---------------------------------------------
+// --- The twelve-kind contract ---------------------------------------------
 
 const started = (): Turn => ({ id: 1, prompt: 'go', parts: [], status: 'running' });
 
@@ -245,4 +250,67 @@ const started = (): Turn => ({ id: 1, prompt: 'go', parts: [], status: 'running'
 	assert.match(text, /compacted 900 tokens/);
 }
 
-console.log('transcript.check.ts: eleven kinds ok');
+// A question is answerable on the same terms an approval is, and answering one
+// is scoped the same way. The bug this repeats for the new kind is the one the
+// file opens with: an answer reaching back into an older turn.
+{
+	const asked = (id: number): Turn =>
+		applyEvent(
+			{ id, prompt: 'go', parts: [], status: 'running' },
+			{
+				kind: 'question',
+				id: `call-${id}`,
+				question: 'Which database?',
+				options: ['Postgres', 'SQLite'],
+				multiSelect: false,
+			}
+		);
+
+	const open = asked(1);
+	const part = open.parts[0];
+	assert.equal(part?.kind, 'question');
+	assert.ok(canAnswer(part, open));
+
+	// Stopped: still recorded, no longer answerable, and not silently answered.
+	const stopped = applyEvent(asked(2), { kind: 'cancelled' });
+	assert.equal(canAnswer(stopped.parts[0]!, stopped), false);
+	assert.equal(questionLabel(stopped.parts[0] as QuestionPart, stopped.status), 'Not answered');
+
+	// Only the running turn takes the answer. `stopped` comes first in the list,
+	// which is exactly the arrangement that let an old question acquire an answer.
+	const [old, current] = answerQuestion([stopped, open], ['SQLite']);
+	assert.equal(old, stopped, 'a stopped turn is returned by identity');
+	assert.equal((current?.parts[0] as QuestionPart).state, 'answered');
+	assert.deepEqual((current?.parts[0] as QuestionPart).answer, ['SQLite']);
+
+	// The answer is in the plain-text record, because "answered" without it is a
+	// worse account of the conversation than no line at all.
+	assert.match(asPlainText([current!]), /\[question\] Which database\? \(Postgres \/ SQLite\) — sqlite/);
+
+	// Answering twice does not re-answer: the second call finds nothing pending.
+	assert.equal(answerQuestion([current!], ['Postgres'])[0], current);
+
+	// The ask tool's own call renders as the question card and nothing else. The
+	// duplicate row this prevents was found by using the app, so it is asserted
+	// here rather than left to be re-found.
+	let quiet = applyEvent(asked(3), {
+		kind: 'tool_start',
+		id: 'call-3',
+		name: ASK_TOOL,
+		input: { question: 'Which database?' },
+	});
+	quiet = applyEvent(quiet, { kind: 'tool_end', id: 'call-3', result: 'SQLite', isError: false });
+	assert.equal(quiet.parts.length, 1, 'only the question card');
+	assert.equal(quiet.parts[0]?.kind, 'question');
+
+	// Every other tool still renders as one.
+	const loud = applyEvent(asked(4), {
+		kind: 'tool_start',
+		id: 'call-4',
+		name: 'bash',
+		input: { command: 'ls' },
+	});
+	assert.equal(loud.parts.length, 2);
+}
+
+console.log('transcript.check.ts: twelve kinds ok');

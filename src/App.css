@@ -987,6 +987,43 @@ body {
 	font-size: var(--ide-font-size-small);
 }
 
+/* A question reuses the approval surface: both stop the run, and looking like
+   two different things would teach the reader a distinction that costs them
+   attention without telling them anything. Only the answer controls differ. */
+.ide-agent-question-options {
+	margin: var(--ide-space-3) 0 0;
+	padding: 0;
+	list-style: none;
+	display: flex;
+	flex-direction: column;
+	gap: var(--ide-space-2);
+}
+
+.ide-agent-question-options label,
+.ide-agent-question-other {
+	display: flex;
+	align-items: center;
+	gap: var(--ide-space-2);
+	cursor: pointer;
+}
+
+.ide-agent-question-other {
+	margin-top: var(--ide-space-3);
+	color: var(--ide-fg-muted);
+	font-size: var(--ide-font-size-small);
+}
+
+.ide-agent-question-text {
+	flex: 1;
+	min-width: 0;
+	padding: var(--ide-space-2);
+	border: 1px solid var(--ide-border-strong);
+	border-radius: var(--ide-radius);
+	background: var(--ide-bg-input, var(--ide-bg-overlay));
+	color: inherit;
+	font: inherit;
+}
+
 /* The composer is an elevated outer-tier surface, not part of the transcript. */
 .ide-agent-composer {
 	flex: none;

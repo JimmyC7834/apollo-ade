@@ -9,7 +9,44 @@ status: open
 
 # How a tool asks a question
 
-## Question
+## Settled — the mechanism exists
+
+**A tool can ask.** `src/agent/ask.ts` holds one `Asker` per runner; `start()`
+points it at the turn's event sink, the same place `createGate` is built, and
+`cancel()` abandons it beside `gate.abandon()` for the same reason. A new
+`question` event carries the ask, `AgentRun.answerQuestion` carries the answer
+back, and the twelfth kind sits beside `approval` rather than widening it.
+
+*Not* through `toolContext`, which was the option this ticket thought smallest.
+The context is resolved per turn but the **tool** is built once, and a tool that
+had to be rebuilt each turn to re-close over `onEvent` would mean a `setTools`
+call inside every run — the one thing the profile-switch queue exists to
+prevent. A per-runner object with a per-turn sink gets the same lifetime with
+none of that. Not a second `tool_call` hook either: the hook sees params, and
+what a question needs to carry is not params.
+
+**What was built on it first is `ask_user`, not the refusal.** One built-in, two
+variants — `multiSelect` is a parameter rather than a second tool, because
+everything either would hold is identical and a model choosing between two
+near-identical tools chooses wrong. The free-text box is always rendered and is
+deliberately not in `options`: a model that could omit it would, and the case it
+covers is the one the model failed to anticipate, which is the reason it is
+asking at all.
+
+That ordering was on purpose. It exercises asking where asking is *the point*,
+rather than where it is a rescue from a refusal — so the mechanism is proven by
+a feature that wants it, not by the edge case that provoked the ticket.
+
+## Question — what is left
+
+The motivating defect is **unchanged**: a user tool resolving to `rm -rf {dir}`
+still throws. The mechanism it was said to be blocked on is no longer missing,
+so what remains is only the policy question below, and the third position in the
+first bullet is now the live one — a hand-authored manifest could reasonably
+have its *parameters* checked rather than its whole command. Nothing else in
+this ticket is blocked on anything.
+
+## Original question
 
 Fell out of building [How a user adds their own tool](13-user-authored-tools.md)
 rather than out of the map. It is the only thing that ticket left unbuilt, and

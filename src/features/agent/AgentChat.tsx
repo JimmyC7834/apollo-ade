@@ -11,14 +11,18 @@ import { activateProfile, activeProfile, listProfiles } from '../../agent/profil
 import { loadProfileFiles, profileSources } from '../../agent/profileFiles';
 import { userTools } from '../../agent/userTools';
 import { Icon, Overlay } from '../../ui';
+import { OTHER } from '../../agent/ask';
 import {
+	answerQuestion,
 	applyEvent,
 	approvalLabel,
 	asPlainText,
 	canAnswer,
+	questionLabel,
 	resolveApproval,
 	toolLabel,
 	type Part,
+	type QuestionPart,
 	type Turn,
 	type Usage,
 } from './transcript';
@@ -30,10 +34,110 @@ export interface AgentChatProps {
 }
 
 /**
+ * A question the agent asked, with the free-text box that is always there.
+ *
+ * Its own component because it is the only part that holds state between render
+ * and answer — what is ticked, and what has been typed. Keeping that inside
+ * `PartView` would put a `useState` behind an `if`, and the hook rules would
+ * make every other part pay for it.
+ *
+ * **The box is unconditional, and it is not one of the options.** A model that
+ * could choose to omit it would, and the case it exists for is the one the model
+ * did not think of — which is the reason it is asking rather than deciding. It
+ * is also not a fifth radio button: picking "Other" and then typing is two
+ * actions where one will do, and a typed answer is unambiguous on its own.
+ */
+function QuestionView({
+	part,
+	turn,
+	onAnswer,
+}: {
+	readonly part: QuestionPart;
+	readonly turn: Turn;
+	readonly onAnswer: (chosen: readonly string[]) => void;
+}) {
+	const [picked, setPicked] = useState<readonly string[]>([]);
+	const [other, setOther] = useState('');
+
+	const open = canAnswer(part, turn);
+	const written = other.trim();
+	// The typed answer is labelled where the model reads it, because a bare
+	// string among the option labels is indistinguishable from a chosen one —
+	// and the distinction is the point of offering the box.
+	const chosen = written ? [...picked, `${OTHER}: ${written}`] : picked;
+
+	const toggle = (option: string) =>
+		setPicked((current) =>
+			part.multiSelect
+				? current.includes(option)
+					? current.filter((item) => item !== option)
+					: [...current, option]
+				: [option]
+		);
+
+	return (
+		<div
+			className="ide-agent-approval"
+			role="group"
+			aria-label={`Question: ${part.question} — ${questionLabel(part, turn.status)}`}
+		>
+			<p className="ide-agent-approval-title">{part.question}</p>
+			{open ? (
+				<>
+					<ul className="ide-agent-question-options">
+						{part.options.map((option) => (
+							<li key={option}>
+								<label>
+									<input
+										// A radio group per question, so two questions in one
+										// transcript never share a selection.
+										type={part.multiSelect ? 'checkbox' : 'radio'}
+										name={`question-${part.id}`}
+										checked={picked.includes(option)}
+										onChange={() => toggle(option)}
+									/>
+									<span>{option}</span>
+								</label>
+							</li>
+						))}
+					</ul>
+					<label className="ide-agent-question-other">
+						<span>{OTHER}</span>
+						<input
+							type="text"
+							className="ide-agent-question-text"
+							value={other}
+							placeholder="Write your own answer…"
+							onChange={(event) => setOther(event.target.value)}
+						/>
+					</label>
+					<div className="ide-agent-approval-actions">
+						<button
+							type="button"
+							className="ide-button"
+							// Nothing ticked and nothing typed is not an answer. Sending it
+							// would resolve the tool with an empty list, which it reports to
+							// the model as "the user did not answer" — true, but the user
+							// would have thought they had.
+							disabled={chosen.length === 0}
+							onClick={() => onAnswer(chosen)}
+						>
+							Answer
+						</button>
+					</div>
+				</>
+			) : (
+				<p className="ide-agent-approval-state">{questionLabel(part, turn.status)}</p>
+			)}
+		</div>
+	);
+}
+
+/**
  * One transcript part.
  *
  * Extracted from the map that used to render three kinds inline, because
- * eleven kinds inside JSX is where a rule about who can answer a question
+ * twelve kinds inside JSX is where a rule about who can answer a question
  * stops being reviewable — which is the mistake `transcript.ts` exists to
  * prevent.
  */
@@ -41,10 +145,12 @@ function PartView({
 	part,
 	turn,
 	onResolve,
+	onAnswer,
 }: {
 	readonly part: Part;
 	readonly turn: Turn;
 	readonly onResolve: (approved: boolean) => void;
+	readonly onAnswer: (chosen: readonly string[]) => void;
 }) {
 	if (part.kind === 'text') {
 		return <p className="ide-agent-text">{part.text}</p>;
@@ -117,6 +223,10 @@ function PartView({
 		);
 	}
 
+	if (part.kind === 'question') {
+		return <QuestionView part={part} turn={turn} onAnswer={onAnswer} />;
+	}
+
 	return (
 		<div
 			className="ide-agent-approval"
@@ -167,7 +277,7 @@ export function AgentChat({ provider, onAnnounce }: AgentChatProps) {
 	const [turns, setTurns] = useState<readonly Turn[]>([]);
 	const [prompt, setPrompt] = useState('');
 	const [running, setRunning] = useState(false);
-	const [awaitingApproval, setAwaitingApproval] = useState(false);
+	const [awaiting, setAwaiting] = useState(false);
 	const [transcriptOpen, setTranscriptOpen] = useState(false);
 	// Tracked separately from `running` because compaction cannot be stopped —
 	// pi's `compact()` takes no abort signal — so the Stop button must be gone
@@ -207,12 +317,15 @@ export function AgentChat({ provider, onAnnounce }: AgentChatProps) {
 					current.map((item) => (item.id === turn.id ? applyEvent(item, event) : item))
 				);
 				if (event.kind === 'approval') {
-					setAwaitingApproval(true);
+					setAwaiting(true);
 					onAnnounce?.(`Approval required: ${event.name}`);
+				} else if (event.kind === 'question') {
+					setAwaiting(true);
+					onAnnounce?.(`The agent asked: ${event.question}`);
 				} else if (event.kind === 'complete' || event.kind === 'cancelled') {
 					setRunning(false);
 					setCompacting(false);
-					setAwaitingApproval(false);
+					setAwaiting(false);
 					runRef.current = null;
 					onAnnounce?.(event.kind === 'complete' ? 'Agent finished' : 'Agent stopped');
 					// The composer is where the next action starts; a keyboard user
@@ -326,13 +439,26 @@ export function AgentChat({ provider, onAnnounce }: AgentChatProps) {
 	const resolve = useCallback(
 		(approved: boolean) => {
 			setTurns((current) => resolveApproval(current, approved));
-			setAwaitingApproval(false);
+			setAwaiting(false);
 			onAnnounce?.(approved ? 'Approved. Continuing.' : 'Skipped.');
 			runRef.current?.resolveApproval(approved);
 			// The button that was just clicked is about to be replaced by static
 			// text, and focus would fall to `body` — for the rest of the run, since
 			// nothing else reclaims it until the run ends. Send it where the run
 			// ending sends it too, so answering never strands a keyboard user.
+			promptRef.current?.focus();
+		},
+		[onAnnounce]
+	);
+
+	// The same shape as `resolve`, and the same reason for each line — the focus
+	// move included, since the Answer button is replaced by static text too.
+	const answer = useCallback(
+		(chosen: readonly string[]) => {
+			setTurns((current) => answerQuestion(current, chosen));
+			setAwaiting(false);
+			onAnnounce?.(`Answered: ${chosen.join(', ')}`);
+			runRef.current?.answerQuestion(chosen);
 			promptRef.current?.focus();
 		},
 		[onAnnounce]
@@ -363,6 +489,7 @@ export function AgentChat({ provider, onAnnounce }: AgentChatProps) {
 								part={part}
 								turn={turn}
 								onResolve={resolve}
+								onAnswer={answer}
 							/>
 						))}
 						{turn.status === 'cancelled' ? (
@@ -424,8 +551,10 @@ export function AgentChat({ provider, onAnnounce }: AgentChatProps) {
 						</button>
 					)}
 				</div>
-				{awaitingApproval ? (
-					<p className="ide-agent-status">Waiting for your approval above.</p>
+				{awaiting ? (
+					// Covers both, because from the composer they are the same thing:
+					// the run is paused on something above that only you can settle.
+					<p className="ide-agent-status">Waiting for your answer above.</p>
 				) : null}
 			</form>
 

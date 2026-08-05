@@ -23,6 +23,7 @@ import type { AgentHarnessTool } from '@earendil-works/pi-agent-core';
 // Explicit extension, like `events.ts` — this module is reachable from a check
 // script, which node resolves without Vite's help.
 import { destructive } from './gate.ts';
+import { ASK_TOOL } from './ask.ts';
 
 /** Model-visible tool names travel in the request; keep them boring. */
 const NAME = /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/;
@@ -46,14 +47,17 @@ const NAME = /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/;
 const PLACEHOLDER = /\{([a-zA-Z][a-zA-Z0-9_-]{0,63})\}/g;
 
 /**
- * pi's four built-ins, which a manifest may not shadow.
+ * The built-ins, which a manifest may not shadow.
  *
  * `AgentHarness` throws on duplicate tool names, and a manifest that redefined
- * `bash` would take the harness down at `setTools` rather than at parse. Hard-
- * coded because the ticket's own rule is that the built-in exception **does not
- * grow**: it is four tools, already written, and nothing new joins them.
+ * `bash` would take the harness down at `setTools` rather than at parse.
+ *
+ * Ticket 13's rule was that the built-in exception **does not grow** — meaning
+ * no new *executing* tool joins pi's four, which is still true. `ask_user` is
+ * the one addition and it is the opposite kind of thing: it runs nothing, it
+ * asks the user something. Imported rather than re-typed so the two cannot drift.
  */
-const RESERVED = new Set(['read', 'write', 'edit', 'bash']);
+const RESERVED = new Set(['read', 'write', 'edit', 'bash', ASK_TOOL]);
 
 /**
  * One parameter, in the manifest's long form.

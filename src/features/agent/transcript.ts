@@ -5,6 +5,8 @@
 // wrong when it lived inside the component.
 
 import type { AgentEvent } from '../../agent';
+// Explicit extension: `transcript.check.ts` runs this under plain node.
+import { ASK_TOOL } from '../../agent/ask.ts';
 
 export type ApprovalState = 'pending' | 'approved' | 'skipped';
 
@@ -38,7 +40,28 @@ export type Part =
 			readonly label: string;
 			readonly detail: string;
 			readonly state: ApprovalState;
-	  };
+	  }
+	| QuestionPart;
+
+/**
+ * A question the agent asked, from asking to answered.
+ *
+ * `answer` is stored rather than derived because it is the only record of what
+ * the user said: the tool result carries it to the *model*, but the transcript
+ * is what the user reads back, and "Answered" without the answer is a worse
+ * record than none.
+ */
+export interface QuestionPart {
+	readonly kind: 'question';
+	readonly id: string;
+	readonly question: string;
+	readonly options: readonly string[];
+	readonly multiSelect: boolean;
+	/** Two states, not `ApprovalState`'s three: a question has no decline. The
+	 * nearest thing is a run that ended without one, and that is `Turn.status`. */
+	readonly state: 'pending' | 'answered';
+	readonly answer?: readonly string[];
+}
 
 export interface Usage {
 	readonly inputTokens: number;
@@ -70,7 +93,11 @@ export interface Turn {
  * `false` is that it is one and its run has ended.
  */
 export function canAnswer(part: Part, turn: Turn): boolean {
-	return part.kind === 'approval' && part.state === 'pending' && turn.status === 'running';
+	return (
+		(part.kind === 'approval' || part.kind === 'question') &&
+		part.state === 'pending' &&
+		turn.status === 'running'
+	);
 }
 
 /** Replace the tool part with this id, or leave the parts untouched. */
@@ -118,6 +145,22 @@ export function applyEvent(turn: Turn, event: AgentEvent): Turn {
 			};
 		}
 		case 'tool_start':
+			/*
+			 * The one tool that renders as something other than a tool call.
+			 *
+			 * Found by using it: the transcript showed the question three times —
+			 * the call row with its arguments as JSON, the question card, and then
+			 * the call row again with the answer as its output. The card is a
+			 * strictly better rendering of all three, so the row is dropped rather
+			 * than styled down.
+			 *
+			 * Dropping only `tool_start` is enough. `tool_update` and `tool_end` go
+			 * through `patchTool`, which leaves the parts untouched when it finds no
+			 * part with that id.
+			 */
+			if (event.name === ASK_TOOL) {
+				return turn;
+			}
 			return {
 				...turn,
 				parts: [
@@ -153,6 +196,21 @@ export function applyEvent(turn: Turn, event: AgentEvent): Turn {
 						detail: event.reason
 							? `${event.reason} — ${JSON.stringify(event.input)}`
 							: JSON.stringify(event.input),
+						state: 'pending',
+					},
+				],
+			};
+		case 'question':
+			return {
+				...turn,
+				parts: [
+					...turn.parts,
+					{
+						kind: 'question',
+						id: event.id,
+						question: event.question,
+						options: event.options,
+						multiSelect: event.multiSelect,
 						state: 'pending',
 					},
 				],
@@ -203,6 +261,14 @@ export function approvalLabel(state: ApprovalState, status: Turn['status']): str
 	return status === 'running' ? 'Waiting for you' : 'Not answered';
 }
 
+/** How a question reads. Derived for the same reason `approvalLabel` is. */
+export function questionLabel(part: QuestionPart, status: Turn['status']): string {
+	if (part.state === 'answered') {
+		return part.answer?.join(', ') ?? 'Answered';
+	}
+	return status === 'running' ? 'Waiting for you' : 'Not answered';
+}
+
 /** How a tool call reads. Derived for the same reason `approvalLabel` is. */
 export function toolLabel(part: ToolPart, status: Turn['status']): string {
 	if (part.state === 'failed') {
@@ -247,6 +313,37 @@ export function resolveApproval(turns: readonly Turn[], approved: boolean): read
 	return changed ? next : turns;
 }
 
+/**
+ * Answer the question the running turn is waiting on.
+ *
+ * The same shape as `resolveApproval`, and scoped by the same `canAnswer`, so
+ * the two cannot disagree about when a question stops being askable. Kept as a
+ * separate function rather than a parameterised one because the two carry
+ * different answers — a boolean and a list of strings — and the merge would be
+ * a union that every caller then has to narrow.
+ */
+export function answerQuestion(
+	turns: readonly Turn[],
+	answer: readonly string[]
+): readonly Turn[] {
+	let changed = false;
+	const next = turns.map((turn) => {
+		if (!turn.parts.some((part) => part.kind === 'question' && canAnswer(part, turn))) {
+			return turn;
+		}
+		changed = true;
+		return {
+			...turn,
+			parts: turn.parts.map((part) =>
+				part.kind === 'question' && canAnswer(part, turn)
+					? { ...part, state: 'answered' as const, answer }
+					: part
+			),
+		};
+	});
+	return changed ? next : turns;
+}
+
 /** The transcript as plain text, for the accessible-transcript dialog. */
 export function asPlainText(turns: readonly Turn[]): string {
 	return turns
@@ -271,6 +368,11 @@ export function asPlainText(turns: readonly Turn[]): string {
 							part.state,
 							turn.status
 						).toLowerCase()})\n`;
+					case 'question':
+						return `\n[question] ${part.question} (${part.options.join(' / ')}) — ${questionLabel(
+							part,
+							turn.status
+						).toLowerCase()}\n`;
 				}
 			});
 			const usage = turn.usage

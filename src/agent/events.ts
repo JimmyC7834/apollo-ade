@@ -1,4 +1,4 @@
-// pi's event stream, mapped down to the eleven kinds the UI understands.
+// pi's event stream, mapped down to the twelve kinds the UI understands.
 //
 // Kept as a pure function so it can be checked without a model — `events.check.ts`
 // does exactly that. It is also the only place that knows pi's event vocabulary,
