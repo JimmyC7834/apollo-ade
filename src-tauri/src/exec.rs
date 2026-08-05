@@ -344,6 +344,26 @@ pub async fn agent_exec(
     if !request.inherit_env {
         command.env_clear();
     }
+
+    /*
+     * The API keys do not travel to the child.
+     *
+     * Ticket 06 put the credential in Rust so it never enters JavaScript, and
+     * that is still true — but it lives in *this process's environment*, and an
+     * inherited environment hands it to everything we start. `echo
+     * $DEEPSEEK_API_KEY` printed it straight into the transcript.
+     *
+     * Stripped for the shell path as much as for user tools: `bash` was the
+     * older hole, and user tools only made it sharper by being ungated on the
+     * argument that profile membership is the trust act. A command that
+     * genuinely needs a key can still be given one through `env` below, which
+     * is applied after — explicitly, by the person who wrote the manifest,
+     * rather than by everything inheriting everything.
+     */
+    for name in crate::provider::CREDENTIAL_VARS {
+        command.env_remove(name);
+    }
+
     command.envs(&request.env);
     command.stdin(Stdio::null());
     command.stdout(Stdio::piped());

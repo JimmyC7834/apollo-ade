@@ -101,6 +101,45 @@ const profileNamed = (name: string): Profile => {
 	assert.deepEqual(resolveArgv(only(), { on: false }), ['go', '--strict=false']);
 }
 
+// Defaults, so a manifest that says nothing about how it runs still runs.
+{
+	installUserTools([GREP]);
+	assert.equal(only().timeout, 120);
+	assert.equal(only().cwd, undefined);
+	assert.equal(only().env, undefined);
+
+	installUserTools([{ ...GREP, timeout: 5, cwd: 'packages/app', env: { CI: '1' } }]);
+	assert.equal(only().timeout, 5);
+	assert.equal(only().cwd, 'packages/app');
+	assert.deepEqual(only().env, { CI: '1' });
+}
+
+// Braces that are not placeholders. Found by a real manifest rather than by
+// thinking about it: argv is full of them, and the first version rejected an
+// ordinary `node -e` script for "using {clearInterval(t);} without declaring
+// it". Every line here would have failed.
+{
+	const brace = (argv: string[]) => ({ name: 'brace', description: 'braces', argv });
+	const survives = (argv: string[], expected: string[]) => {
+		const problems = installUserTools([brace(argv)]);
+		assert.deepEqual(problems, [], `rejected ${JSON.stringify(argv)}: ${problems.join(' | ')}`);
+		assert.deepEqual(resolveArgv(only(), {}), expected);
+	};
+
+	survives(['awk', '{print $1}'], ['awk', '{print $1}']);
+	survives(['find', '.', '-exec', 'rm', '{}', ';'], ['find', '.', '-exec', 'rm', '{}', ';']);
+	survives(['jq', '{a: .b}'], ['jq', '{a: .b}']);
+	survives(['git', 'log', '--format={"h":"%h"}'], ['git', 'log', '--format={"h":"%h"}']);
+
+	// A mistyped parameter is still an identifier, so it is still reported —
+	// which is the half of the old rule worth keeping.
+	const problems = installUserTools([
+		{ ...GREP, argv: ['rg', '{pattenr}', '{path}'] },
+	]);
+	assert.equal(problems.length, 1);
+	assert.ok(problems[0].includes('{pattenr}'), problems[0]);
+}
+
 // The floor reaches user tools through the resolved argv, which is decision 4:
 // the gate examines the command, not the tool's identity, and being trusted
 // enough to be in a profile does not lift it.
@@ -134,6 +173,10 @@ const profileNamed = (name: string): Profile => {
 			...GREP,
 			parameters: { pattern: 'p', path: { description: 'where', type: 'number', choices: ['a'] } },
 		},
+		{ ...GREP, timeout: 0 },
+		{ ...GREP, timeout: 'soon' },
+		{ ...GREP, cwd: 42 },
+		{ ...GREP, env: { KEY: 7 } },
 		{ ...GREP, argv: ['rg', '{pattern}'] },
 		'not an object',
 	];

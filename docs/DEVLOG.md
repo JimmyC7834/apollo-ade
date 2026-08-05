@@ -2766,3 +2766,77 @@ optional number when the prompt implied one, and left it out when it did not.
 **What is still thin, named rather than argued away.** Output does not stream —
 a user tool returns when it exits, where `bash` shows its work. Right for a
 linter, wrong for anything long.
+
+## Slice 25 — Closing the gaps slice 24 left, and the one it did not know about
+
+A cleanup pass over user tools, which turned up one thing worth more than the
+rest of it.
+
+**The API keys were travelling to every child process.** Ticket 06 put the
+credential in Rust so it never enters JavaScript, and that is still true — but
+it lives in *this process's environment*, and an inherited environment hands it
+to everything we start. A manifest of `["node", "-e",
+"console.log(process.env.DEEPSEEK_API_KEY)"]` printed the key into the
+transcript. So did `echo $DEEPSEEK_API_KEY` through the `bash` tool, and had
+since `bash` shipped.
+
+Not a regression, then, and the claim slice 23 made was never wrong — it was
+just narrower than it read. Rust holds the key from *the renderer*, not from the
+processes it starts. User tools are what made the difference matter: their whole
+justification for being ungated is that profile membership is the trust act, and
+"can run a linter" is a much smaller grant than "can read your credentials".
+
+`agent_exec` now strips the three key variables from every child, on the shell
+path as much as the argv one. Three names, not `env_clear` — `PATH` and the rest
+still travel, which the test confirmed at 4,433 characters while all three keys
+came back `<absent>`. The list lives in `provider.rs` next to the arms it
+mirrors, so a provider added without being added there fails in the direction
+that leaks nothing new. A tool that genuinely needs a key gets one through the
+manifest's own `env`, written by the person who wrote the tool.
+
+**A parse bug found by writing a manifest rather than by thinking about one.**
+The placeholder pattern was `\{([^{}]*)\}` — any braces at all. The test tool
+was a `node -e` script with a block in it, and it was rejected for "using
+`{clearInterval(t);}` in argv but does not declare it in parameters". The same
+rule would have made `awk '{print $1}'`, `find . -exec rm {} \;` and
+`jq '{a: .b}'` unusable, which is a large fraction of why anyone would write a
+manifest at all.
+
+A placeholder is now braces around an **identifier**. Real braces in shell and
+script syntax almost always hold a space, a symbol, or nothing, so they pass
+through untouched; a mistyped `{pattenr}` is still an identifier and is still
+reported, which is the half of the old rule worth keeping. The residue is
+`awk '{x}'`, which is rare and fails loudly rather than quietly.
+
+This is the second time in two slices that writing a realistic input found
+something reading the code did not. Worth remembering: the checks were green
+before and after, because they tested the rule rather than the world.
+
+**`/reload`.** The files were read once, at workspace restore, so editing a
+manifest meant restarting the app. For a feature whose entire interface is
+hand-authoring a file — there is deliberately no editor — restarting after every
+typo is the cost of not building one, and it is not a cost worth paying for four
+lines. Both install paths already handled being run twice, so it is genuinely
+four lines. Tested by editing the file with the app running: a new tool and a
+new profile appeared, the switch worked, and the model then called the tool that
+had not existed when the harness was built, which is `setTools` reaching a live
+harness.
+
+**Three fields and streaming.** `timeout` (seconds, default 120), `cwd`
+(root-relative, confined by Rust like everything else) and `env`. Output now
+goes through pi's `onUpdate`, throttled to four times a second — Rust sends a
+message per line, and pi's own bash tool throttles on top of `env.exec` for
+exactly that reason. Measured: four updates ~700ms apart, and the run killed at
+3.1 seconds under a 3-second timeout.
+
+Running a tool into its own timeout also exposed that failures reported
+`[object Object]`, because Rust rejects with `{ code, message }` rather than an
+`Error`. It now says "the command exceeded its timeout" and carries the partial
+output with it — a tool killed at its timeout printed something first, and that
+is usually the whole diagnosis.
+
+**What is left, and why it is left.** The destructive refusal cannot be
+overridden: a tool that legitimately clears a build directory is permanently
+unusable, because refusing is the only thing a tool can do without a way to
+reach the gate's approval path. That is real plumbing rather than a tweak, and
+it is the only thing on this ticket that is.

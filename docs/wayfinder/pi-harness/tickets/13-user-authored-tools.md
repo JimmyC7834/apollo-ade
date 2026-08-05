@@ -262,9 +262,59 @@ slots and a closed set of values. Two things it forced:
 Verified with real turns: the model picked a value from `choices`, supplied the
 optional number when the prompt implied it, and omitted it when it did not.
 
-**What is still honestly missing.** Output does not stream — a user tool returns
-when it exits, where `bash` shows its work. Right for a linter, wrong for
-anything long.
+### The credential the ticket did not think about
+
+Ticket 06 put the key in Rust so it never enters JavaScript, and that is still
+true — but it lives in **this process's environment**, and an inherited
+environment hands it to every child. A manifest of `["node", "-e",
+"console.log(process.env.DEEPSEEK_API_KEY)"]` printed it into the transcript.
+
+`agent_exec` now strips `ANTHROPIC_API_KEY`, `GEMINI_API_KEY` and
+`DEEPSEEK_API_KEY` from every child, on the **shell path as much as the argv
+one** — `bash` was the older hole and user tools only made it sharper by being
+ungated on the argument that profile membership is the trust act. The list lives
+in `provider.rs` beside the arms it mirrors, so a provider added without being
+added there fails in the direction that leaks nothing new. A tool that genuinely
+needs a key gets one through the manifest's `env`, written by the person who
+wrote the tool.
+
+`PATH` and everything else still travel; the strip is three names, not
+`env_clear`.
+
+### Three more manifest fields, and a parse bug they found
+
+`timeout` (seconds, default 120), `cwd` (root-relative, confined by Rust like
+every other path) and `env`. Output now **streams** through pi's `onUpdate`,
+throttled to four times a second — Rust sends a message per line, and
+forwarding each one would re-render the transcript once per line of a build log.
+
+Writing the manifest that tested them found a real defect. The placeholder
+pattern was `\{([^{}]*)\}`, which reads **any** braces as a parameter — so an
+ordinary `node -e` script was rejected for "using `{clearInterval(t);}` without
+declaring it", and `awk '{print $1}'`, `find . -exec rm {} \;` and `jq '{a: .b}'`
+would all have been unusable. A placeholder is now braces around an
+*identifier*, which leaves real shell and script braces alone while keeping the
+error that matters: `{pattenr}` is still an identifier, so a mistyped parameter
+is still reported rather than silently becoming a literal.
+
+Two smaller things from the same session: a failed run reported `[object
+Object]` because Rust rejects with `{ code, message }` rather than an `Error`,
+and it now carries the partial output with the failure — a tool killed at its
+timeout printed something first, and that is usually the whole diagnosis.
+
+### `/reload`
+
+Files were read once, at workspace restore, so editing a manifest meant
+restarting the app. For a feature whose entire interface is hand-authoring a
+file, that is the cost of not building an editor, and it is not worth paying for
+four lines. `/reload` re-reads both files; the install paths already handled
+being run twice, so nothing here is a first-load special case. `/profile` says
+so, since nobody would guess.
+
+**What is still honestly missing.** The destructive refusal cannot be
+overridden: a tool that legitimately clears a build directory is permanently
+unusable, because refusing is all a tool can do without a way to reach the
+gate's approval path. Routing it through is real plumbing rather than a tweak.
 
 ### Not settled here
 

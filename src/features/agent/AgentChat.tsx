@@ -8,7 +8,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AgentEvent, AgentProvider, AgentRun } from '../../agent';
 import { pressure } from '../../agent/compaction';
 import { activateProfile, activeProfile, listProfiles } from '../../agent/profile';
-import { profileSources } from '../../agent/profileFiles';
+import { loadProfileFiles, profileSources } from '../../agent/profileFiles';
 import { userTools } from '../../agent/userTools';
 import { Icon, Overlay } from '../../ui';
 import {
@@ -245,6 +245,32 @@ export function AgentChat({ provider, onAnnounce }: AgentChatProps) {
 		}
 
 		/*
+		 * `/reload`, which is what makes hand-authored files usable.
+		 *
+		 * Without it the only way to see an edited profile or tool manifest is to
+		 * restart the app — and since there is deliberately no editor, editing the
+		 * file *is* the interface. Restarting after every typo is the cost of not
+		 * building one, and it is not a cost worth paying for four lines.
+		 *
+		 * The install path already handles being run twice: profiles re-resolve
+		 * the active one by name, and the tool store replaces its set and tells
+		 * the harness. Nothing here is a first-load special case.
+		 */
+		if (text === '/reload') {
+			const emit = beginTurn(text);
+			void loadProfileFiles().then((loaded) => {
+				const answer =
+					loaded.problems.length > 0
+						? loaded.problems.join('\n')
+						: `Reloaded. ${listProfiles().length} profiles, ${userTools().length} of your tools.`;
+				emit({ kind: 'text', text: answer });
+				emit({ kind: 'complete' });
+				onAnnounce?.(answer);
+			});
+			return;
+		}
+
+		/*
 		 * `/profile`, which is the whole profile UI for now. A switch is a local
 		 * state change rather than a run, so it answers into a turn of its own and
 		 * closes it immediately.
@@ -282,7 +308,8 @@ export function AgentChat({ provider, onAnnounce }: AgentChatProps) {
 						// Where to write one. There is no profile editor, so a user
 						// who is not told this has no way to find out.
 						`\nDefined in ${profileSources().projectFile} (this project)` +
-							`${profileSources().globalPath ? ` and ${profileSources().globalPath} (global)` : ''}.`,
+							`${profileSources().globalPath ? ` and ${profileSources().globalPath} (global)` : ''}.` +
+							` Edit either and run /reload.`,
 					].join('\n');
 			emit({ kind: 'text', text: answer });
 			emit({ kind: 'complete' });

@@ -30,6 +30,15 @@ struct Credential {
     bearer: bool,
 }
 
+/// Every environment variable that holds a key, for `exec` to strip.
+///
+/// Lives here rather than in `exec.rs` because this is the module that decides
+/// what a credential *is*; a provider added below without being added here
+/// would leak silently, which is the wrong direction for that mistake to fail.
+/// The list is the `env_var` field of every arm of `credential_for`.
+pub const CREDENTIAL_VARS: [&str; 3] =
+    ["ANTHROPIC_API_KEY", "GEMINI_API_KEY", "DEEPSEEK_API_KEY"];
+
 fn credential_for(provider: &str) -> Option<Credential> {
     match provider {
         "anthropic" => Some(Credential {

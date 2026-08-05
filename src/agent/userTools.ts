@@ -24,13 +24,26 @@ import type { AgentHarnessTool } from '@earendil-works/pi-agent-core';
 // script, which node resolves without Vite's help.
 import { destructive } from './gate.ts';
 
-/** How long a user tool may run before Rust kills it. Seconds. */
-const TIMEOUT = 120;
-
 /** Model-visible tool names travel in the request; keep them boring. */
 const NAME = /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/;
 
-const PLACEHOLDER = /\{([^{}]*)\}/g;
+/**
+ * A placeholder is braces around an **identifier**, and nothing else is one.
+ *
+ * The obvious `\{([^{}]*)\}` was wrong in a way only a real manifest found:
+ * argv routinely contains braces that are not placeholders. `awk '{print $1}'`,
+ * `find . -exec rm {} \;`, `jq '{a: .b}'`, and any `node -e` script with a block
+ * in it — the test manifest that caught this was rejected for "using
+ * `{clearInterval(t);}` without declaring it".
+ *
+ * Requiring an identifier leaves all of those alone, because real braces in
+ * shell and script syntax almost always hold a space, a symbol, or nothing.
+ * What it keeps is the error that matters: `{pattenr}` is still an identifier,
+ * so a mistyped parameter is still reported rather than silently becoming a
+ * literal. The residue is `awk '{x}'` — a lone identifier in braces — which is
+ * rare and fails loudly rather than quietly.
+ */
+const PLACEHOLDER = /\{([a-zA-Z][a-zA-Z0-9_-]{0,63})\}/g;
 
 /**
  * pi's four built-ins, which a manifest may not shadow.
@@ -63,7 +76,22 @@ export interface UserTool {
 	readonly description: string;
 	readonly parameters: Readonly<Record<string, UserToolParameter>>;
 	readonly argv: readonly string[];
+	/** Seconds before Rust kills it. */
+	readonly timeout: number;
+	/** Root-relative, and confined by Rust like every other path. */
+	readonly cwd?: string;
+	/**
+	 * Variables added to the child's environment.
+	 *
+	 * The escape hatch for the credential stripping in `agent_exec`: a tool that
+	 * genuinely needs a key is given one by the person who wrote the manifest,
+	 * rather than every child inheriting every secret the app holds.
+	 */
+	readonly env?: Readonly<Record<string, string>>;
 }
+
+/** Two minutes, matching nothing in particular — long enough for a linter. */
+const DEFAULT_TIMEOUT = 120;
 
 const TYPES = ['string', 'number', 'boolean'] as const;
 
@@ -198,8 +226,9 @@ function parseTool(raw: unknown, problems: string[]): UserTool | undefined {
 
 	// The program is fixed by the manifest and can never be chosen by the model.
 	// That is what bounds a user tool to the one thing its author named. Any
-	// brace at all, so a malformed placeholder is caught here rather than
-	// spawning a program with a literal `{` in its name.
+	// brace at all, rather than only a placeholder: a program name has no honest
+	// reason to contain one, so the stricter rule costs nothing and catches a
+	// malformed placeholder here instead of at spawn.
 	if (argv[0].includes('{')) {
 		return said('cannot take a parameter as its program name');
 	}
@@ -223,7 +252,34 @@ function parseTool(raw: unknown, problems: string[]): UserTool | undefined {
 		return said(`declares ${unused.join(', ')} but never uses them in argv`);
 	}
 
-	return { name, description: raw.description, parameters, argv };
+	const timeout = raw.timeout ?? DEFAULT_TIMEOUT;
+	if (typeof timeout !== 'number' || !Number.isFinite(timeout) || timeout <= 0) {
+		return said(`has timeout ${JSON.stringify(raw.timeout)}; expected seconds above zero`);
+	}
+
+	let cwd: string | undefined;
+	if (raw.cwd !== undefined) {
+		if (typeof raw.cwd !== 'string' || !raw.cwd.trim()) {
+			return said(`has cwd ${JSON.stringify(raw.cwd)}; expected a path inside the workspace`);
+		}
+		// Not validated further here. Rust's resolver refuses anything above the
+		// root, and duplicating that rule in the renderer would create a second
+		// answer to the same question — the one that is always the wrong one.
+		cwd = raw.cwd;
+	}
+
+	let env: Record<string, string> | undefined;
+	if (raw.env !== undefined) {
+		if (
+			!isRecord(raw.env) ||
+			!Object.values(raw.env).every((value) => typeof value === 'string')
+		) {
+			return said('needs "env" as { NAME: "value" }, with string values');
+		}
+		env = raw.env as Record<string, string>;
+	}
+
+	return { name, description: raw.description, parameters, argv, timeout, cwd, env };
 }
 
 /**
@@ -306,7 +362,7 @@ function createUserTool(tool: UserTool): AgentHarnessTool<{ env: unknown }> {
 		label: tool.name,
 		description: tool.description,
 		parameters,
-		async execute(_id, params, signal) {
+		async execute(_id, params, signal, onUpdate) {
 			const argv = resolveArgv(tool, params as Record<string, unknown>);
 
 			/*
@@ -337,22 +393,62 @@ function createUserTool(tool: UserTool): AgentHarnessTool<{ env: unknown }> {
 			const stop = () => void invoke('agent_exec_cancel', { id }).catch(() => {});
 			signal?.addEventListener('abort', stop, { once: true });
 
+			/*
+			 * Live output, throttled.
+			 *
+			 * Rust sends a message per line and pi's own bash tool throttles on
+			 * top of `env.exec` for exactly that reason. Forwarding every line
+			 * straight to `onUpdate` would re-render the transcript once per line
+			 * of a build log. A quarter second is slow enough to be cheap and
+			 * fast enough to read as live.
+			 */
+			let live = '';
+			let flushed = 0;
+			const flush = () => {
+				flushed = Date.now();
+				onUpdate?.({ content: [{ type: 'text', text: live }], details: undefined });
+			};
+
+			const channel = new Channel<{ chunk?: string }>();
+			channel.onmessage = (event) => {
+				live += event.chunk ?? '';
+				if (Date.now() - flushed > 250) {
+					flush();
+				}
+			};
+
 			try {
 				const outcome = await invoke<ExecOutcome>('agent_exec', {
 					id,
 					// `argv` is what makes Rust spawn directly; `command` is unread.
-					request: { command: '', argv, cwd: null, env: {}, inheritEnv: true, timeout: TIMEOUT },
-					// Required by the command, and deliberately ignored: a user tool
-					// returns its output at the end rather than streaming it. Live
-					// output is `bash`'s job, where a long-running command is the
-					// point; a linter that prints nothing until it finishes has
-					// nothing to show.
-					onEvent: new Channel<unknown>(),
+					request: {
+						command: '',
+						argv,
+						cwd: tool.cwd ?? null,
+						env: tool.env ?? {},
+						inheritEnv: true,
+						timeout: tool.timeout,
+					},
+					onEvent: channel,
 				});
 				return {
 					content: [{ type: 'text', text: report(argv, outcome) }],
 					details: outcome,
 				};
+			} catch (cause) {
+				/*
+				 * Rust rejects with `{ code, message }`, not an `Error`, so letting
+				 * it propagate raw put the string "[object Object]" in front of the
+				 * model where "the command exceeded its timeout" belonged. Found by
+				 * running a tool into its own timeout rather than by reading.
+				 *
+				 * The partial output goes with it: a tool killed at 120 seconds
+				 * printed something before it died, and that is usually the whole
+				 * diagnosis.
+				 */
+				const failure = cause as { code?: string; message?: string };
+				const why = failure?.message ?? String(cause);
+				throw new Error(live.trim() ? `${why}\n\n${live.trim()}` : why);
 			} finally {
 				signal?.removeEventListener('abort', stop);
 			}
