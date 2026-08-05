@@ -17,11 +17,14 @@ session runs under and can switch to mid-run), a **permission gate** on tool cal
 The map is done when every decision needed to *build* that is made — not when it is
 built.
 
-That line held: all seventeen charted tickets closed. What it did not anticipate is that
-*building* would raise a decision charting could not have — see
-[ticket 18](tickets/18-tool-reaches-the-gate.md) under "Not yet specified", which is
-open. A closed map is not a finished one; it is one where nothing is blocked on a
-question nobody has asked yet.
+That line held: all seventeen charted tickets closed. Two things it did not anticipate,
+both open under "Not yet specified". [Ticket 18](tickets/18-tool-reaches-the-gate.md) is
+a decision charting could not have raised, because it fell out of *building*.
+[Ticket 19](tickets/19-model-entries.md) is the opposite failure and the more instructive
+one: the map stated the obligation plainly in its own Notes and no ticket ever owned it,
+so it survived seventeen closures by belonging to none of them. A closed map is not a
+finished one — and "every decision is made" is only true of the decisions something was
+accountable for making.
 
 ## Notes
 
@@ -147,6 +150,11 @@ question nobody has asked yet.
   [ticket 07](tickets/07-pi-dependency.md) guards against: pinning protects us from
   upstream changing, not from the world moving underneath a frozen catalog. Whatever ships
   needs a live model list or an honest failure when a catalogued model is gone.
+  **Now assigned** — [ticket 19](tickets/19-model-entries.md). This obligation sat
+  unowned through seventeen closed tickets because it reads as one problem and is three:
+  *existence* (probably already answered, since we advertise no list), *capability*
+  (`reasoning` is guessed from the model id, and a wrong guess silently clamps thinking
+  to `off`), and *cost* (zeroed, and honestly so while nothing displays it).
 
 - [What pi costs in the bundle](tickets/08-bundle-cost.md) — acceptable: one provider
   adds **8.8% gzip** over a build Monaco already dominates. The ~21k-line `pi-ai` was
@@ -270,9 +278,16 @@ question nobody has asked yet.
 
 ## Not yet specified
 
+- **What the app knows about a model** — [ticket 19](tickets/19-model-entries.md),
+  **open**. The obligation the ⚠ note above stated and no ticket ever owned. `reasoning`
+  is guessed from the model id (`/reason|think/i`), and the guess is not cosmetic:
+  `clampThinkingLevel` reads it, so a mislabelled model silently answers with thinking
+  `off` and nothing errors. Existence may already be answered — we advertise no model
+  list, so a dead id fails as the provider's own error — and cost is deliberately zeroed
+  while nothing displays it. Three questions, one of them actually wrong today.
 - **How a tool asks a question** — [ticket 18](tickets/18-tool-reaches-the-gate.md),
-  **open**, and the only open ticket on this map. It did not come from charting; it fell
-  out of *building* ticket 13, which is why it arrives after the other seventeen closed.
+  **open**. It did not come from charting; it fell out of *building* ticket 13, which is
+  why it arrives after the other seventeen closed.
   A user tool that hits the deny list refuses rather than asks, because `createGate` is
   built per turn and reached through the `tool_call` hook while a tool's `execute()` has
   no handle on either. Safe and honest, and it makes a legitimate tool — `["rm", "-rf",

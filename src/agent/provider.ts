@@ -180,7 +180,11 @@ function modelFor(choice: ProfileModel): Model<Api> {
 		 *
 		 * The honest answer is a model catalog, and pi ships one; the map
 		 * recorded that pi's is already stale enough for a new key to be unable
-		 * to call what it advertises, so adopting it is its own piece of work.
+		 * to call what it advertises, so adopting it is its own piece of work —
+		 * now ticket 19 (docs/wayfinder/pi-harness/tickets/19-model-entries.md).
+		 * Worth knowing while it is open: `clampThinkingLevel` reads this flag,
+		 * so a model mislabelled here answers with thinking `off` and nothing
+		 * errors.
 		 * Until then this is wrong in a visible way rather than absent: the
 		 * adapter reads `reasoning_content` off the stream regardless, so a
 		 * mislabelled model still *shows* its reasoning — what this flag
