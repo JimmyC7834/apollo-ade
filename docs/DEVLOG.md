@@ -3029,3 +3029,74 @@ list is a foot-gun guard and explicitly not a security boundary; this slice does
 not change that, it just stops the guard being worse than useless in the one
 case it can see. What holds regardless is Rust refusing writes outside the
 workspace root, and the git checkpoint taken every turn.
+
+## Slice 29 — What the app knows about a model
+
+Ticket 19, closed. The last thing on the map that nobody owned.
+
+**The ticket asked the wrong shape of question.** It framed entries as
+hand-written versus a live list, and both were wrong. pi's bundled catalog data
+— `pi-ai/dist/providers/data/<provider>.json` — already carries `reasoning` and
+`thinkingLevelMap` per model, so the entries are *copied at author time* from a
+real source, the same discipline `CONTEXT_WINDOWS` already had for windows.
+`fetchModels` stays unused: a network call at startup to answer a question that
+does not change between pinned releases.
+
+**Which file is part of the rule, and it nearly went wrong.** The first scan
+matched `gemini-2.5-pro` out of `github-copilot.json` at 128,000 — `google.json`
+says 1,048,576. A proxy's limits are not the provider's, the same id appears in
+a dozen catalogs, and "copy from pi's catalog" is underspecified until you name
+the file. Caught by noticing the number disagreed with the table already in the
+repo, which is the only reason it was caught at all.
+
+**`thinkingLevelMap` is the half the ticket did not know to ask for**, and the
+one that was actually wrong in more places. Without a map,
+`getSupportedThinkingLevels` allows everything from `off` to `high` and passes
+the level straight through as the provider's own effort string. So we were
+offering `medium` on `gemini-3-pro-preview` — which maps `medium: null` and
+`off: null`, meaning no medium and *cannot stop thinking* — and clamping
+`claude-opus-5` down from a `max` it supports. Measured after: Gemini supports
+exactly `["low", "high"]`, Opus 5 reaches `max`.
+
+**Unknown answers `undefined`; the caller defaults it to `false`.** That is the
+safe direction rather than the tidy one, and the reason is in pi's adapters
+rather than in taste: every thinking branch is gated on `model.reasoning`, so
+`false` sends no thinking parameters at all and the provider's own default
+applies, where `true` on a model that does not reason sends
+`thinking: { type: "disabled" }` or a `reasoning_effort` string to an API that
+may reject it. Guessing low fails quietly. Guessing high can fail hard.
+
+**Silence was the actual defect, not the guess.** `thinkingUnavailable` makes
+`/profile` say when a thinking level will not happen, and
+`VITE_AGENT_REASONING` is the escape hatch for an unlisted model, mirroring
+`VITE_AGENT_CONTEXT_WINDOW`. It lives in `models.ts` rather than the JSX for the
+reason `transcript.ts` exists — and that paid immediately: the first version
+warned on *unknown* models only and said nothing about a **known** non-reasoning
+one, which is a profile the user wrote asking for thinking it will never get.
+Found by reading the live output, then asserted.
+
+**Existence needed recording, not fixing.** `requireProvider`
+(`pi-ai/dist/models.js:235`) resolves by `model.provider` and never consults the
+provider's `models` list, so registering every provider with `models: []`
+advertises no catalog. A dead id fails as the provider's own HTTP error. That is
+the honest failure the map's ⚠ asked for, and it is a *different* failure from
+the one the warning feared. **Cost stays absent** while nothing displays a spend
+figure.
+
+**Two things this surfaced.** The built-in profiles — `auto`, `careful`, `plan`
+— all carry a thinking level and all default to a non-reasoning model, so all
+three now warn on the shipped defaults. Uncomfortable and correct.
+
+And, not caused by this work: a live turn on `deepseek-reasoner` at `high`
+produced no thinking block, though the clamp passes `high` through unchanged.
+The old heuristic produced the identical flag for that id, so nothing here
+altered its behaviour — which puts the cause downstream in the adapter or
+DeepSeek's response. Recorded rather than chased, because chasing it from inside
+this ticket would have meant reporting a fix for something that is not this
+ticket's defect.
+
+**A note on instrument, again.** Verifying the clamp from inside the WebView
+failed twice — Vite's optimised deps do not re-export `partial-json`'s `parse`
+through a hand-written import path. It ran first try under node, because the
+env readers now use `import.meta.env?.` so the module loads outside Vite. That
+was added to make the check possible and paid for itself twice over.

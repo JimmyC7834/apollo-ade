@@ -9,90 +9,10 @@
 
 import { DEFAULT_COMPACTION_SETTINGS, shouldCompact } from '@earendil-works/pi-agent-core';
 import { isContextOverflow, type AssistantMessage } from '@earendil-works/pi-ai';
-
-/**
- * The window handed to pi when none is configured.
- *
- * pi requires `Model.contextWindow` to be a number — it feeds
- * `clampMaxTokensToContext` — so a value has to exist whatever we know. This one
- * is a guess with no source, kept only because the type demands it, and
- * **`readContextWindow` rather than this is what any compaction decision
- * consults.** A fabricated window that silently moved the compaction threshold
- * would be the failure this whole design is arranged to avoid.
- */
-export const FALLBACK_CONTEXT_WINDOW = 128_000;
-
-/**
- * The model's real context window, if anyone has said what it is.
- *
- * A per-profile field once profiles exist; an env var until then, following
- * `readGatePolicy`. **Undefined is a supported answer** and means auto-compaction
- * cannot fire and the meter shows no percentage.
- *
- * Refusing to default is the point. The two numbers available to guess from were
- * our own hard-coded 128k and pi's 1,000,000 for `deepseek-reasoner`'s nearest
- * catalogued neighbours; both err upward, and upward is the direction in which
- * `shouldCompact` silently never fires. This is the rule the zeroed `cost` block
- * in `provider.ts` already follows, applied to the one field where being wrong
- * changes behaviour instead of only the display.
- */
-export function readContextWindow(): number | undefined {
-	const raw = import.meta.env.VITE_AGENT_CONTEXT_WINDOW;
-	const parsed = Number(raw);
-	return raw && Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
-}
-
-/**
- * Context windows for the models this repo knows how to run.
- *
- * The entry side of "machinery in, entries ours"
- * ([ticket 15](docs/wayfinder/pi-harness/tickets/15-core-already-does-this.md)).
- * Every number except one is copied from pi's own catalog data
- * (`pi-ai/dist/providers/data/*.json`) rather than remembered — the table is
- * hand-written so a stale or missing upstream entry cannot silently move the
- * compaction threshold, not because upstream's numbers are wrong.
- *
- * It is deliberately *not* the catalog imported at runtime:
- * [ticket 08](docs/wayfinder/pi-harness/tickets/08-bundle-cost.md) says import by
- * subpath and never the barrel, and pi's catalog is a megabyte of JSON for every
- * provider we do not offer.
- *
- * A model absent from here has an unknown window, which is a supported answer.
- * Adding a wrong entry is worse than adding none: too large and auto-compaction
- * never fires, too small and it fires forever.
- */
-export const CONTEXT_WINDOWS: Readonly<Record<string, number>> = {
-	// Not in pi's catalog at all — 0.83.0 ships only `deepseek-v4-flash` and
-	// `deepseek-v4-pro`, both at 1,000,000. This is DeepSeek's published 128K for
-	// the current API models, and it is the one number here with no in-repo
-	// source, which matters because it is also the model this repo actually runs.
-	'deepseek-chat': 128_000,
-	'deepseek-reasoner': 128_000,
-	// Anthropic. The 4-5 line splits: Sonnet carries 1M, Haiku and Opus 200K.
-	'claude-haiku-4-5': 200_000,
-	'claude-opus-4-5': 200_000,
-	'claude-sonnet-4-5': 1_000_000,
-	'claude-opus-5': 1_000_000,
-	'claude-sonnet-5': 1_000_000,
-	// Google. 1,048,576, not 1,000,000 — the difference is only 5% but it is the
-	// difference between a copied number and a rounded one.
-	'gemini-2.5-flash': 1_048_576,
-	'gemini-2.5-pro': 1_048_576,
-	'gemini-3-pro-preview': 1_048_576,
-};
-
-/**
- * What this model's window is, as far as anyone here knows.
- *
- * The env var wins, because it is both the user's override and the only way to
- * exercise compaction without a genuinely enormous conversation — the auto-compact
- * path was validated at a window of 18,000. It is also the seam profiles replace:
- * `contextWindow` is not one of [ticket 04](docs/wayfinder/pi-harness/tickets/04-profile-data-model.md)'s
- * eight fields, so a profile names a model and this table answers for it.
- */
-export function contextWindowFor(modelId: string): number | undefined {
-	return readContextWindow() ?? CONTEXT_WINDOWS[modelId];
-}
+// The entries moved to `models.ts` when `reasoning` joined them (ticket 19):
+// this file is when to compact, not what a model is. Re-exported because the
+// meter and the runner read the window through the same door they always did.
+export { contextWindowFor, FALLBACK_CONTEXT_WINDOW } from './models.ts';
 
 /** Whether the agent may compact without being asked. Off unless enabled. */
 export function readAutoCompact(): boolean {

@@ -30,13 +30,13 @@ import { anthropicMessagesApi } from '@earendil-works/pi-ai/api/anthropic-messag
 import { googleGenerativeAIApi } from '@earendil-works/pi-ai/api/google-generative-ai.lazy';
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy';
 import type { AgentEvent, AgentProvider } from './index';
+import { compactionMessage, needsCompaction, readAutoCompact } from './compaction';
 import {
-	compactionMessage,
 	contextWindowFor,
 	FALLBACK_CONTEXT_WINDOW,
-	needsCompaction,
-	readAutoCompact,
-} from './compaction';
+	reasoningFor,
+	thinkingLevelMapFor,
+} from './models';
 import { createMemoryEnv, createTauriEnv } from './env';
 import { mapEvent } from './events';
 import { installRustFetch } from './rustFetch';
@@ -175,23 +175,28 @@ function modelFor(choice: ProfileModel): Model<Api> {
 		provider: choice.provider,
 		baseUrl: SHAPES[choice.provider].baseUrl,
 		/*
-		 * A heuristic on the model id, and knowingly a poor one — it happens to
-		 * be right for `deepseek-reasoner` and will be wrong for the next
-		 * reasoning model that is not named after one.
+		 * Was `/reason|think/i.test(choice.id)` — a guess on the *name*, right
+		 * for `deepseek-reasoner` by accident and wrong for the next reasoning
+		 * model not named after one. Ticket 19 replaced it with a table.
 		 *
-		 * The honest answer is a model catalog, and pi ships one; the map
-		 * recorded that pi's is already stale enough for a new key to be unable
-		 * to call what it advertises, so adopting it is its own piece of work —
-		 * now ticket 19 (docs/wayfinder/pi-harness/tickets/19-model-entries.md).
-		 * Worth knowing while it is open: `clampThinkingLevel` reads this flag,
-		 * so a model mislabelled here answers with thinking `off` and nothing
-		 * errors.
-		 * Until then this is wrong in a visible way rather than absent: the
-		 * adapter reads `reasoning_content` off the stream regardless, so a
-		 * mislabelled model still *shows* its reasoning — what this flag
-		 * controls is whether that reasoning is echoed back on later turns.
+		 * **Unknown becomes `false`, and that is the safe direction rather than
+		 * the tidy one.** Every thinking branch in pi's adapters is gated on this
+		 * flag, so `false` sends no thinking parameters at all and the provider's
+		 * own default applies. `true` on a model that does not reason sends
+		 * `thinking: { type: "disabled" }` — or a `reasoning_effort` string — to
+		 * an API that may reject it outright. Guessing low fails quietly;
+		 * guessing high can fail hard.
+		 *
+		 * What is no longer silent is *that it was a default*: `reasoningFor`
+		 * answers `undefined` for an unlisted model, `/profile` says so, and
+		 * `VITE_AGENT_REASONING=on` is the escape hatch.
 		 */
-		reasoning: /reason|think/i.test(choice.id),
+		reasoning: reasoningFor(choice.id) ?? false,
+		// Only where pi publishes one. `getSupportedThinkingLevels` reads it to
+		// drop levels a model does not take — `gemini-3-pro-preview` has no `off`
+		// and no `medium` — and absent means "allow off through high", which is
+		// what we were doing for every model before.
+		thinkingLevelMap: thinkingLevelMapFor(choice.id),
 		input: ['text'],
 		// Zeroed rather than guessed. A wrong cost table produces confident
 		// wrong numbers in the UI, which is worse than none — and the real

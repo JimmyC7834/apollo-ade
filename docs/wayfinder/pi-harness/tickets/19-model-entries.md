@@ -4,12 +4,88 @@ title: What the app knows about a model
 parent: ../map.md
 blocked-by: []
 assignee: jc4649
-status: open
+status: closed
 ---
 
 # What the app knows about a model
 
-## Question
+## Settled
+
+**One table, `src/agent/models.ts`.** `contextWindow`, `reasoning`, and — a
+field this ticket did not know to ask about — `thinkingLevelMap`. `cost` stays
+out. `CONTEXT_WINDOWS` moved here from `compaction.ts`, which is now only *when*
+to compact rather than what a model is.
+
+**Entries are copied at author time from pi's bundled catalog data**, not
+remembered and not fetched. The ticket framed this as hand-written-versus-live-
+list and missed the option that won: `pi-ai/dist/providers/data/<provider>.json`
+already carries `reasoning` and `thinkingLevelMap` per model, so the same
+discipline the context windows had extends to the rest. `fetchModels` stays
+unused — a network call at startup to answer a question that does not change
+between releases we pin.
+
+**Which file is part of the rule, and it nearly went wrong.** The same id lives
+in several catalogs with different numbers, because a proxy's limits are not the
+provider's: `gemini-2.5-pro` is 1,048,576 in `google.json` and **128,000** in
+`github-copilot.json`. A first scan took the first alphabetical match and copied
+the Copilot number. Read the file for the provider in `SHAPES`, and nothing else.
+
+### The three questions
+
+**Existence — already answered, now recorded.** `requireProvider`
+(`pi-ai/dist/models.js:235`) resolves by `model.provider` and never consults the
+provider's `models` list, so `allModels()` registering every provider with
+`models: []` advertises no catalog at all. A dead model id fails as the
+provider's own HTTP error, surfaced as an `error` event. That *is* the honest
+failure the map's ⚠ asked for, and it is a different failure from the one the
+warning feared — pi's advertised list being wrong, when we advertise nothing.
+The residue is that it arrives one turn late and reads as a provider problem;
+not worth fixing while nothing else depends on it.
+
+**Capability — fixed, and it had a second half.** `reasoning` comes from the
+table. `thinkingLevelMap` came with it and matters more than expected: with no
+map, `getSupportedThinkingLevels` allows everything from `off` to `high`, so we
+were offering `medium` on `gemini-3-pro-preview` — which maps `medium: null` and
+`off: null`, i.e. cannot stop thinking and has no medium — and clamping
+`claude-opus-5` down from `max`, which it supports. Measured after: Gemini now
+supports exactly `["low","high"]` and Opus 5 reaches `max`.
+
+**Unknown is `undefined`, and the caller defaults it to `false`.** That is the
+safe direction rather than the tidy one, and the reason is in pi's adapters:
+every thinking branch is gated on `model.reasoning`, so `false` sends no thinking
+parameters and the provider's own default applies, where `true` on a
+non-reasoning model sends `thinking: { type: "disabled" }` or a `reasoning_effort`
+string to an API that may reject it. Guessing low fails quietly; guessing high
+can fail hard.
+
+**What is no longer silent is that it was a default.** `thinkingUnavailable` in
+`models.ts` — a rule, so not in the JSX — makes `/profile` say when a thinking
+level will not happen, and `VITE_AGENT_REASONING` is the escape hatch for an
+unlisted model, mirroring `VITE_AGENT_CONTEXT_WINDOW`.
+
+**Cost — deliberately still absent.** Nothing displays a spend figure, the meter
+shows tokens, and `calculateCost` is adopted but uncalled. A cost table is also
+the fastest-moving of the three. Revisit when something asks for a number; the
+table has an obvious place to put it.
+
+**A model picker is still out of scope**, unchanged from
+[ticket 04](04-profile-data-model.md).
+
+### What this surfaced
+
+The **built-in** profiles — `auto`, `careful`, `plan` — all carry a thinking
+level and all default to a non-reasoning model, so all three have been asking
+for thinking they never got. The warning fires on the shipped defaults, which is
+uncomfortable and correct.
+
+Separately and **not caused by this work**: a live turn on `deepseek-reasoner`
+at `thinkingLevel: high` produced no thinking block, though the clamp passes
+`high` through unchanged. Our side is provably right — the old heuristic
+produced the identical flag for that id, so nothing here changed its behaviour —
+which puts the cause downstream, in the adapter or DeepSeek's response. Its own
+question, not this one.
+
+## Original question
 
 An obligation the map stated and never assigned. From the Notes:
 

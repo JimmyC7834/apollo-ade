@@ -22,8 +22,8 @@ followed. [Ticket 18](tickets/18-tool-reaches-the-gate.md) is a decision chartin
 not have raised, because it fell out of *building* — now closed.
 [Ticket 19](tickets/19-model-entries.md) is the opposite failure and the more instructive
 one: the map stated the obligation plainly in its own Notes and no ticket ever owned it,
-so it survived seventeen closures by belonging to none of them. It is still open. A closed
-map is not a finished one — and "every decision is made" is only true of the decisions
+so it survived seventeen closures by belonging to none of them. Both are now closed. A
+closed map is not a finished one — and "every decision is made" is only true of the decisions
 something was accountable for making.
 
 ## Notes
@@ -126,7 +126,7 @@ something was accountable for making.
 - **The walking skeleton closed, and nothing upstream reopened.**
   [Thinnest end-to-end turn](tickets/12-walking-skeleton.md)
   closed a real loop against DeepSeek in the native window — streamed prose, a `read` tool
-  call, tool result, grounded answer — so the eleven-kind event contract and the
+  call, tool result, grounded answer — so the twelve-kind event contract and the
   `ExecutionEnv` adapter both survived contact. Since verified against Google as a second
   provider, which is what exposed two defects a single provider had hidden. Still open:
   `usage` and `compacted` never fire because the spike's UI adapter drops them, and
@@ -279,12 +279,19 @@ something was accountable for making.
 ## Not yet specified
 
 - **What the app knows about a model** — [ticket 19](tickets/19-model-entries.md),
-  **open**. The obligation the ⚠ note above stated and no ticket ever owned. `reasoning`
-  is guessed from the model id (`/reason|think/i`), and the guess is not cosmetic:
-  `clampThinkingLevel` reads it, so a mislabelled model silently answers with thinking
-  `off` and nothing errors. Existence may already be answered — we advertise no model
-  list, so a dead id fails as the provider's own error — and cost is deliberately zeroed
-  while nothing displays it. Three questions, one of them actually wrong today.
+  **closed**. The obligation the ⚠ note above stated and no ticket ever owned. One table
+  in `src/agent/models.ts` — `contextWindow`, `reasoning`, `thinkingLevelMap` — copied at
+  author time from pi's bundled catalog data, **from the file for the provider we
+  actually talk to**: the same id carries different numbers in different catalogs, and
+  `gemini-2.5-pro` is 1,048,576 in `google.json` against 128,000 in `github-copilot.json`.
+  `thinkingLevelMap` is the half the ticket did not know to ask for and the one that was
+  most wrong: we were offering `medium` on a Gemini that has no medium and cannot stop
+  thinking, and clamping Opus 5 down from a `max` it supports. Unknown answers
+  `undefined` and the caller defaults it to `false` — safe rather than tidy, because
+  every thinking branch in pi's adapters is gated on the flag, so guessing low fails
+  quietly and guessing high can fail hard. Existence needed no fix, only recording:
+  `requireProvider` never consults a provider's model list, so we advertise nothing and a
+  dead id fails as the provider's own error. Cost stays absent while nothing displays it.
 - **How a tool asks a question** — [ticket 18](tickets/18-tool-reaches-the-gate.md),
   **closed**. It did not come from charting; it fell out of *building* ticket 13, which
   is why it arrives after the other seventeen closed. `gate.confirm` is the door: the
@@ -322,7 +329,7 @@ something was accountable for making.
   artifact.
 - **Rich agent output.** Deferred by the dev while settling the event contract: previews,
   markdown attachments, and other content types an agent might emit beyond text and tool
-  results. The eleven-kind contract does not preclude them — a new kind, or structured
+  results. The twelve-kind contract does not preclude them — a new kind, or structured
   content inside `text`, are both open — but which of the two, and what the ADE renders,
   is unspecified. Revisit once the transcript has real content in it.
 - **Approval memory** — allow-once vs allow-for-session vs persistent rules. Moot while

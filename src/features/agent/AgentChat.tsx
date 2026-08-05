@@ -12,6 +12,7 @@ import { loadProfileFiles, profileSources } from '../../agent/profileFiles';
 import { userTools } from '../../agent/userTools';
 import { Icon, Overlay } from '../../ui';
 import { OTHER } from '../../agent/ask';
+import { thinkingUnavailable } from '../../agent/models';
 import {
 	answerQuestion,
 	applyEvent,
@@ -406,7 +407,20 @@ export function AgentChat({ provider, onAnnounce }: AgentChatProps) {
 							(profile) =>
 								`${profile.name === activeProfile().name ? '●' : '○'} ${profile.name} — ` +
 								`${profile.model.id || 'no model'}, ${profile.gatePolicy}, ` +
-								`thinking ${profile.thinkingLevel}${profile.rtk ? ', rtk' : ''}`
+								`thinking ${profile.thinkingLevel}${profile.rtk ? ', rtk' : ''}` +
+							// The one place a user finds out that a thinking level is
+							// not going to happen. `getSupportedThinkingLevels` returns
+							// `["off"]` for a model that does not reason, so pi clamps
+							// every level to `off` and nothing errors — a profile asking
+							// for `high` reads identically whether it gets it or not.
+							//
+							// Both cases say so, and they are not the same case: an
+							// unknown model is a gap in our table with an escape hatch,
+							// where a known non-reasoning one is simply a profile asking
+							// for something that model cannot do. Warning only on the
+							// first missed the second, which is a profile the user wrote
+							// and would never find out about. See ticket 19.
+							thinkingUnavailable(profile.model.id, profile.thinkingLevel)
 						),
 						// Said out loud because a declared tool is *not* armed — a
 						// profile has to name it (ticket 13), so a user who wrote a
