@@ -71,18 +71,6 @@ export function composeSystemPrompt(parts: PromptParts): string {
 }
 
 /**
- * The active profile's instructions, until profiles exist.
- *
- * The fifth interim env var, following `VITE_AGENT_PROVIDER`, `_MODEL`, `_GATE`
- * and `_AUTOCOMPACT`, and it collapses into
- * [ticket 04](docs/wayfinder/pi-harness/tickets/04-profile-data-model.md)'s
- * `instructions` field with the rest of them.
- */
-export function readInstructions(): string | undefined {
-	return import.meta.env.VITE_AGENT_INSTRUCTIONS || undefined;
-}
-
-/**
  * Something that may rewrite the assembled prompt before a turn runs.
  *
  * Receives the running string and returns a new one — pi's extension contract,

@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { AgentEvent, AgentProvider, AgentRun } from '../../agent';
 import { pressure } from '../../agent/compaction';
+import { activateProfile, activeProfile, listProfiles } from '../../agent/profile';
 import { Icon, Overlay } from '../../ui';
 import {
 	applyEvent,
@@ -238,6 +239,41 @@ export function AgentChat({ provider, onAnnounce }: AgentChatProps) {
 			setCompacting(true);
 			onAnnounce?.('Summarising the conversation');
 			provider.compact(beginTurn(text));
+			return;
+		}
+
+		/*
+		 * `/profile`, which is the whole profile UI for now. A switch is a local
+		 * state change rather than a run, so it answers into a turn of its own and
+		 * closes it immediately.
+		 *
+		 * That is *not* ticket 14's transcript divider, and should not be mistaken
+		 * for it: this turn lives in React state and disappears on reload, where a
+		 * divider is a session entry. What it does give is the same thing a divider
+		 * gives a reader mid-conversation — the switch is visible where it happened.
+		 */
+		if (text === '/profile' || text.startsWith('/profile ')) {
+			const emit = beginTurn(text);
+			const name = text.slice('/profile'.length).trim();
+			const result = name ? activateProfile(name) : undefined;
+			const answer = result
+				? result.ok
+					? `Switched to "${result.profile.name}". It applies from the next turn; nothing already said is changed.`
+					: result.reason
+				: listProfiles()
+						.map(
+							(profile) =>
+								`${profile.name === activeProfile().name ? '●' : '○'} ${profile.name} — ` +
+								`${profile.gatePolicy}, thinking ${profile.thinkingLevel}` +
+								`${profile.rtk ? ', rtk' : ''}`
+						)
+						.join('\n');
+			emit({ kind: 'text', text: answer });
+			emit({ kind: 'complete' });
+			// After `complete`, deliberately: the sink announces "Agent finished" on
+			// it, which is the wrong sentence for a command that never ran the
+			// agent. Announcing last is what a screen-reader user is left with.
+			onAnnounce?.(result ? answer : `${listProfiles().length} profiles listed`);
 			return;
 		}
 

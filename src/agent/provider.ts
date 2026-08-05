@@ -17,6 +17,7 @@ import {
 	createWriteTool,
 	type AgentHarnessEvent,
 	type ExecutionEnv,
+	type ThinkingLevel,
 } from '@earendil-works/pi-agent-core';
 import { createModels, createProvider, type Api, type Model } from '@earendil-works/pi-ai';
 import { anthropicMessagesApi } from '@earendil-works/pi-ai/api/anthropic-messages.lazy';
@@ -34,8 +35,16 @@ import { createMemoryEnv, createTauriEnv } from './env';
 import { mapEvent } from './events';
 import { installRustFetch } from './rustFetch';
 import { cannedProvider, FIXTURE_FILES } from './canned';
-import { createGate, readGatePolicy, type GatePolicy } from './gate';
-import { applyContributors, composeSystemPrompt, readInstructions } from './systemPrompt';
+import { createGate } from './gate';
+import { applyContributors, composeSystemPrompt } from './systemPrompt';
+import {
+	activeProfile,
+	activeToolNames,
+	onProfileChange,
+	setCapabilities,
+	type ProfileModel,
+	type ProviderId,
+} from './profile';
 
 /** Which shell Rust resolved, or undefined outside the native shell. */
 async function resolveShell(): Promise<string | undefined> {
@@ -141,28 +150,7 @@ const SHAPES = {
 		api: 'google-generative-ai',
 		baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
 	},
-} as const;
-
-type ProviderId = keyof typeof SHAPES;
-
-interface ModelChoice {
-	readonly provider: ProviderId;
-	readonly modelId: string;
-}
-
-/**
- * Which model to run.
- *
- * Configuration, not a profile — [the profile data model](docs/wayfinder/pi-harness/tickets/04-profile-data-model.md)
- * owns that and is a later slice. This is the smallest thing that lets the app
- * talk to a model at all, and it is deliberately not built out: two env vars,
- * no UI, no persistence.
- */
-function readModelChoice(): ModelChoice | undefined {
-	const provider = (import.meta.env.VITE_AGENT_PROVIDER ?? 'deepseek') as ProviderId;
-	const modelId = import.meta.env.VITE_AGENT_MODEL;
-	return modelId && provider in SHAPES ? { provider, modelId } : undefined;
-}
+} as const satisfies Record<ProviderId, { api: Api; baseUrl: string }>;
 
 function apiFor(provider: ProviderId) {
 	if (provider === 'anthropic') return anthropicMessagesApi();
@@ -170,10 +158,10 @@ function apiFor(provider: ProviderId) {
 	return openAICompletionsApi();
 }
 
-function modelFor(choice: ModelChoice): Model<Api> {
+function modelFor(choice: ProfileModel): Model<Api> {
 	return {
-		id: choice.modelId,
-		name: choice.modelId,
+		id: choice.id,
+		name: choice.id,
 		api: SHAPES[choice.provider].api,
 		provider: choice.provider,
 		baseUrl: SHAPES[choice.provider].baseUrl,
@@ -190,7 +178,7 @@ function modelFor(choice: ModelChoice): Model<Api> {
 		 * mislabelled model still *shows* its reasoning — what this flag
 		 * controls is whether that reasoning is echoed back on later turns.
 		 */
-		reasoning: /reason|think/i.test(choice.modelId),
+		reasoning: /reason|think/i.test(choice.id),
 		input: ['text'],
 		// Zeroed rather than guessed. A wrong cost table produces confident
 		// wrong numbers in the UI, which is worse than none — and the real
@@ -201,12 +189,12 @@ function modelFor(choice: ModelChoice): Model<Api> {
 		// resort rather than the only answer. Nothing that decides *when to
 		// compact* reads this field; that reads `contextWindowFor`, which is
 		// allowed to answer "unknown". See ticket 16.
-		contextWindow: contextWindowFor(choice.modelId) ?? FALLBACK_CONTEXT_WINDOW,
+		contextWindow: contextWindowFor(choice.id) ?? FALLBACK_CONTEXT_WINDOW,
 		maxTokens: 8_192,
 	};
 }
 
-function modelsFor(choice: ModelChoice) {
+function modelsFor(choice: ProfileModel) {
 	const models = createModels();
 	models.setProvider(
 		createProvider({
@@ -248,9 +236,35 @@ function createRunner(
 	env: ExecutionEnv,
 	session: Promise<Session>,
 	models: ReturnType<typeof createModels>,
-	model: Model<Api>,
-	policy: GatePolicy
+	model: Model<Api>
 ) {
+	/*
+	 * The tool set the harness is given, which is not the tool set that runs: a
+	 * profile's `tools` map picks the active subset out of it. Built once and
+	 * declared to the profile store, because the store is what refuses a profile
+	 * naming a tool that is not in here.
+	 *
+	 * `createBashTool` is pi's, not ours: it owns capture, truncation, throttled
+	 * progress and overflow on top of `env.exec`, so Rust only has to run a
+	 * command and stream chunks.
+	 */
+	const tools = [createReadTool(), createWriteTool(), createEditTool(), createBashTool()];
+	setCapabilities({ tools: tools.map((tool) => tool.name), skills: [] });
+
+	/**
+	 * The level this model will tolerate.
+	 *
+	 * `model.reasoning: true` is not enough to get reasoning out of a model, and
+	 * the failure is silent: pi's harness defaults `thinkingLevel` to "off", and
+	 * for DeepSeek that makes its adapter send `thinking: { type: "disabled" }` —
+	 * the API then returns no `reasoning_content`, so no `thinking_delta` is ever
+	 * emitted and the transcript looks like a non-reasoning model.
+	 *
+	 * The profile names the level, but asking a non-reasoning model to think is a
+	 * request some providers reject outright, so the model has the last word.
+	 */
+	const thinkingFor = (level: ThinkingLevel): ThinkingLevel => (model.reasoning ? level : 'off');
+
 	/*
 	 * Opening the session is I/O, so the harness cannot exist until it lands.
 	 * Built once and awaited by every turn rather than per turn — `start` stays
@@ -263,24 +277,11 @@ function createRunner(
 				session: opened,
 				models,
 				model,
-				/*
-				 * `model.reasoning: true` is not enough to get reasoning out of a
-				 * model, and the failure is silent. pi's harness defaults
-				 * `thinkingLevel` to "off", and for DeepSeek that makes its adapter
-				 * send `thinking: { type: "disabled" }` — the API then returns no
-				 * `reasoning_content` at all, so no `thinking_delta` is ever emitted
-				 * and the transcript looks exactly like a non-reasoning model.
-				 *
-				 * The level is not exposed yet; it belongs to profiles alongside the
-				 * model. "medium" until then, and only for a model that can use it —
-				 * asking a non-reasoning model to think is a request some providers
-				 * reject outright.
-				 */
-				thinkingLevel: model.reasoning ? 'medium' : 'off',
-				// `createBashTool` is pi's, not ours: it owns capture, truncation,
-				// throttled progress and overflow on top of `env.exec`, so Rust only
-				// has to run a command and stream chunks.
-				tools: [createReadTool(), createWriteTool(), createEditTool(), createBashTool()],
+				// The profile the window opens on. Every later switch arrives
+				// through `onProfileChange` below.
+				thinkingLevel: thinkingFor(activeProfile().thinkingLevel),
+				tools,
+				activeToolNames: activeToolNames(activeProfile()),
 				toolContext: { env },
 				/*
 				 * A callback, never a string — the decision
@@ -298,7 +299,7 @@ function createRunner(
 					composeSystemPrompt({
 						shell,
 						skills: context.resources.skills,
-						instructions: readInstructions(),
+						instructions: activeProfile().instructions,
 					}),
 			})
 	);
@@ -330,6 +331,32 @@ function createRunner(
 		return next;
 	}
 
+	/*
+	 * A switch reaches the running harness — **through the queue**, so it lands
+	 * between turns rather than inside one. Narrowing the tool set halfway
+	 * through a turn would be retroactive in the one way ticket 14 forbids: the
+	 * model would have been offered a tool it is then denied, mid-run.
+	 *
+	 * Only the two fields a built-in profile can differ in need applying.
+	 * `instructions` needs nothing, because the system prompt is a callback the
+	 * harness awaits once per turn; `gatePolicy` is read when a turn opens its
+	 * gate.
+	 *
+	 * **`model` is deliberately not applied.** `setModel()` exists and would be
+	 * one line, but every built-in names the same model — the id still comes from
+	 * an env var — so wiring it now would ship an untested branch, and on the
+	 * canned path it would swap the scripted model out from under its own script.
+	 * It lands when a profile file can name a second model.
+	 */
+	onProfileChange((profile) => {
+		void ready.then((harness) =>
+			enqueue(async () => {
+				await harness.setActiveTools(activeToolNames(profile));
+				await harness.setThinkingLevel(thinkingFor(profile.thinkingLevel));
+			})
+		);
+	});
+
 	/**
 	 * Compact, reporting failure as an event rather than throwing.
 	 *
@@ -354,7 +381,9 @@ function createRunner(
 	}
 
 	function start(prompt: string, onEvent: (event: AgentEvent) => void) {
-		const gate = createGate(policy, onEvent);
+		// Read at turn start, not at construction: switching to `careful` has to
+		// apply to the next turn rather than to the next window.
+		const gate = createGate(activeProfile().gatePolicy, onEvent);
 
 		let released = false;
 		let stopped = false;
@@ -543,20 +572,17 @@ function createRunner(
 
 export function createAgentProvider(): AgentProvider {
 	const native = '__TAURI_INTERNALS__' in globalThis;
-	const choice = native ? readModelChoice() : undefined;
+	// The active profile names the model. An empty id means nobody has named one
+	// — there is still no picker and no profile file, so it comes from an env var
+	// — and that falls to the canned provider exactly as a missing env var did.
+	const choice = native && activeProfile().model.id ? activeProfile().model : undefined;
 
 	if (choice) {
 		// Diverts provider hosts to Rust for every adapter, including the Google
 		// ones that refuse an injected `fetch`.
 		installRustFetch();
 		const env = createTauriEnv();
-		return createRunner(
-			env,
-			sharedSession(env),
-			modelsFor(choice),
-			modelFor(choice),
-			readGatePolicy()
-		);
+		return createRunner(env, sharedSession(env), modelsFor(choice), modelFor(choice));
 	}
 
 	// No model configured, or no native shell: the canned provider. It is the
@@ -568,8 +594,7 @@ export function createAgentProvider(): AgentProvider {
 		createMemoryEnv(FIXTURE_FILES),
 		Promise.resolve(new Session(new InMemorySessionStorage())),
 		canned.models,
-		canned.model,
-		readGatePolicy()
+		canned.model
 	);
 	return {
 		start: (prompt, onEvent) => {

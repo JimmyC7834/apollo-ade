@@ -2449,3 +2449,94 @@ an assertion on presence alone would pass on the exact arrangement the ticket
 rejected — plus that the floor survives a hostile instruction, that unset
 segments vanish instead of leaving blank paragraphs, and that contributors chain,
 rewrite rather than only append, and dispose cleanly.
+
+## Slice 22 — Profiles exist, and switching one changes what the agent can do
+
+**User outcome:** type `/profile` to see what you are running under, `/profile
+plan` to switch. `plan` takes `write` and `edit` away from the model mid-session;
+`careful` makes the next turn ask before it runs anything. No restart, no new
+session, no history rewritten.
+
+**What changed:** a new `src/agent/profile.ts` holding the eight fields, the
+three built-ins, and the live store; `provider.ts` reads the active profile for
+its tools, thinking level, gate policy and instructions instead of reading four
+env vars; `gate.ts` lost `readGatePolicy`, `systemPrompt.ts` lost
+`readInstructions`, and `provider.ts` lost `readModelChoice`. `AgentChat` gained
+`/profile` alongside `/compact`.
+
+**The env vars collapsed, except one.** `VITE_AGENT_GATE` and
+`VITE_AGENT_INSTRUCTIONS` are gone as concepts — they now seed built-in profiles
+and nothing else reads them. `VITE_AGENT_PROVIDER` and `VITE_AGENT_MODEL` still
+exist and still do the same job, because every built-in names the *same* model:
+there is no picker and no profile file to name a second one in. That is the one
+place the collapse is incomplete, and it is why `setModel()` is deliberately not
+wired — see below.
+
+**The tool map earns its shape immediately.** `plan` is
+`{ write: false, edit: false }`, not a list of what it keeps. Asked *"which tools
+can you call right now"*, the live model answered **`read, bash`** under `plan`
+and **`read, write, edit, bash`** after switching back to `auto` — one session,
+one harness, `setActiveTools` in between. A list would have had to enumerate
+`read` and `bash` to keep them, and would silently drop whatever pi adds next
+release.
+
+**Asking the model what it has is not evidence.** The first probe did exactly
+that, and after a turn that had just answered *"read, write, edit, bash"* the
+model happily repeated it under `plan` — twelve output tokens, no reasoning, a
+parrot. The check that settled it was behavioural: told to use `write` and
+forbidden `bash`, the model under `plan` reasoned *"the functions available in
+the tool list are only `read` and `bash`"* and called nothing; switched back to
+`auto`, the same prompt wrote the file. Self-report is a claim about the
+conversation; a tool call is a claim about the harness.
+
+**And it surfaced a real seam.** That reasoning trace continues: *"the system
+prompt says use `write` or `edit` to change them"*. The base guidance names tools
+a profile may have taken away, so a narrowed profile hands the model a
+contradiction to resolve. It resolved it correctly here. Making the base
+guidance describe the tools actually active is a small change to
+`composeSystemPrompt` and is not made yet.
+
+**Three of the five levers are wired; two are not, on purpose.**
+`tools` and `thinkingLevel` apply through `setActiveTools`/`setThinkingLevel` on
+switch. `gatePolicy` needs no setter — it is read when a turn opens its gate, so
+switching to `careful` applies to the next turn rather than the next window,
+which is what the live probe confirmed: `echo hello` produced an approval prompt
+that `auto` would never have raised. `instructions` needs no setter either,
+because the system prompt is a callback the harness awaits once per turn — the
+decision ticket 04 reached and slice 21 built to. **`model` is the one field not
+applied**: `setModel()` exists and is one line, but no built-in differs in it, so
+wiring it now would ship a branch nothing exercises — and on the canned path it
+would swap the scripted model out from under its own script.
+
+**A dangling reference refuses activation and says what is missing.** Not
+"silently drops the tool", which is the failure the ticket singled out: an agent
+running with quietly-different capabilities than its profile claims is invisible,
+and the user would blame the model. The provider declares what exists
+(`setCapabilities`) because it is the only thing that knows; disabling a tool
+that has since disappeared is *not* dangling, which is the same degradation
+argument the map shape rests on.
+
+**What is deferred, and it is the storage half.** Ticket 04's decision 4 — a
+global file plus a project file, merged, project winning — is not built. The
+built-ins are the whole set, so "users override built-ins" is currently a
+promise. The global file is the expensive part: it lives outside the workspace
+root, so it is read by the app rather than through the agent's own filesystem
+authority, and that is a Rust command that does not exist yet. `rtk` carries on
+the profile and is applied by nothing — ticket 11's `prepare` hook is its own
+slice.
+
+**`skills` is worse than unapplied, and the trap is worth naming.** Nothing loads
+skills yet, so the provider declares none, so *any* profile naming one can never
+activate — refusal is working exactly as decision 2 specifies, against a world
+where the answer is always no. That is invisible today because no built-in names
+a skill, and it will bite the first profile file that does, until ticket 15's
+loading lands. The same asymmetry means the **refusal path is unreachable in the
+running app**: with three built-ins sharing one model, no skills and a tool map
+that only ever *disables*, nothing can dangle. It is specified, checked, and
+waiting for profile files to make it reachable.
+
+**`profile.check.ts`** asserts the two decisions rather than the field list: that
+an unmentioned tool is on and a tool added upstream falls through to its default
+(the map's whole reason for existing), that enabling something absent dangles
+while disabling something absent does not, and that a refused switch leaves the
+session on the profile it was already using.

@@ -11,16 +11,12 @@ import type { AgentEvent } from './index';
 /**
  * How much the gate asks.
  *
- * A per-profile field once profiles exist; an env var until then. `auto` is the
- * default and never prompts — **auto mode is the policy dial set to permissive,
- * not the absence of a gate**, which is why the mechanism below is identical in
- * both modes and supporting `auto` costs nothing structural.
+ * A profile field, read at the start of every turn — see `activeProfile()`.
+ * `auto` is the default and never prompts — **auto mode is the policy dial set
+ * to permissive, not the absence of a gate**, which is why the mechanism below
+ * is identical in both modes and supporting `auto` costs nothing structural.
  */
 export type GatePolicy = 'auto' | 'careful';
-
-export function readGatePolicy(): GatePolicy {
-	return import.meta.env.VITE_AGENT_GATE === 'careful' ? 'careful' : 'auto';
-}
 
 /**
  * Which tools change something.

@@ -178,7 +178,13 @@ built.
   a **map**, not a list, following Zed — it degrades correctly as pi's tool set moves.
   Dangling references **refuse activation**. All fields are mutable mid-session; pass
   `systemPrompt` as a **callback**, since there is no setter. Providers bundle
-  statically. Ship built-in profiles users override.
+  statically. Ship built-in profiles users override. **Now shipped** as
+  `src/agent/profile.ts` with three built-ins and a `/profile` command, verified live:
+  `plan` leaves the model holding `read, bash` mid-session, and a switch to `careful`
+  makes the very next turn ask. Two halves remain — **profile files** (decision 4's
+  global-plus-project merge; the global one lives outside the root, so it needs a Rust
+  command that does not exist) and **`setModel` on switch**, unwired while every
+  built-in names the same model.
 
 - [Where pi's event stream meets the ADE](tickets/05-event-contract.md) — `activity` is
   retired for a **structured tool lifecycle**; **eleven kinds** (text, thinking,
@@ -304,6 +310,12 @@ built.
   entries, every number but DeepSeek's copied from pi's own catalog data rather than
   remembered. An unlisted model still has an *unknown* window, which is the answer that
   keeps auto-compaction from firing against a fabricated denominator.
+- **Where profiles are stored.** The data model shipped without its storage half: the
+  three built-ins are the whole set, so "users override built-ins" is still a promise.
+  Decision 4 settled the *shape* (global plus project, project winning); what is open is
+  the global file's route, since it sits outside the workspace root and therefore outside
+  the agent's own filesystem authority. Blocks a profile naming a second model, and with
+  it `setModel` on switch.
 - **Skills: which profile composes them.** Loading is solved —
   [ticket 15](tickets/15-core-already-does-this.md) put `loadSkills` and
   `formatSkillsForSystemPrompt` in the adopt list but **deferred them**, because skills
