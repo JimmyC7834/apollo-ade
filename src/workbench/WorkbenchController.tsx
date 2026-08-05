@@ -4,7 +4,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { createAgentProvider } from '../agent';
+import { createAgentProvider, loadProfileFiles } from '../agent';
 import { createChangesProvider } from '../changes';
 import { buildCommands } from '../commands/commandRegistry';
 import { EditorDialog } from '../editor/EditorDialog';
@@ -141,6 +141,22 @@ export function WorkbenchController() {
 			}
 			setSelection(workspace);
 
+			/*
+			 * Profiles, now that there is a root to read the project file from.
+			 * Never fails: a missing file is the normal state and a malformed one
+			 * is reported here rather than costing anyone their editors. The
+			 * announcement is the only channel — a profile that silently did not
+			 * load looks exactly like a profile that did nothing.
+			 */
+			const loaded = await loadProfileFiles();
+			if (loaded.problems.length > 0) {
+				// One announcement, not one per problem: a live region only
+				// reacts to the latest mutation, so announcing in a loop would
+				// leave a screen-reader user hearing the last problem and no
+				// hint that there were others.
+				announce(`Profiles: ${loaded.problems.join('. ')}`);
+			}
+
 			const reopened: EditorInput[] = [];
 			for (const editor of restored?.editors ?? []) {
 				try {
@@ -170,7 +186,7 @@ export function WorkbenchController() {
 		return () => {
 			cancelled = true;
 		};
-	}, [provider, restored]);
+	}, [announce, provider, restored]);
 
 	// The tree belongs to the selected root, so it is reloaded with it.
 	useEffect(() => {

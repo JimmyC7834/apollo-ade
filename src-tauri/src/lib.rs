@@ -1,5 +1,6 @@
 mod exec;
 mod git;
+mod profiles;
 mod provider;
 mod terminal;
 mod workspace;
@@ -25,6 +26,8 @@ pub fn run() {
             workspace::agent_create_dir,
             workspace::agent_list_dir,
             workspace::read_text_lines,
+            profiles::read_global_profiles,
+            profiles::global_profiles_path,
             provider::provider_stream,
             exec::agent_exec,
             exec::agent_exec_cancel,

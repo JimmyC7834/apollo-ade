@@ -8,6 +8,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AgentEvent, AgentProvider, AgentRun } from '../../agent';
 import { pressure } from '../../agent/compaction';
 import { activateProfile, activeProfile, listProfiles } from '../../agent/profile';
+import { profileSources } from '../../agent/profileFiles';
 import { Icon, Overlay } from '../../ui';
 import {
 	applyEvent,
@@ -260,14 +261,18 @@ export function AgentChat({ provider, onAnnounce }: AgentChatProps) {
 				? result.ok
 					? `Switched to "${result.profile.name}". It applies from the next turn; nothing already said is changed.`
 					: result.reason
-				: listProfiles()
-						.map(
+				: [
+						...listProfiles().map(
 							(profile) =>
 								`${profile.name === activeProfile().name ? '●' : '○'} ${profile.name} — ` +
-								`${profile.gatePolicy}, thinking ${profile.thinkingLevel}` +
-								`${profile.rtk ? ', rtk' : ''}`
-						)
-						.join('\n');
+								`${profile.model.id || 'no model'}, ${profile.gatePolicy}, ` +
+								`thinking ${profile.thinkingLevel}${profile.rtk ? ', rtk' : ''}`
+						),
+						// Where to write one. There is no profile editor, so a user
+						// who is not told this has no way to find out.
+						`\nDefined in ${profileSources().projectFile} (this project)` +
+							`${profileSources().globalPath ? ` and ${profileSources().globalPath} (global)` : ''}.`,
+					].join('\n');
 			emit({ kind: 'text', text: answer });
 			emit({ kind: 'complete' });
 			// After `complete`, deliberately: the sink announces "Agent finished" on

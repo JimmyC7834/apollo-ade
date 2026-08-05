@@ -181,10 +181,15 @@ built.
   statically. Ship built-in profiles users override. **Now shipped** as
   `src/agent/profile.ts` with three built-ins and a `/profile` command, verified live:
   `plan` leaves the model holding `read, bash` mid-session, and a switch to `careful`
-  makes the very next turn ask. Two halves remain — **profile files** (decision 4's
-  global-plus-project merge; the global one lives outside the root, so it needs a Rust
-  command that does not exist) and **`setModel` on switch**, unwired while every
-  built-in names the same model.
+  makes the very next turn ask. **Now complete**: profile files ship as a global
+  `profiles.json` behind its own one-fixed-path Rust command — the workspace resolver
+  refuses everything above the root — plus `ade.profiles.json` at the project root,
+  merged field by field with the project winning, and **Rust refuses agent writes to
+  it**, because profile membership is the trust act for tools and `gatePolicy` is a
+  profile field. Read-only by choice; there is no editor. `setModel` on switch landed
+  with them, which exposed that only the *active* provider had ever been registered
+  with pi's model registry — a profile on a second provider would have failed a turn
+  after the switch rather than at it.
 
 - [Where pi's event stream meets the ADE](tickets/05-event-contract.md) — `activity` is
   retired for a **structured tool lifecycle**; **eleven kinds** (text, thinking,
@@ -325,12 +330,18 @@ built.
   TOML filter data. The two numbers that decide it: rtk is **3.9 MB gzipped against a
   3.1 MB gzipped frontend**, and its filter half is **data, not code**. Blocks nothing
   else; `rtk: boolean` already round-trips on the profile.
-- **Where profiles are stored.** The data model shipped without its storage half: the
-  three built-ins are the whole set, so "users override built-ins" is still a promise.
-  Decision 4 settled the *shape* (global plus project, project winning); what is open is
-  the global file's route, since it sits outside the workspace root and therefore outside
-  the agent's own filesystem authority. Blocks a profile naming a second model, and with
-  it `setModel` on switch.
+- ~~**Where profiles are stored.**~~ **Answered and built** — see the shipped section on
+  [What is a profile, concretely?](tickets/04-profile-data-model.md). The global file has
+  its own narrow Rust command, the project file sits at the workspace root where it is
+  visible and committable, and the agent may not write it. What is *left* is smaller and
+  named there: the first model still comes from an env var, because the
+  canned-versus-native decision is made before the files are read.
+- **Whether a profile is editable from the UI.** Deliberately not built: profile files
+  are hand-authored, which is what kept the storage half small — Zed's selector UI is
+  about 3× its model layer, and this map's own warning about profile scope applies to the
+  chrome as much as the fields. Nothing is foreclosed; an editor writes the same file the
+  reader already reads. Listed so that "no editor" reads as a decision rather than an
+  oversight.
 - **Skills: which profile composes them.** Loading is solved —
   [ticket 15](tickets/15-core-already-does-this.md) put `loadSkills` and
   `formatSkillsForSystemPrompt` in the adopt list but **deferred them**, because skills

@@ -84,3 +84,4 @@ export interface AgentProvider {
 }
 
 export { createAgentProvider } from './provider';
+export { loadProfileFiles, type ProfileLoad } from './profileFiles';

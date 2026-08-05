@@ -47,6 +47,7 @@ import {
 	activeProfile,
 	activeToolNames,
 	onProfileChange,
+	PROVIDER_IDS,
 	setCapabilities,
 	type ProfileModel,
 	type ProviderId,
@@ -200,28 +201,45 @@ function modelFor(choice: ProfileModel): Model<Api> {
 	};
 }
 
-function modelsFor(choice: ProfileModel) {
+/**
+ * Every provider, not only the one the window opened on.
+ *
+ * `models.streamSimple` resolves the provider by `model.provider` at request
+ * time (`pi-ai/dist/models.js:275` → `requireProvider`), and an unregistered id
+ * throws `ModelsError("provider")`. Registering only the active one was fine
+ * while the model came from an env var and could not change; a profile file can
+ * now name a model on another provider, and `setModel` would have failed on the
+ * first turn after the switch rather than at the switch.
+ *
+ * `requireProvider` does not check that the model is *listed* — the list is for
+ * enumeration — so each provider is registered with an empty one and the model
+ * travels with the request. All three cost nothing to register: they are
+ * already bundled (decision 3), and the api factories are lazy subpath imports.
+ */
+function allModels() {
 	const models = createModels();
-	models.setProvider(
-		createProvider({
-			id: choice.provider,
-			name: choice.provider,
-			baseUrl: SHAPES[choice.provider].baseUrl,
-			auth: {
-				apiKey: {
-					name: `${choice.provider} (key held in Rust)`,
-					// The placeholder is load-bearing. pi's OpenAI adapter throws
-					// outright unless it sees a key or an authorization header,
-					// and Google's requires one too. The value never travels:
-					// `provider_stream` discards whatever auth header it is
-					// handed and attaches the real key itself.
-					resolve: async () => ({ auth: { apiKey: 'held-in-rust' }, source: 'Rust' }),
+	for (const provider of PROVIDER_IDS) {
+		models.setProvider(
+			createProvider({
+				id: provider,
+				name: provider,
+				baseUrl: SHAPES[provider].baseUrl,
+				auth: {
+					apiKey: {
+						name: `${provider} (key held in Rust)`,
+						// The placeholder is load-bearing. pi's OpenAI adapter throws
+						// outright unless it sees a key or an authorization header,
+						// and Google's requires one too. The value never travels:
+						// `provider_stream` discards whatever auth header it is
+						// handed and attaches the real key itself.
+						resolve: async () => ({ auth: { apiKey: 'held-in-rust' }, source: 'Rust' }),
+					},
 				},
-			},
-			models: [modelFor(choice)],
-			api: apiFor(choice.provider),
-		})
-	);
+				models: [],
+				api: apiFor(provider),
+			})
+		);
+	}
 	return models;
 }
 
@@ -242,7 +260,14 @@ function createRunner(
 	env: ExecutionEnv,
 	session: Promise<Session>,
 	models: ReturnType<typeof createModels>,
-	model: Model<Api>
+	model: Model<Api>,
+	/**
+	 * Whether a profile switch may change the model.
+	 *
+	 * False on the canned path, where the model is the script's own and swapping
+	 * it out would leave the fixture answering as something it is not.
+	 */
+	modelFollowsProfile = false
 ) {
 	/*
 	 * The tool set the harness is given, which is not the tool set that runs: a
@@ -274,7 +299,15 @@ function createRunner(
 	 * first line. pi's own adapters clamp again at request time; what this fixes
 	 * is `getThinkingLevel()` reporting a level the model will never honour.
 	 */
-	const thinkingFor = (level: ThinkingLevel): ThinkingLevel => clampThinkingLevel(model, level);
+	/*
+	 * The model in force. A `let`, because a profile switch can now change it —
+	 * and everything that reads a property of the model (the clamp, the context
+	 * window behind the meter and auto-compaction) has to read the current one
+	 * rather than the one the window opened on.
+	 */
+	let current = model;
+
+	const thinkingFor = (level: ThinkingLevel): ThinkingLevel => clampThinkingLevel(current, level);
 
 	/*
 	 * Opening the session is I/O, so the harness cannot exist until it lands.
@@ -322,7 +355,7 @@ function createRunner(
 	 * fallback baked in and can no longer say "unknown", which is the one answer
 	 * that keeps auto-compaction from firing against a fabricated denominator.
 	 */
-	const contextWindow = contextWindowFor(model.id);
+	const contextWindow = () => contextWindowFor(current.id);
 	const autoCompact = readAutoCompact();
 
 	/*
@@ -360,15 +393,19 @@ function createRunner(
 	 * harness awaits once per turn; `gatePolicy` is read when a turn opens its
 	 * gate.
 	 *
-	 * **`model` is deliberately not applied.** `setModel()` exists and would be
-	 * one line, but every built-in names the same model — the id still comes from
-	 * an env var — so wiring it now would ship an untested branch, and on the
-	 * canned path it would swap the scripted model out from under its own script.
-	 * It lands when a profile file can name a second model.
+	 * **`model` is applied last, and only where it means anything.** It was left
+	 * unwired while every built-in named the same model; a profile file can now
+	 * name a second one, which is what makes the branch real. Order matters
+	 * inside the switch: `setModel` first, so the clamp that follows asks the
+	 * model being switched *to* what it supports rather than the one being left.
 	 */
 	onProfileChange((profile) => {
 		void ready.then((harness) =>
 			enqueue(async () => {
+				if (modelFollowsProfile && profile.model.id && profile.model.id !== current.id) {
+					current = modelFor(profile.model);
+					await harness.setModel(current);
+				}
 				await harness.setActiveTools(activeToolNames(profile));
 				await harness.setThinkingLevel(thinkingFor(profile.thinkingLevel));
 			})
@@ -443,7 +480,7 @@ function createRunner(
 				return composed === event.systemPrompt ? undefined : { systemPrompt: composed };
 			});
 			const offEvents = harness.subscribe((event: AgentHarnessEvent) => {
-				for (const mapped of mapEvent(event, contextWindow)) {
+				for (const mapped of mapEvent(event, contextWindow())) {
 					if (mapped.kind === 'usage') {
 						contextTokens = mapped.contextTokens;
 					}
@@ -456,7 +493,7 @@ function createRunner(
 					if (
 						mapped.kind === 'complete' &&
 						autoCompact &&
-						needsCompaction(contextTokens, contextWindow)
+						needsCompaction(contextTokens, contextWindow())
 					) {
 						heldComplete = true;
 						continue;
@@ -568,7 +605,7 @@ function createRunner(
 			.then((harness) =>
 				enqueue(async () => {
 					const off = harness.subscribe((event: AgentHarnessEvent) => {
-						for (const mapped of mapEvent(event, contextWindow)) {
+						for (const mapped of mapEvent(event, contextWindow())) {
 							onEvent(mapped);
 						}
 					});
@@ -600,7 +637,7 @@ export function createAgentProvider(): AgentProvider {
 		// ones that refuse an injected `fetch`.
 		installRustFetch();
 		const env = createTauriEnv();
-		return createRunner(env, sharedSession(env), modelsFor(choice), modelFor(choice));
+		return createRunner(env, sharedSession(env), allModels(), modelFor(choice), true);
 	}
 
 	// No model configured, or no native shell: the canned provider. It is the

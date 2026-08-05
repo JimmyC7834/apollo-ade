@@ -12,6 +12,7 @@ import {
 	activeToolNames,
 	builtinProfiles,
 	danglingReferences,
+	installProfiles,
 	listProfiles,
 	onProfileChange,
 	setCapabilities,
@@ -84,6 +85,87 @@ const plan = builtinProfiles().find((profile) => profile.name === 'plan') as Pro
 	assert.deepEqual(names, ['auto', 'careful', 'plan']);
 	assert.equal(listProfiles()[1].gatePolicy, 'careful');
 	assert.equal(listProfiles()[0].gatePolicy, 'auto');
+}
+
+// Installing from files. The three properties that make decision 4 true:
+// built-ins are the base, a later file wins field by field, and a bad field
+// costs its own profile nothing but itself.
+{
+	const problems = installProfiles([
+		// Global: retunes a built-in and adds one of its own.
+		{ name: 'plan', thinkingLevel: 'max' },
+		{ name: 'cheap', model: { provider: 'deepseek', id: 'deepseek-chat' }, rtk: true },
+		// Project: same name again, so this one wins — but only where it speaks.
+		{ name: 'cheap', gatePolicy: 'careful' },
+	]);
+
+	assert.deepEqual(problems, [], 'a well-formed file reports nothing');
+	assert.deepEqual(listProfiles().map((profile) => profile.name), [
+		'auto',
+		'careful',
+		'plan',
+		'cheap',
+	]);
+
+	const plan = listProfiles().find((profile) => profile.name === 'plan') as Profile;
+	assert.equal(plan.thinkingLevel, 'max', 'the file retuned it');
+	assert.deepEqual(plan.tools, { write: false, edit: false }, 'and left the rest of the built-in');
+
+	const cheap = listProfiles().find((profile) => profile.name === 'cheap') as Profile;
+	assert.equal(cheap.gatePolicy, 'careful', 'the project file wins');
+	assert.equal(cheap.rtk, true, 'and does not erase what it did not mention');
+	assert.equal(cheap.model.id, 'deepseek-chat');
+}
+
+// A malformed field is dropped and named; the profile survives it. One typo
+// costing seven good fields would be a worse answer than the typo.
+{
+	const problems = installProfiles([
+		{ name: 'odd', thinkingLevel: 'ludicrous', rtk: 'yes', gatePolicy: 'careful' },
+		{ model: { id: 'nameless' } },
+	]);
+
+	const odd = listProfiles().find((profile) => profile.name === 'odd') as Profile;
+	assert.equal(odd.gatePolicy, 'careful', 'the good field applied');
+	assert.equal(odd.thinkingLevel, 'medium', 'the bad one fell back to the base');
+	assert.equal(odd.rtk, false);
+	assert.equal(problems.length, 3, `named every drop: ${problems.join(' | ')}`);
+	assert.ok(problems.some((problem) => problem.includes('thinkingLevel')));
+	assert.ok(problems.some((problem) => problem.includes('"name"')));
+}
+
+// Reloading re-resolves the active profile by name, so editing the file you
+// are running under takes effect without a switch.
+{
+	activateProfile('plan');
+	const seen: string[] = [];
+	const off = onProfileChange((profile) => seen.push(profile.name));
+
+	installProfiles([{ name: 'plan', gatePolicy: 'careful' }]);
+	assert.equal(activeProfile().name, 'plan', 'still on it');
+	assert.equal(activeProfile().gatePolicy, 'careful', 'and it is the new definition');
+	assert.deepEqual(seen, ['plan'], 'the harness is told');
+
+	// A file that drops the profile you are on leaves you somewhere real
+	// rather than on a profile that is no longer in the list.
+	installProfiles([]);
+	assert.equal(activeProfile().name, 'plan', 'built-ins still define it');
+	off();
+}
+
+// A file cannot break the profile you are standing on. This is the one place a
+// switch happens without anyone asking for one, so decision 2 has to be made
+// here too rather than inherited from `activateProfile`.
+{
+	activateProfile('plan');
+	const problems = installProfiles([{ name: 'plan', tools: { grep: true } }]);
+
+	assert.equal(activeProfile().name, 'auto', 'fell back to a built-in');
+	assert.ok(
+		problems.some((problem) => problem.includes('tool "grep"')),
+		`said why: ${problems.join(' | ')}`
+	);
+	installProfiles([]);
 }
 
 console.log('agent/profile.check.ts: ok');

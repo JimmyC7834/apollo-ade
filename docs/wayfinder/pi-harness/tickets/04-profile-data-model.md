@@ -138,6 +138,46 @@ these are the fields being bought deliberately.
    first run. Minimum: an `auto` profile matching the gate default from ticket 03. pi's
    shipped `plan` / `implement` presets are a good second and third.
 
+### Shipped
+
+All five decisions are now built. Decisions 1, 2, 3 and 5 landed with the data
+model; **decision 4 landed with the files**, in the shape it describes and with
+three things it did not:
+
+- **The global file is `<app config dir>/profiles.json`, read through its own
+  Rust command** (`profiles.rs`) rather than through the root-confined resolver,
+  which refuses everything above the root. The door is one fixed path, read-only,
+  taking no argument — the renderer cannot name a file, so this is a single
+  hard-coded location and not a second filesystem.
+- **The project file is `ade.profiles.json` at the workspace root**, not inside
+  `.ade/`. `.ade/.gitignore` is `*`, so a profile meant to be shared with the
+  project would be untracked, and `list_tree` skips `.ade` — the file would be
+  invisible in the explorer of the editor it is meant to be edited in.
+- **Rust refuses agent writes to it.** Ticket 13 made profile membership the
+  trust act for tools and ticket 03 made `gatePolicy` a profile field, so an
+  agent that can rewrite its own profile can grant itself tools and disable the
+  gate. The floor holds it, not the TypeScript gate. An agent with a shell can
+  still reach the file; only ticket 02's confinement bounds that.
+
+**Read-only, deliberately.** No profile editor: the files are hand-authored in
+the editor this app already is, and `/profile` prints both paths so they can be
+found. An editor later writes the same file, so the format, the merge and the
+validation are unaffected by adding one.
+
+**Merging is field-by-field**, twice over — a file entry over the built-in of the
+same name, and its `tools` map over the base map. A file naming `plan` retunes it
+rather than replacing it with a profile that has no tool map. Global is read
+first and project second, so "project wins" needs no second pass. A malformed
+field is dropped and reported rather than failing the file, because one typo
+should not cost the other seven fields; a dropped field can still leave a profile
+whose references dangle, and decision 2 still refuses that at activation.
+
+`setModel` on switch landed with it, since a file is what makes a second model
+nameable. That exposed a real defect: `models.streamSimple` resolves the provider
+by `model.provider` at request time, and only the active provider had been
+registered — a profile on another provider would have failed on the first turn
+*after* the switch. All three are registered now.
+
 ### Not settled here
 
 - **rtk's exact field shape** — boolean, allowlist, or a generalised wrapper — is

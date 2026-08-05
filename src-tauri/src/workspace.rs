@@ -343,6 +343,29 @@ pub fn stat_path(
     }))
 }
 
+/// Root-relative paths the agent may not write, whatever the gate decided.
+///
+/// One entry: the project's own profiles file. A profile is the *trust act* —
+/// ticket 13 settled that a tool is trusted by being in one, and ticket 03 made
+/// `gatePolicy` a profile field — so an agent that can rewrite its own profile
+/// can grant itself tools and turn the gate off. The floor has to hold that,
+/// because everything above it is configuration the profile itself supplies.
+///
+/// Lowercased and forward-slashed before comparison. This is a foot-gun guard of
+/// the same kind as the exec deny list, hardened one notch: it stops the direct
+/// write, but an agent with a shell can still reach the file, and only ticket
+/// 02's confinement bounds that.
+const AGENT_PROTECTED: [&str; 1] = ["ade.profiles.json"];
+
+fn agent_may_write(id: &str) -> Result<(), String> {
+    let normalised = id.replace('\\', "/");
+    let normalised = normalised.trim_start_matches('/').to_lowercase();
+    if AGENT_PROTECTED.contains(&normalised.as_str()) {
+        return Err("refusing to write the agent's own profile file".into());
+    }
+    Ok(())
+}
+
 /// Where a root-relative id lands, with the component scan already done.
 ///
 /// Extracted when the session store needed four more commands that all make the
@@ -395,6 +418,7 @@ pub fn agent_append_file(
     use std::io::Write;
 
     let root = root_of(&state)?;
+    agent_may_write(&id)?;
     let target = contained(&root, &id)?;
     if content.len() as u64 > MAX_FILE_BYTES {
         return Err("append is larger than 2 MiB".into());
@@ -547,6 +571,7 @@ pub fn agent_write_file(
     state: tauri::State<'_, WorkspaceState>,
 ) -> Result<(), String> {
     let root = root_of(&state)?;
+    agent_may_write(&id)?;
     let candidate = Path::new(&id);
     if candidate
         .components()
@@ -700,6 +725,25 @@ mod tests {
         // `Normal` one, which is the case a naive `starts_with("/")` check misses.
         #[cfg(windows)]
         assert!(contained(&root, r"C:\Windows\System32\drivers\etc\hosts").is_err());
+    }
+
+    /// The agent may not edit the file that decides what the agent may do.
+    #[test]
+    fn agent_cannot_write_its_own_profiles() {
+        assert!(agent_may_write("src/main.rs").is_ok());
+        assert!(agent_may_write("docs/ade.profiles.json.md").is_ok());
+
+        for spelling in [
+            "ade.profiles.json",
+            "/ade.profiles.json",
+            "ADE.Profiles.json",
+            r"\ade.profiles.json",
+        ] {
+            assert!(
+                agent_may_write(spelling).is_err(),
+                "should have refused {spelling:?}"
+            );
+        }
     }
 
     #[test]

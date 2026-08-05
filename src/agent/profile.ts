@@ -180,13 +180,176 @@ export function builtinProfiles(): Profile[] {
 	];
 }
 
-const profiles = builtinProfiles();
+let profiles = builtinProfiles();
 let active: Profile = profiles[0];
 
 const listeners = new Set<(profile: Profile) => void>();
 
 export function listProfiles(): readonly Profile[] {
 	return profiles;
+}
+
+/*
+ * Reading a profile out of a file.
+ *
+ * The file is hand-written JSON, so every field is `unknown` until proven
+ * otherwise. The policy throughout is **a bad field is dropped and reported,
+ * never fatal**: one typo in `thinkingLevel` must not cost the user the other
+ * seven fields, and a file that fails to load entirely would leave someone
+ * staring at built-ins wondering why their profile did nothing. The refusal
+ * ticket 04 decided on is about *activation*, not parsing — and it still
+ * applies, because a dropped field can leave a profile whose references dangle.
+ */
+
+/** pi's own order (`pi-ai/dist/models.js:391`), which is not exported. */
+const THINKING_LEVELS: readonly ThinkingLevel[] = [
+	'off',
+	'minimal',
+	'low',
+	'medium',
+	'high',
+	'xhigh',
+	'max',
+];
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Apply one file entry over a base profile, field by field.
+ *
+ * Field-level rather than wholesale replacement, which is what makes "users
+ * override built-ins" true in the useful sense: `{"name": "plan",
+ * "thinkingLevel": "max"}` should retune `plan` and keep its tool map, not
+ * replace it with a profile that has none.
+ */
+function applyDefinition(base: Profile, raw: Record<string, unknown>, problems: string[]): Profile {
+	const name = raw.name as string;
+	const reject = (field: string, saw: unknown) =>
+		problems.push(`profile "${name}": ignoring ${field} (${JSON.stringify(saw) ?? 'undefined'})`);
+
+	const next: {
+		-readonly [K in keyof Profile]: Profile[K];
+	} = { ...base, name };
+
+	if (raw.model !== undefined) {
+		const model = raw.model;
+		if (isRecord(model) && typeof model.id === 'string' && typeof model.provider === 'string') {
+			// An unknown provider is *kept*, not corrected: `danglingReferences`
+			// reports it by name at activation, which is a better error than
+			// silently running on a provider the user did not ask for.
+			next.model = { provider: model.provider as ProviderId, id: model.id };
+		} else {
+			reject('model', model);
+		}
+	}
+
+	if (raw.thinkingLevel !== undefined) {
+		if (THINKING_LEVELS.includes(raw.thinkingLevel as ThinkingLevel)) {
+			next.thinkingLevel = raw.thinkingLevel as ThinkingLevel;
+		} else {
+			reject('thinkingLevel', raw.thinkingLevel);
+		}
+	}
+
+	if (raw.tools !== undefined) {
+		if (isRecord(raw.tools) && Object.values(raw.tools).every((on) => typeof on === 'boolean')) {
+			// Merged over the base map rather than replacing it, for the same
+			// reason the map exists at all: a file that mentions one tool is
+			// saying something about that tool and nothing about the rest.
+			next.tools = { ...base.tools, ...(raw.tools as Record<string, boolean>) };
+		} else {
+			reject('tools', raw.tools);
+		}
+	}
+
+	if (raw.instructions !== undefined) {
+		if (typeof raw.instructions === 'string') {
+			next.instructions = raw.instructions || undefined;
+		} else {
+			reject('instructions', raw.instructions);
+		}
+	}
+
+	if (raw.skills !== undefined) {
+		if (Array.isArray(raw.skills) && raw.skills.every((skill) => typeof skill === 'string')) {
+			next.skills = raw.skills as string[];
+		} else {
+			reject('skills', raw.skills);
+		}
+	}
+
+	if (raw.rtk !== undefined) {
+		if (typeof raw.rtk === 'boolean') {
+			next.rtk = raw.rtk;
+		} else {
+			reject('rtk', raw.rtk);
+		}
+	}
+
+	if (raw.gatePolicy !== undefined) {
+		if (raw.gatePolicy === 'auto' || raw.gatePolicy === 'careful') {
+			next.gatePolicy = raw.gatePolicy;
+		} else {
+			reject('gatePolicy', raw.gatePolicy);
+		}
+	}
+
+	return next;
+}
+
+/**
+ * Replace the profile set with the built-ins plus whatever the files defined.
+ *
+ * `definitions` arrives already ordered — global first, then project — and a
+ * later entry with the same name merges over an earlier one, which is decision
+ * 4's "project wins" without a second merge pass. Built-ins are the base, so a
+ * file that names `plan` retunes it and a file that names `cheap` adds it.
+ *
+ * The active profile is re-resolved **by name** and its listeners fire, so a
+ * reloaded definition of the profile you are already on takes effect rather than
+ * waiting for a switch. If the file dropped that name, the session falls back to
+ * the first profile rather than holding a profile no longer in the list.
+ */
+export function installProfiles(definitions: readonly unknown[], problems: string[] = []): string[] {
+	const merged = new Map(builtinProfiles().map((profile) => [profile.name, profile]));
+	const fallback = merged.get('auto') as Profile;
+
+	for (const definition of definitions) {
+		if (!isRecord(definition) || typeof definition.name !== 'string' || !definition.name) {
+			problems.push(`ignoring a profile with no "name": ${JSON.stringify(definition)}`);
+			continue;
+		}
+		const base = merged.get(definition.name) ?? fallback;
+		merged.set(definition.name, applyDefinition(base, definition, problems));
+	}
+
+	profiles = [...merged.values()];
+
+	/*
+	 * Re-resolving the active profile is the one place a switch can happen
+	 * without anyone asking for one, so it makes decision 2's argument itself
+	 * rather than inheriting it from `activateProfile`: a file that redefines
+	 * the profile you are running under must not be able to leave the session on
+	 * one whose references dangle. `auto` is the fallback because it is a
+	 * built-in and therefore cannot be the thing that broke.
+	 */
+	const candidate = profiles.find((profile) => profile.name === active.name) ?? profiles[0];
+	const missing = danglingReferences(candidate);
+	if (missing.length > 0) {
+		problems.push(
+			`profile "${candidate.name}" names things that do not exist: ${missing.join(', ')}. Falling back to "${profiles[0].name}".`
+		);
+		active = profiles[0];
+	} else {
+		active = candidate;
+	}
+
+	for (const listener of listeners) {
+		listener(active);
+	}
+	return problems;
 }
 
 export function activeProfile(): Profile {

@@ -2560,3 +2560,111 @@ an unmentioned tool is on and a tool added upstream falls through to its default
 (the map's whole reason for existing), that enabling something absent dangles
 while disabling something absent does not, and that a refused switch leaves the
 session on the profile it was already using.
+
+## Slice 23 — Profiles come from files, and the model follows the profile
+
+Ticket 04 shipped its data model three slices ago with two halves missing. Both
+land here, and they turn out to be one piece of work: profile files are what make
+a second model nameable, and `setModel` was unwired only because nothing could
+name one.
+
+**The global file needed its own door, and it is a narrow one.** Decision 4 puts
+a profiles file in the user's config directory, which is outside the workspace
+root by definition — so `workspace.rs`, which refuses everything above the root
+on purpose, cannot serve it. `profiles.rs` is the second door: **one fixed path,
+read-only, and it takes no argument**. That last part is the whole security
+argument. The renderer cannot name a file, so this is a single hard-coded
+location rather than a second filesystem; it refuses symlinks like `resolve`
+does, and caps at 256 KiB so a wrong path cannot pull something large into the
+renderer.
+
+**The project file moved out of `.ade/`, and the reason is worth recording.**
+Symmetry with the session store said put it there. Two things ruled it out, both
+found by asking where the user would actually see it: `.ade/.gitignore` is `*`,
+so a profile meant to be *shared with the project* would be untracked, and
+`list_tree` skips `.ade` outright — the file would be invisible in the explorer
+of the editor the user is supposed to edit it in. It lives at the workspace root
+as `ade.profiles.json`, visible and committable.
+
+**The agent cannot write its own profile.** A new floor in `workspace.rs`, and it
+is not a nicety: ticket 13 settled that a tool is trusted *by being in a profile*
+and ticket 03 made `gatePolicy` a profile field, so an agent that can rewrite
+`ade.profiles.json` can grant itself tools and turn the gate off. Refused in Rust
+rather than in the TypeScript gate, because that is the layer that holds when
+everything above it is configuration the profile itself supplies. Honest about
+its limit: an agent with a shell can still reach the file, and only ticket 02's
+cwd confinement bounds that — this stops the direct write, in the same spirit as
+the exec deny list.
+
+**Parsing policy: a bad field is dropped and named, never fatal.** One typo in
+`thinkingLevel` must not cost the other seven fields, and a file that failed to
+load *entirely* would leave someone staring at built-ins wondering why their
+profile did nothing. So every field is validated independently and every drop is
+reported through the workbench's live region. The refusal ticket 04 decided on is
+about *activation*, and it still applies — a dropped field can leave a profile
+whose references dangle, and that still refuses.
+
+Two merges, not one. Files merge **field by field** over the built-ins, so
+`{"name": "plan", "thinkingLevel": "max"}` retunes `plan` and keeps its tool map
+rather than replacing it with a profile that has none; and the `tools` map merges
+over the base map for the same reason the map exists at all — a file that
+mentions one tool is saying something about that tool and nothing about the rest.
+Global is read first and project second, so project wins by arriving later. No
+second merge pass.
+
+**Reloading re-resolves the active profile by name.** Editing the profile you are
+currently running under takes effect without a switch, because `installProfiles`
+re-points the active profile and fires its listeners. If a file drops the name
+you were on, you land on the first profile rather than holding one that is no
+longer in the list.
+
+**`setModel` needed a change nobody had noticed.** Wiring it was one line, as the
+previous slice's comment predicted. What was not one line: `models.streamSimple`
+resolves the provider from `model.provider` at request time
+(`pi-ai/dist/models.js:275` → `requireProvider`), and only the *active* provider
+was ever registered. A profile naming a model on another provider would have
+failed on the first turn after the switch rather than at the switch — a failure
+that would have read as the model being broken. All three providers are now
+registered up front; `requireProvider` does not check that the model is *listed*,
+so each gets an empty list and the model travels with the request. Order inside a
+switch matters too: `setModel` runs before the thinking clamp, so the clamp asks
+the model being switched *to* what it supports rather than the one being left.
+The context window behind the meter and auto-compaction had the same latent bug —
+both read a value captured at construction — and now follow the current model.
+
+**Verified live, end to end.** A global file defining `cheap` and `global-only`,
+a project file overriding `cheap`'s model, gate and thinking level and adding a
+deliberately malformed `broken`: six profiles listed, `cheap` showing the
+project's `deepseek-chat` over the global's value, `broken` present with its bad
+field dropped, and a real turn answered under `cheap` — which is the model coming
+from a *file* rather than an env var, and the first proof that `setModel` reaches
+the provider registry. `agent_write_file` against `ade.profiles.json` returned
+"refusing to write the agent's own profile file".
+
+One false alarm on the way, worth recording because the diagnosis mattered more
+than the fix: the first probe showed only built-ins. Nothing was wrong with the
+code — the app had opened on a *different workspace root* from an earlier probe
+session, so the project file was genuinely absent, and the global file had been
+written seconds after the app read for it. Both files loaded on the next launch.
+The lesson is the one from last slice restated: check what the app was actually
+looking at before believing what it reported.
+
+**Still open.** There is no profile editor, which is a deliberate choice rather
+than an omission — the files are hand-authored in the editor this app already is,
+and the only reason anyone can find them is that `/profile` now prints both
+paths. An editor writes the same file later; nothing here forecloses it. And the
+first model still comes from an env var, because `createAgentProvider` decides
+canned-versus-native before the files are read; a profile file can name a
+different model and switching to it applies, but it cannot yet be what the window
+opens on.
+
+**One defect the self-review caught**, and it is the interesting kind. Installing
+files re-resolves the active profile by name — which makes it the *one* place a
+profile switch happens without anyone asking for one, and it was bypassing the
+refusal decision 2 exists for. A file redefining the profile you are standing on
+could leave the session on a profile whose references dangle, and the first thing
+downstream would have been `modelFor` indexing a provider table with an unknown
+id, inside a queued task, as an unhandled rejection. So the install path makes
+decision 2's argument itself: a candidate that dangles is reported and the
+session falls back to `auto`, which cannot be the thing that broke because it is
+a built-in.
