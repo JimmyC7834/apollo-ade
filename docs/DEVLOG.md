@@ -2535,6 +2535,26 @@ running app**: with three built-ins sharing one model, no skills and a tool map
 that only ever *disables*, nothing can dangle. It is specified, checked, and
 waiting for profile files to make it reachable.
 
+**What is ours and what is pi's, audited rather than assumed.** pi's core has no
+preset or profile primitive at all — `grep -r "Preset\|Profile" dist/**/*.d.ts`
+returns nothing, which is why `preset.ts` lives in the TUI-bound extension layer.
+So the fields, the store and the refusal are genuinely ours. Everything they
+*drive* is pi's: `setActiveTools`, `setThinkingLevel`, and a `systemPrompt`
+callback awaited once per turn. The audit found one thing we had reimplemented —
+a hand-rolled `reasoning ? level : "off"` clamp where pi exports
+`clampThinkingLevel`, which reads `thinkingLevelMap` and walks to the nearest
+supported level. Replaced. pi's own adapters clamp again at request time, so what
+this actually fixes is `getThinkingLevel()` reporting a level the model will
+never honour.
+
+**And the queue pays twice.** Both setters branch on `phase === "idle"`: idle,
+they append a real session entry (`appendActiveToolsChange`,
+`appendThinkingLevelChange`); mid-run, they go to `pendingSessionWrites`. So
+waiting for idle is not only about not narrowing a turn underneath itself — it is
+what puts the change in the session tree at the point it happened, which is the
+substrate ticket 14 wants for deriving the active profile from entries rather
+than from metadata.
+
 **`profile.check.ts`** asserts the two decisions rather than the field list: that
 an unmentioned tool is on and a tool added upstream falls through to its default
 (the map's whole reason for existing), that enabling something absent dangles

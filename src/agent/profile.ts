@@ -75,6 +75,12 @@ export function setCapabilities(next: Capabilities): void {
 /**
  * Everything this profile names that does not exist.
  *
+ * Complementary to pi's own check rather than a duplicate of it:
+ * `AgentHarness.validateToolNames` **throws** `AgentHarnessError`
+ * ("invalid_argument") for an unknown active tool, which as a switch mechanism
+ * means an exception in a UI callback. This runs first and turns the same
+ * condition into a refusal that names what is missing.
+ *
  * Only tools the profile *enables* are checked. Disabling a tool that is not
  * there is not a dangling reference — it is a profile that survived the tool
  * being removed, which is exactly the degradation the map shape was chosen for.

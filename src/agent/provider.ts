@@ -19,7 +19,13 @@ import {
 	type ExecutionEnv,
 	type ThinkingLevel,
 } from '@earendil-works/pi-agent-core';
-import { createModels, createProvider, type Api, type Model } from '@earendil-works/pi-ai';
+import {
+	clampThinkingLevel,
+	createModels,
+	createProvider,
+	type Api,
+	type Model,
+} from '@earendil-works/pi-ai';
 import { anthropicMessagesApi } from '@earendil-works/pi-ai/api/anthropic-messages.lazy';
 import { googleGenerativeAIApi } from '@earendil-works/pi-ai/api/google-generative-ai.lazy';
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy';
@@ -260,10 +266,15 @@ function createRunner(
 	 * the API then returns no `reasoning_content`, so no `thinking_delta` is ever
 	 * emitted and the transcript looks like a non-reasoning model.
 	 *
-	 * The profile names the level, but asking a non-reasoning model to think is a
-	 * request some providers reject outright, so the model has the last word.
+	 * The profile names the level and the model has the last word, which is
+	 * **pi's `clampThinkingLevel`** rather than a rule of ours — the adopt list
+	 * from [ticket 15](docs/wayfinder/pi-harness/tickets/15-core-already-does-this.md).
+	 * It reads `thinkingLevelMap` and walks to the nearest supported level, where
+	 * the obvious hand-rolled version (`reasoning ? level : "off"`) is only its
+	 * first line. pi's own adapters clamp again at request time; what this fixes
+	 * is `getThinkingLevel()` reporting a level the model will never honour.
 	 */
-	const thinkingFor = (level: ThinkingLevel): ThinkingLevel => (model.reasoning ? level : 'off');
+	const thinkingFor = (level: ThinkingLevel): ThinkingLevel => clampThinkingLevel(model, level);
 
 	/*
 	 * Opening the session is I/O, so the harness cannot exist until it lands.
@@ -336,6 +347,13 @@ function createRunner(
 	 * between turns rather than inside one. Narrowing the tool set halfway
 	 * through a turn would be retroactive in the one way ticket 14 forbids: the
 	 * model would have been offered a tool it is then denied, mid-run.
+	 *
+	 * pi rewards the queue a second time. Both setters branch on
+	 * `phase === "idle"`: idle, they append a real session entry
+	 * (`appendActiveToolsChange`, `appendThinkingLevelChange`); mid-run they go
+	 * to `pendingSessionWrites` to be flushed later. Waiting for idle is what
+	 * puts the change in the session tree where it happened — which is the
+	 * substrate ticket 14 wants for deriving the active profile from entries.
 	 *
 	 * Only the two fields a built-in profile can differ in need applying.
 	 * `instructions` needs nothing, because the system prompt is a callback the
