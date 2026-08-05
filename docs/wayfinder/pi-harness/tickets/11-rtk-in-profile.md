@@ -119,3 +119,105 @@ anything at all. Whether the ADE surfaces it is a UI question and not decided he
 one honest caveat belongs on the record: rtk's savings figures were designed with a human
 reader in mind, and a coding agent is a different consumer. That the numbers go down is
 not by itself evidence the turns got better.
+
+---
+
+## Amendment — how rtk is obtained, and where it applies
+
+**Status: deferred.** The field shape above (`rtk: boolean`) is unaffected and stands.
+What is reopened is the *mechanism* — the resolution assumed an rtk binary on `PATH` and
+a `prepare` hook rewriting the command, and the findings below make that one option of
+five rather than the obvious one. Nothing is built. This section is the record so the
+choice is made on facts rather than on recall.
+
+### Findings, verified rather than remembered
+
+All checked against the installed binary and the published repository:
+
+- **The project is `github.com/rtk-ai/rtk`**, v0.44.2, **Apache-2.0**, homepage
+  `rtk-ai.app`. The copy on this machine is `~/.local/bin/rtk.exe`, v0.43.0, 8.5 MB —
+  a downloaded release binary, not a `cargo install`.
+- **The crates.io name is taken by a different project.** `crates.io/crates/rtk` is
+  "The CLI for Rust Type Kit", v0.1.0, `reachingforthejack/rtk`. The collision the dev's
+  own notes warn about is real and occupies the name; rtk-ai's rtk **is not on crates.io
+  at all**.
+- **It is binary-only.** `Cargo.toml` has no `[lib]`, there is no `src/lib.rs`, and
+  `src/main.rs` is 122 KB. **Cargo cannot depend on it** — a git dependency resolves a
+  library target and there is none. Calling its functions requires a fork that adds a lib
+  target and widens module visibility, against an unversioned internal API on a project
+  that shipped 0.27 → 0.44 inside one afternoon of reading it.
+- **Distribution** is Homebrew, an `install.sh`, `cargo install --git`, and per-platform
+  GitHub release binaries (macOS x86_64/aarch64, Linux x86_64/aarch64, Windows). No npm,
+  scoop or winget.
+- **It splits into two halves that are nothing alike**, and this is the load-bearing
+  finding:
+  - **`src/cmds/`** — Rust, twelve language-specific subdirectories. This half **spawns
+    the underlying tool itself with tuned arguments and reformats the result**.
+  - **`src/filters/`** — **97 TOML files, no Rust.** Declarative rules applied to
+    *already-captured* stdout/stderr through a documented 8-stage pipeline:
+    `strip_ansi → replace → match_output → strip/keep_lines → truncate → tail_lines →
+    max_lines → on_empty`. Upstream's stated rule for this half is that filters strip
+    noise and **do not reformat** — "the filtered result must still look like real
+    command output."
+- **Measured, not assumed:** `rtk git status` returns `* master` / `clean — nothing to
+  commit` where raw git returns `On branch master` / `nothing to commit, working tree
+  clean`. That is a *different invocation* (porcelain, near-certainly) plus a renderer —
+  so **rtk's value is not a post-filter over output we already have**. By contrast
+  `rtk git log --oneline -3` is byte-identical to raw. The savings are unevenly
+  distributed across the two halves.
+- **Weight:** 8.5 MB on disk, **3.9 MB gzipped** — against **3.1 MB gzipped** for this
+  app's entire frontend, Monaco and pi and every provider included. Bundling rtk adds
+  more compressed weight than everything currently shipped in the WebView.
+- **Unverified and load-bearing if we ever redistribute it:** the binary references
+  `docs/TELEMETRY.md` and its default config carries `[tracking] enabled = true,
+  history_days = 90`. That is *probably* the local history behind `rtk gain`, but
+  "probably" is not good enough to ship inside someone else's installer. Read it first.
+
+### The five viable routes
+
+Each is stated with what it costs, because none is free:
+
+1. **A — call whatever `rtk` is on `PATH`.** The original resolution. Zero weight, zero
+   packaging, works today on this machine. Costs: PATH roulette, the crates.io name
+   collision is a live hazard for anyone who installed the wrong one, and the
+   approval-mismatch caveat above stays load-bearing.
+2. **B — bundle the release binary as a Tauri `externalBin` sidecar.** Kills "absent",
+   pins the exact version, ships inside a signed installer. Costs: **+3.9 MB compressed
+   for every user including those who never enable it**, per-platform artifacts in the
+   release pipeline, Apache-2.0 attribution alongside pi's MIT, and the telemetry
+   question above becomes mandatory reading. Does *not* fix the approval mismatch.
+3. **C — depend on it as a library.** **Not available.** No lib target, not on crates.io.
+   This is a fork with a `lib.rs` and widened visibility, maintained against an
+   unversioned internal API. Listed because it was asked for and because ruling it out
+   needed the evidence above, not because it is viable.
+4. **D — fetch on first enable.** Rust downloads the pinned release asset into the app
+   data directory when a profile first turns `rtk` on, verifies a recorded SHA-256, and
+   caches it. Keeps B's version pinning with none of the installer weight; only users who
+   opt in pay, and in disk rather than download. Costs: **the app downloads and executes
+   a third-party binary at runtime**, which is a larger security-design question than the
+   weight it saves and deserves its own grilling.
+5. **E — vendor the filter *data*, implement the pipeline ourselves.** Take the 97 TOML
+   files at a pinned tag under Apache-2.0 with attribution, and implement the eight
+   documented stages in `src-tauri` over the output our own `exec` already captures.
+   **~100 KB rather than 8.5 MB**, no sidecar, no download, no fork, no internal API —
+   TOML is a stable data contract and a new upstream filter is a file copy.
+   **Rust keeps sole process authority**, so ticket 02's confinement, Channel streaming,
+   process-tree abort and overflow file all continue to apply. And it **deletes decisions
+   1 and 2 of the resolution above** rather than amending them: nothing is rewritten, so
+   the user approves the exact command that runs, and there is no external binary that
+   can be absent. Costs: **the `cmds/` half does not come with it** — the tuned git,
+   cargo and npm invocations are where a large share of the headline savings live — and
+   we own an engine, small as it is, that must keep matching upstream's semantics.
+
+### What this changes structurally
+
+A and B and D apply rtk **before** the command runs, in `prepare`, which is why the
+resolution had to document that what the user approved is not literally what runs. E
+applies it **after**, in the exec adapter, where the question cannot arise. That is a
+different seam, not a different setting, which is why this is deferred rather than
+decided in passing.
+
+They are also not exclusive. E now and B or D later for the `cmds/` half is a coherent
+sequence, and E is the only one of the five that can be built without first settling a
+distribution or a security question.
+

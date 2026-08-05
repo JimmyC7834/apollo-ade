@@ -215,7 +215,14 @@ built.
   applied in the bash tool's `prepare` hook (not `commandPrefix`, which is a preamble
   line). pi's ordering means **the gate sees the original command and rtk rewrites after
   approval** — defensible only while rtk is semantically transparent. Absent or failing
-  rtk falls back to the raw command and says so once.
+  rtk falls back to the raw command and says so once. **Amended, and the mechanism is
+  deferred**: the field shape stands, but rtk is **binary-only and not on crates.io**
+  (that name is the collision), and it splits into a Rust half that *spawns and
+  reformats* and **97 declarative TOML filters** that only strip noise from output
+  already captured. Five routes are on the ticket with their costs; the one that needs no
+  distribution or security question settled first is **vendoring the filter data and
+  running it in our own exec adapter**, which moves rtk from before the command to after
+  it and dissolves the approval mismatch.
 
 - [How a user adds their own tool](tickets/13-user-authored-tools.md) — **declarative
   manifest** for v1 (schema + shell command template), versioned with a `runtime`
@@ -310,6 +317,14 @@ built.
   entries, every number but DeepSeek's copied from pi's own catalog data rather than
   remembered. An unlisted model still has an *unknown* window, which is the answer that
   keeps auto-compaction from firing against a fabricated denominator.
+- **How rtk is obtained, and which seam it applies at.** Deferred with the evidence
+  gathered — see the amendment on
+  [How rtk becomes a profile setting](tickets/11-rtk-in-profile.md). Five routes, priced:
+  PATH lookup, bundled sidecar, library dependency (**ruled out — no lib target, and the
+  crates.io name belongs to an unrelated project**), fetch-on-enable, and vendoring the
+  TOML filter data. The two numbers that decide it: rtk is **3.9 MB gzipped against a
+  3.1 MB gzipped frontend**, and its filter half is **data, not code**. Blocks nothing
+  else; `rtk: boolean` already round-trips on the profile.
 - **Where profiles are stored.** The data model shipped without its storage half: the
   three built-ins are the whole set, so "users override built-ins" is still a promise.
   Decision 4 settled the *shape* (global plus project, project winning); what is open is
