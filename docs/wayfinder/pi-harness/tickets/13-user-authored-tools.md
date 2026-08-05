@@ -311,10 +311,12 @@ four lines. `/reload` re-reads both files; the install paths already handled
 being run twice, so nothing here is a first-load special case. `/profile` says
 so, since nobody would guess.
 
-**What is still honestly missing.** The destructive refusal cannot be
-overridden: a tool that legitimately clears a build directory is permanently
-unusable, because refusing is all a tool can do without a way to reach the
-gate's approval path. Routing it through is real plumbing rather than a tweak.
+**What is still honestly missing**, now its own ticket:
+[How a tool asks a question](18-tool-reaches-the-gate.md). The destructive
+refusal cannot be overridden, so a tool that legitimately clears a build
+directory is permanently unusable rather than merely gated — refusing is all a
+tool can do without a way to reach the gate's approval path, and routing it
+through is a decision rather than a tweak.
 
 ### Not settled here
 

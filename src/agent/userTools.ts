@@ -377,8 +377,11 @@ function createUserTool(tool: UserTool): AgentHarnessTool<{ env: unknown }> {
 			 * tools strictly stricter than bash here, which is the safe direction:
 			 * `bash` is still there for someone who means it.
 			 *
-			 * ponytail: refuse-only. Route it through the gate's approval if a
-			 * real destructive user tool ever turns out to be wanted.
+			 * Refuse-only, and that is a known gap rather than the end of the
+			 * argument: a tool that legitimately clears a build directory is
+			 * permanently dead here, not merely gated. Ticket 18
+			 * (docs/wayfinder/pi-harness/tickets/18-tool-reaches-the-gate.md)
+			 * settles whether a tool should be able to ask, and how.
 			 */
 			const why = destructive(argv.join(' '));
 			if (why) {

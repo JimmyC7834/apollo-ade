@@ -17,6 +17,12 @@ session runs under and can switch to mid-run), a **permission gate** on tool cal
 The map is done when every decision needed to *build* that is made — not when it is
 built.
 
+That line held: all seventeen charted tickets closed. What it did not anticipate is that
+*building* would raise a decision charting could not have — see
+[ticket 18](tickets/18-tool-reaches-the-gate.md) under "Not yet specified", which is
+open. A closed map is not a finished one; it is one where nothing is blocked on a
+question nobody has asked yet.
+
 ## Notes
 
 - **Domain**: TypeScript, Tauri/Rust, agent harness architecture.
@@ -264,6 +270,16 @@ built.
 
 ## Not yet specified
 
+- **How a tool asks a question** — [ticket 18](tickets/18-tool-reaches-the-gate.md),
+  **open**, and the only open ticket on this map. It did not come from charting; it fell
+  out of *building* ticket 13, which is why it arrives after the other seventeen closed.
+  A user tool that hits the deny list refuses rather than asks, because `createGate` is
+  built per turn and reached through the `tool_call` hook while a tool's `execute()` has
+  no handle on either. Safe and honest, and it makes a legitimate tool — `["rm", "-rf",
+  "{dir}"]` for a build directory — permanently dead rather than merely gated. The
+  ticket settles whether a tool should be able to ask at all, and by what mechanism if
+  so. Worth landing alongside **approval memory** below, since a tool that can ask is a
+  second caller for whatever that becomes.
 - **Profiles as subagent definitions.** The same payload (tools + prompt + model)
   configures both a session and a spawned child. Claude Code unifies them; whether
   pi's core even supports subagent forking is unverified. Blocked behind the profile
