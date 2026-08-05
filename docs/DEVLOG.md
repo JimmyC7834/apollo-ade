@@ -2742,8 +2742,27 @@ in. And a manifest may not shadow `read`, `write`, `edit` or `bash` — pi throw
 on duplicate names, so this would otherwise take the harness down at `setTools`
 rather than at parse.
 
-**Still thin, and named rather than argued away.** Parameters are all required
-strings: no optional argv slots, no numbers, no enums. That is the first thing
-to widen and the only place the format is meaner than it needs to be. Output
-does not stream — a user tool returns when it exits, where `bash` shows its
-work — which is right for a linter and wrong for anything long.
+**Parameters widened before the slice closed**, because "all required strings"
+was the only place the format was meaner than it needed to be. The short form
+still means a required string and is still what almost every tool writes; the
+long form adds `type`, `required` and `choices`.
+
+Two decisions fell out of it. **An omitted optional takes its whole argv element
+with it** rather than substituting an empty string — one rule, and it is right
+in both shapes it has to be right in: `["rg", "{pattern}", "{path}"]` without a
+path runs `rg pattern`, and `"--project={dir}"` without a dir disappears rather
+than becoming a bare `--project=`. Substituting empty would have been the
+smaller change and would have handed a program an empty argument where it asked
+for a path. And **`choices` emits `enum` rather than a union of literals**:
+TypeBox's union produces `anyOf: [{const}, ...]`, which is correct JSON Schema
+and precisely what Google's function-declaration subset is worst at, where
+`enum` is what every provider reads. TypeBox validates the keyword either way,
+so the portable form is free — worth checking rather than assuming, since the
+usual trade here is portability against validation.
+
+The model handled both live: it picked a value from `choices`, supplied the
+optional number when the prompt implied one, and left it out when it did not.
+
+**What is still thin, named rather than argued away.** Output does not stream —
+a user tool returns when it exits, where `bash` shows its work. Right for a
+linter, wrong for anything long.

@@ -42,12 +42,84 @@ const PLACEHOLDER = /\{([^{}]*)\}/g;
  */
 const RESERVED = new Set(['read', 'write', 'edit', 'bash']);
 
+/**
+ * One parameter, in the manifest's long form.
+ *
+ * `"pattern": "what to find"` is the short form and means exactly
+ * `{ description: "what to find", type: "string", required: true }` — which is
+ * what almost every tool wants, so it stays the thing you write by default. The
+ * long form exists for the three cases the short one cannot say.
+ */
+export interface UserToolParameter {
+	readonly description: string;
+	readonly type: 'string' | 'number' | 'boolean';
+	readonly required: boolean;
+	/** A closed set of allowed values. Strings only. */
+	readonly choices?: readonly string[];
+}
+
 export interface UserTool {
 	readonly name: string;
 	readonly description: string;
-	/** Parameter name to its model-visible description. Every one is required. */
-	readonly parameters: Readonly<Record<string, string>>;
+	readonly parameters: Readonly<Record<string, UserToolParameter>>;
 	readonly argv: readonly string[];
+}
+
+const TYPES = ['string', 'number', 'boolean'] as const;
+
+/**
+ * Read one parameter, short form or long.
+ *
+ * Returns the reason it is wrong rather than throwing, because the caller turns
+ * that into the manifest's single rejection message — a parameter is not
+ * separately salvageable from the tool it belongs to.
+ */
+function parseParameter(raw: unknown): UserToolParameter | string {
+	if (typeof raw === 'string') {
+		return raw.trim()
+			? { description: raw, type: 'string', required: true }
+			: 'needs a description';
+	}
+	if (!isRecord(raw)) {
+		return `must be a description or an object, saw ${JSON.stringify(raw)}`;
+	}
+	if (typeof raw.description !== 'string' || !raw.description.trim()) {
+		return 'needs a description';
+	}
+
+	const type = raw.type ?? 'string';
+	if (!TYPES.includes(type as (typeof TYPES)[number])) {
+		return `has type ${JSON.stringify(raw.type)}; expected one of ${TYPES.join(', ')}`;
+	}
+
+	const required = raw.required ?? true;
+	if (typeof required !== 'boolean') {
+		return `has required ${JSON.stringify(raw.required)}; expected true or false`;
+	}
+
+	let choices: string[] | undefined;
+	if (raw.choices !== undefined) {
+		if (
+			!Array.isArray(raw.choices) ||
+			raw.choices.length === 0 ||
+			!raw.choices.every((choice) => typeof choice === 'string')
+		) {
+			return 'needs "choices" as a non-empty array of strings';
+		}
+		if (type !== 'string') {
+			// Allowing it would mean a schema whose declared type and enumerated
+			// values disagree, which providers handle inconsistently.
+			return '"choices" only applies to a string';
+		}
+		choices = raw.choices as string[];
+	}
+
+	return {
+		description: raw.description,
+		type: type as UserToolParameter['type'],
+		required,
+		...(choices ? { choices } : {}),
+	};
 }
 
 /*
@@ -103,17 +175,21 @@ function parseTool(raw: unknown, problems: string[]): UserTool | undefined {
 	}
 	const argv = raw.argv as string[];
 
-	let parameters: Record<string, string> = {};
+	const parameters: Record<string, UserToolParameter> = {};
 	if (raw.parameters !== undefined) {
-		if (
-			!isRecord(raw.parameters) ||
-			!Object.entries(raw.parameters).every(
-				([key, description]) => NAME.test(key) && typeof description === 'string'
-			)
-		) {
-			return said('needs "parameters" as { name: "description" }, with string descriptions');
+		if (!isRecord(raw.parameters)) {
+			return said('needs "parameters" as { name: "description" }');
 		}
-		parameters = raw.parameters as Record<string, string>;
+		for (const [key, value] of Object.entries(raw.parameters)) {
+			if (!NAME.test(key)) {
+				return said(`has a parameter named ${JSON.stringify(key)}; use a short identifier`);
+			}
+			const parameter = parseParameter(value);
+			if (typeof parameter === 'string') {
+				return said(`parameter "${key}" ${parameter}`);
+			}
+			parameters[key] = parameter;
+		}
 	}
 
 	if (RESERVED.has(name)) {
@@ -157,11 +233,49 @@ function parseTool(raw: unknown, problems: string[]): UserTool | undefined {
  * element — and that is the security property. A value containing spaces,
  * quotes, semicolons or globs stays one argument, because nothing downstream
  * ever parses it again.
+ *
+ * **An element mentioning an omitted optional parameter is dropped whole.** One
+ * rule, and it is right in both shapes it has to be right in: `["rg",
+ * "{pattern}", "{path}"]` without a path runs `rg pattern` rather than `rg
+ * pattern ""`, and `"--project={dir}"` without a dir disappears rather than
+ * becoming a bare `--project=`. Substituting the empty string would have been
+ * the smaller change and would pass an empty argument to a program that asked
+ * for a path.
  */
 export function resolveArgv(tool: UserTool, params: Record<string, unknown>): string[] {
-	return tool.argv.map((element) =>
-		element.replace(PLACEHOLDER, (_, key: string) => String(params[key] ?? ''))
-	);
+	const given = (key: string) => Object.hasOwn(params, key) && params[key] !== undefined;
+
+	return tool.argv.flatMap((element) => {
+		const mentioned = [...element.matchAll(PLACEHOLDER)].map(([, key]) => key);
+		if (mentioned.some((key) => !given(key))) {
+			return [];
+		}
+		return [element.replace(PLACEHOLDER, (_, key: string) => String(params[key]))];
+	});
+}
+
+/**
+ * One parameter as the model will see it.
+ *
+ * `Type.Optional` rather than leaving it out of `required`, because that is
+ * what TypeBox emits a correct `required` array from — and the array is the
+ * only thing a provider reads to decide whether it may omit an argument.
+ */
+function schemaFor(spec: UserToolParameter): TSchema {
+	const options = { description: spec.description };
+	const base = spec.choices
+		? // `enum` on a string rather than a union of literals. TypeBox emits the
+			// union as `anyOf: [{const}, ...]`, which is correct JSON Schema and
+			// the thing Google's function-declaration subset is worst at; `enum`
+			// is what every provider reads. Checked against TypeBox: it validates
+			// the keyword, so portability costs nothing here.
+			Type.String({ ...options, enum: [...spec.choices] })
+		: spec.type === 'number'
+			? Type.Number(options)
+			: spec.type === 'boolean'
+				? Type.Boolean(options)
+				: Type.String(options);
+	return spec.required ? base : Type.Optional(base);
 }
 
 type ExecOutcome = { stdout: string; stderr: string; exitCode: number };
@@ -184,12 +298,7 @@ function report(argv: readonly string[], outcome: ExecOutcome): string {
  */
 function createUserTool(tool: UserTool): AgentHarnessTool<{ env: unknown }> {
 	const parameters = Type.Object(
-		Object.fromEntries(
-			Object.entries(tool.parameters).map(([key, description]) => [
-				key,
-				Type.String({ description }),
-			])
-		)
+		Object.fromEntries(Object.entries(tool.parameters).map(([key, spec]) => [key, schemaFor(spec)]))
 	) as TSchema;
 
 	return {

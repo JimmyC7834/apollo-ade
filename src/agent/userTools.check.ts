@@ -52,6 +52,55 @@ const profileNamed = (name: string): Profile => {
 	assert.deepEqual(resolveArgv(only(), { dir: 'a b' }), ['tsc', '--project=a b']);
 }
 
+// Parameters beyond required strings. The short form still means what it meant,
+// and an omitted optional takes its whole argv element with it — `rg pattern`
+// rather than `rg pattern ""`, which is a different command.
+{
+	installUserTools([
+		{
+			name: 'search',
+			description: 'search',
+			argv: ['rg', '--max-count={limit}', '--{mode}', '{pattern}', '{path}'],
+			parameters: {
+				pattern: 'what to find',
+				path: { description: 'where', required: false },
+				limit: { description: 'how many', type: 'number', required: false },
+				mode: { description: 'output', choices: ['json', 'text'] },
+			},
+		},
+	]);
+	const tool = only();
+
+	assert.deepEqual(tool.parameters.pattern, {
+		description: 'what to find',
+		type: 'string',
+		required: true,
+	});
+
+	assert.deepEqual(resolveArgv(tool, { pattern: 'x', path: 'src', limit: 3, mode: 'json' }), [
+		'rg',
+		'--max-count=3',
+		'--json',
+		'x',
+		'src',
+	]);
+	assert.deepEqual(
+		resolveArgv(tool, { pattern: 'x', mode: 'text' }),
+		['rg', '--text', 'x'],
+		'both omitted elements are gone, not blank'
+	);
+	// `false` is a value, not an omission — the trap in writing this with `??`.
+	installUserTools([
+		{
+			name: 'flag',
+			description: 'flag',
+			argv: ['go', '--strict={on}'],
+			parameters: { on: { description: 'strict?', type: 'boolean' } },
+		},
+	]);
+	assert.deepEqual(resolveArgv(only(), { on: false }), ['go', '--strict=false']);
+}
+
 // The floor reaches user tools through the resolved argv, which is decision 4:
 // the gate examines the command, not the tool's identity, and being trusted
 // enough to be in a profile does not lift it.
@@ -76,6 +125,15 @@ const profileNamed = (name: string): Profile => {
 		{ ...GREP, argv: ['rg', '{nope}'] },
 		// Off `Object.prototype`, which `key in parameters` would have accepted.
 		{ ...GREP, argv: ['rg', '{toString}'] },
+		{ ...GREP, parameters: { pattern: 'p', path: { description: 'where', type: 'date' } } },
+		{ ...GREP, parameters: { pattern: 'p', path: { description: '' } } },
+		{ ...GREP, parameters: { pattern: 'p', path: { description: 'where', required: 'no' } } },
+		{ ...GREP, parameters: { pattern: 'p', path: { description: 'where', choices: [] } } },
+		// A closed set of values only means anything for a string.
+		{
+			...GREP,
+			parameters: { pattern: 'p', path: { description: 'where', type: 'number', choices: ['a'] } },
+		},
 		{ ...GREP, argv: ['rg', '{pattern}'] },
 		'not an object',
 	];

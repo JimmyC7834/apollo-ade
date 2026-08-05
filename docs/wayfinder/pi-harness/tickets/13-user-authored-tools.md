@@ -242,10 +242,29 @@ parameter values: every one came back printed verbatim, so nothing downstream
 word-splits, substitutes or glob-expands. Under a profile that did not name the
 tool, the model listed only `read, write, edit, bash`.
 
-**What is honestly missing.** Parameters are all required strings — no optional
-slots, no numbers, no enums — which is the one place the shape is thinner than
-it needs to be and the first thing to widen. Output does not stream; a user tool
-returns when it exits.
+**Parameters, widened.** `"pattern": "what to find"` still means a required
+string and is still what almost every tool writes. The long form —
+`{ description, type, required, choices }` — adds numbers, booleans, optional
+slots and a closed set of values. Two things it forced:
+
+- **An omitted optional takes its whole argv element with it.** One rule,
+  right in both shapes it has to be right in: `["rg", "{pattern}", "{path}"]`
+  without a path runs `rg pattern` rather than `rg pattern ""`, and
+  `"--project={dir}"` without a dir disappears rather than becoming a bare
+  `--project=`. Substituting the empty string would have been the smaller change
+  and would pass an empty argument to a program that asked for a path.
+- **`choices` emits `enum`, not a union of literals.** TypeBox's `Type.Union`
+  produces `anyOf: [{const}, …]`, which is correct JSON Schema and the thing
+  Google's function-declaration subset handles worst; `enum` is what every
+  provider reads. TypeBox validates the keyword either way, so the portable
+  form costs nothing.
+
+Verified with real turns: the model picked a value from `choices`, supplied the
+optional number when the prompt implied it, and omitted it when it did not.
+
+**What is still honestly missing.** Output does not stream — a user tool returns
+when it exits, where `bash` shows its work. Right for a linter, wrong for
+anything long.
 
 ### Not settled here
 
