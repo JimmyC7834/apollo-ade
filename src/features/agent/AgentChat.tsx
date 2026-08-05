@@ -9,6 +9,7 @@ import type { AgentEvent, AgentProvider, AgentRun } from '../../agent';
 import { pressure } from '../../agent/compaction';
 import { activateProfile, activeProfile, listProfiles } from '../../agent/profile';
 import { profileSources } from '../../agent/profileFiles';
+import { userTools } from '../../agent/userTools';
 import { Icon, Overlay } from '../../ui';
 import {
 	applyEvent,
@@ -268,6 +269,16 @@ export function AgentChat({ provider, onAnnounce }: AgentChatProps) {
 								`${profile.model.id || 'no model'}, ${profile.gatePolicy}, ` +
 								`thinking ${profile.thinkingLevel}${profile.rtk ? ', rtk' : ''}`
 						),
+						// Said out loud because a declared tool is *not* armed — a
+						// profile has to name it (ticket 13), so a user who wrote a
+						// manifest and saw nothing happen needs the other half.
+						...(userTools().length > 0
+							? [
+									`\nYour tools: ${userTools()
+										.map((tool) => tool.name)
+										.join(', ')}. A profile must name one in "tools" to enable it.`,
+								]
+							: []),
 						// Where to write one. There is no profile editor, so a user
 						// who is not told this has no way to find out.
 						`\nDefined in ${profileSources().projectFile} (this project)` +

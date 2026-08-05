@@ -55,6 +55,23 @@ export interface Profile {
 export interface Capabilities {
 	readonly tools: readonly string[];
 	readonly skills: readonly string[];
+	/**
+	 * Tools that are **off** unless a profile names them, inverting the rule
+	 * above for user-authored tools only.
+	 *
+	 * The two closed tickets contradict each other here and this is where they
+	 * are reconciled. Ticket 04's default-on exists so a tool *pi* adds upstream
+	 * does not vanish from profiles written before it existed — the profile
+	 * author never had the chance to mention it. Ticket 13's "adding a tool to a
+	 * profile **is** the trust decision" is what justifies user tools not being
+	 * asked about at invocation. Default-on would make that false: dropping a
+	 * manifest on disk would arm it everywhere and the trust act would never
+	 * happen.
+	 *
+	 * So the rule follows the argument rather than the mechanism: default-on for
+	 * tools nobody chose to have, opt-in for tools someone wrote.
+	 */
+	readonly optIn?: readonly string[];
 }
 
 let capabilities: Capabilities = { tools: [], skills: [] };
@@ -105,7 +122,9 @@ export function danglingReferences(profile: Profile, have: Capabilities = capabi
 
 /** Which tools run under this profile, in the order the harness was given them. */
 export function activeToolNames(profile: Profile, have: Capabilities = capabilities): string[] {
-	return have.tools.filter((name) => profile.tools[name] !== false);
+	// `?? default` rather than `!== false`, so the map's third state — not
+	// mentioned — resolves per tool instead of globally. See `optIn`.
+	return have.tools.filter((name) => profile.tools[name] ?? !have.optIn?.includes(name));
 }
 
 /*

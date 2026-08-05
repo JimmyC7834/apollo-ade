@@ -229,16 +229,20 @@ built.
   running it in our own exec adapter**, which moves rtk from before the command to after
   it and dissolves the approval mismatch.
 
-- [How a user adds their own tool](tickets/13-user-authored-tools.md) — **declarative
-  manifest** for v1 (schema + shell command template), versioned with a `runtime`
+- [How a user adds their own tool](tickets/13-user-authored-tools.md) — **built.** A
+  **declarative manifest** for v1 (schema + argv array), versioned with a `runtime`
   discriminator so Worker-hosted scripts slot in later. Renderer scripts are out on
   evidence: Tauri capabilities are per-*window*, so any renderer code reaches every
   command. **Tools are not gated — profile membership is the trust act — and the gate
   moves below the tool layer onto commands and destructive actions.** Trust does not lift
-  the floor. **Amended**: the manifest declares **argv, not a command string** — parameters
-  fill whole argv slots and are never shell-parsed, closing an injection hole. Rewriting
-  pi's built-ins into the same format was considered and rejected; what is shared is the
-  Rust floor, not the tool format.
+  the floor: the deny list is checked against the resolved argv. **Amended**: the manifest
+  declares **argv, not a command string** — parameters fill whole argv slots and are never
+  shell-parsed, closing an injection hole. Rewriting pi's built-ins into the same format
+  was considered and rejected; what is shared is the Rust floor, not the tool format.
+  Shipping corrected one thing: ticket 04's "an unmentioned tool is on" is right for
+  tools pi adds and wrong for tools a user writes, so **user tools are opt-in** and a
+  manifest on disk is not a trust decision. Manifests live in the profile files, so the
+  tool and the profile that names it are authored together.
 - [What the system prompt is made of](tickets/17-system-prompt-assembly.md) —
   **`instructions` appends, only appends**, and the order is base → instructions →
   skills → **shell and workspace facts last**. That inverts the ticket's own premise:

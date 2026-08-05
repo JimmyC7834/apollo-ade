@@ -52,6 +52,7 @@ import {
 	type ProfileModel,
 	type ProviderId,
 } from './profile';
+import { onUserToolsChange, userToolDefinitions, userTools } from './userTools';
 
 /** Which shell Rust resolved, or undefined outside the native shell. */
 async function resolveShell(): Promise<string | undefined> {
@@ -279,8 +280,25 @@ function createRunner(
 	 * progress and overflow on top of `env.exec`, so Rust only has to run a
 	 * command and stream chunks.
 	 */
-	const tools = [createReadTool(), createWriteTool(), createEditTool(), createBashTool()];
-	setCapabilities({ tools: tools.map((tool) => tool.name), skills: [] });
+	const builtins = [createReadTool(), createWriteTool(), createEditTool(), createBashTool()];
+
+	/*
+	 * The user's own tools sit beside them, and the two sets are told apart
+	 * because they follow opposite defaults: an unmentioned built-in is on, an
+	 * unmentioned user tool is off. See `Capabilities.optIn`.
+	 *
+	 * Declared here rather than in `userTools.ts` because this is the only place
+	 * that knows both halves — pi's built-ins are constructed here, and the
+	 * store is what refuses a profile naming something outside the union.
+	 */
+	let tools = [...builtins, ...userToolDefinitions()];
+	const declare = () =>
+		setCapabilities({
+			tools: tools.map((tool) => tool.name),
+			skills: [],
+			optIn: userTools().map((tool) => tool.name),
+		});
+	declare();
 
 	/**
 	 * The level this model will tolerate.
@@ -409,6 +427,26 @@ function createRunner(
 				await harness.setActiveTools(activeToolNames(profile));
 				await harness.setThinkingLevel(thinkingFor(profile.thinkingLevel));
 			})
+		);
+	});
+
+	/*
+	 * The user's tool files, which land long after this — they are read once the
+	 * workspace root is known, and the harness is built before that.
+	 *
+	 * `setTools` takes the active list too, so the harness never sees a moment
+	 * where a newly declared tool exists but no profile has decided about it.
+	 * The `declare()` is synchronous and the harness call is not, deliberately:
+	 * `installProfiles` runs immediately after `installUserTools` and validates
+	 * against `setCapabilities`, where the harness only needs to know by the
+	 * next turn — and going through the queue is what keeps the tool set from
+	 * changing under a run in flight.
+	 */
+	onUserToolsChange(() => {
+		tools = [...builtins, ...userToolDefinitions()];
+		declare();
+		void ready.then((harness) =>
+			enqueue(() => harness.setTools(tools, activeToolNames(activeProfile())))
 		);
 	});
 

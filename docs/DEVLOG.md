@@ -2668,3 +2668,82 @@ id, inside a queued task, as an unhandled rejection. So the install path makes
 decision 2's argument itself: a candidate that dangles is reported and the
 session falls back to `auto`, which cannot be the thing that broke because it is
 a built-in.
+
+## Slice 24 — The user can add their own tools
+
+The last of the three features the map names beyond pi. Profiles shipped in
+slice 23 and the gate before it; this is
+[ticket 13](wayfinder/pi-harness/tickets/13-user-authored-tools.md), which was
+fully decided and had not a line of code in the repo.
+
+**A manifest, not a script.** A name, a description, a parameter list and an
+argv array. No user code runs in our process, so there is no new trust boundary
+to reason about — the ticket's own reason for making this v1. It is honestly
+less than pi offers: no logic, no conditionals, no state between calls. The
+`runtime` discriminator is in the format from the first manifest so a
+`"worker"` variant can arrive without breaking every file already written.
+
+**argv is the whole security argument, and it is worth being concrete about
+why.** If parameters substituted into a command *string* that a shell then
+parsed, a tool declared `grep {pattern} .` would be arbitrary code execution the
+moment the model supplied `pattern = "; rm -rf ~"` — the user authored a grep
+tool and the model got a shell, and the gate cannot save it because by then the
+injected fragment *is* the command. So `agent_exec` grew an `argv` field: set,
+Rust spawns it directly with no shell involved; unset, the existing shell path
+is untouched. Everything else is shared — the cwd confinement, the job object
+that reaps the process tree, the timeout, the streaming. A user tool is not a
+second execution path, which is what keeps the floor meaning one thing.
+
+Tested by passing `; echo pwned`, `$(whoami)`, `` `whoami` `` and `*` as
+parameter values through a tool that prints its argument. All four came back
+printed verbatim. The `*` is the one that would have been quietly wrong: a
+shell would have expanded it against the working directory and nobody would
+have noticed until a tool did something surprising in a large folder.
+
+**The two closed tickets contradicted each other, and shipping is what found
+it.** Ticket 04 decided `tools` is a *map* so that an unmentioned tool is
+**on** — because pi ships a release every couple of days, and a tool absent
+from a list is silently excluded from every profile written before it existed.
+Ticket 13 decided user tools are **not gated** at invocation, on the grounds
+that adding a tool to a profile *is* the trust decision. Put together, dropping
+a manifest into a file would arm it in every profile and the trust act would
+never happen; the justification for not asking would be false.
+
+The rule now follows the argument rather than the mechanism: **default-on for
+tools nobody chose to have, opt-in for tools someone wrote.** `Capabilities`
+carries an `optIn` list and `activeToolNames` resolves the map's third state —
+*not mentioned* — per tool instead of globally. Verified with a real turn: under
+the profile that named the tool, the model called it; under one that did not, it
+listed `read, write, edit, bash` and nothing else.
+
+**The manifests live in the profile files.** The ticket asked for discovery to
+follow the profile convention — a global file and a project file, project
+winning — and the same two files satisfy that more literally than a parallel
+pair would. No second path to learn, no second entry in Rust's write floor, and
+the part that actually matters: a tool and the profile that has to name it are
+authored side by side, which the opt-in rule makes necessary rather than merely
+tidy. The floor mattering more here is not incidental — `ade.profiles.json` now
+decides what argv the agent can spawn, so an agent that could rewrite it could
+write itself a tool.
+
+**Parsing policy differs from the profiles on purpose.** A malformed profile
+field is dropped and reported, because seven good fields should survive one
+typo. A malformed manifest is rejected whole, because there is no such thing as
+half a tool — half a manifest runs something other than what its author wrote.
+Both report by name, and one bad tool does not cost the file its good ones.
+
+**Two things the floor argument forced.** The deny list is checked against the
+*resolved* argv, so a tool cannot launder `rm -rf` past it — trust granted by
+profile membership does not lift the floor, which is decision 4 stated in the
+ticket and now true in code. It refuses rather than asks, unlike `bash`: a turn
+owns the gate and can ask a question, a tool has no way to. That makes user
+tools strictly stricter than the shell, which is the safe direction to be wrong
+in. And a manifest may not shadow `read`, `write`, `edit` or `bash` — pi throws
+on duplicate names, so this would otherwise take the harness down at `setTools`
+rather than at parse.
+
+**Still thin, and named rather than argued away.** Parameters are all required
+strings: no optional argv slots, no numbers, no enums. That is the first thing
+to widen and the only place the format is meaner than it needs to be. Output
+does not stream — a user tool returns when it exits, where `bash` shows its
+work — which is right for a linter and wrong for anything long.

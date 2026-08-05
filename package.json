@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "check": "node src/agent/events.check.ts && node src/agent/gate.check.ts && node src/agent/compaction.check.ts && node src/agent/systemPrompt.check.ts && node src/agent/profile.check.ts && node src/commands/fuzzy.check.ts && node src/commands/commandRegistry.check.ts && node src/ui/WorkbenchTree.check.ts && node src/persistence.check.ts && node src/editor/focusEditor.check.ts && node src/features/agent/transcript.check.ts",
+    "check": "node src/agent/events.check.ts && node src/agent/gate.check.ts && node src/agent/compaction.check.ts && node src/agent/systemPrompt.check.ts && node src/agent/profile.check.ts && node src/agent/userTools.check.ts && node src/commands/fuzzy.check.ts && node src/commands/commandRegistry.check.ts && node src/ui/WorkbenchTree.check.ts && node src/persistence.check.ts && node src/editor/focusEditor.check.ts && node src/features/agent/transcript.check.ts",
     "preview": "vite preview",
     "tauri": "tauri"
   },
@@ -19,7 +19,8 @@
     "@xterm/xterm": "^6.0.0",
     "monaco-editor": "^0.53.0",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react-dom": "^19.2.8",
+    "typebox": "1.3.7"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",

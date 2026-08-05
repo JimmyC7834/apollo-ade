@@ -192,6 +192,61 @@ calls, makes decisions between steps, and returns structured `details` — none 
 survives being flattened into an argv line. The exception list stays at four; the
 **runtime** list is what grows.
 
+### Shipped
+
+All five decisions are built. Three things the ticket did not say, and one it
+got wrong:
+
+- **The manifests live in the profile files**, not beside them. Decision 5 asked
+  for "a global file and a project file, project winning"; the *same* two files
+  satisfy that more literally than a parallel pair, and it is what makes the
+  opt-in rule below liveable — a tool and the profile that has to name it are
+  authored side by side. It also inherits the write floor for free, which
+  matters more here than it did for profiles: `ade.profiles.json` now decides
+  what argv the agent can spawn.
+- **`agent_exec` grew an `argv` field** rather than a second command. Set, Rust
+  spawns it directly with no shell; unset, the existing shell path is unchanged.
+  Everything else — cwd confinement, the job object, the timeout, streaming — is
+  shared, which is the point: a user tool is not a second execution path.
+- **A malformed manifest is rejected whole**, where a malformed profile drops
+  the bad field and keeps going. The two policies differ deliberately: a profile
+  is a bag of settings and seven good fields should survive one typo, where
+  there is no such thing as half a tool. Half a manifest runs something other
+  than what its author wrote.
+
+**The correction: `tools` defaults on, and this ticket needs it off.** Ticket
+04's map rule is that an unmentioned tool is *enabled*, so that a tool pi adds
+upstream does not vanish from profiles written before it existed. Applied to a
+user tool that makes decision 3 false — dropping a manifest on disk would arm it
+in every profile, and the trust act that justifies not gating it would never
+happen. **User tools are opt-in; built-ins keep default-on.** The rule follows
+the argument rather than the mechanism: default-on for tools nobody chose to
+have, opt-in for tools someone wrote. Decided with the dev.
+
+Two smaller consequences, both from the same floor argument:
+
+- **The deny list is checked against the resolved argv**, so a user tool cannot
+  launder `rm -rf` past it. It **refuses** rather than asking, unlike `bash`: a
+  turn owns the gate and can ask, a tool cannot. That makes user tools strictly
+  stricter than the shell, which is the safe direction — `bash` is still there
+  for someone who means it.
+- **A manifest may not shadow `read`, `write`, `edit` or `bash`.** pi throws on
+  duplicate tool names, so this would otherwise take the harness down at
+  `setTools` rather than at parse. Hard-coded, because the ticket's own rule is
+  that the built-in exception does not grow.
+
+**Verified live, not only in the checks.** The model was shown a manifest tool,
+called it with the right parameter, and got its output back. The argv property
+was tested by passing `; echo pwned`, `$(whoami)`, `` `whoami` `` and `*` as
+parameter values: every one came back printed verbatim, so nothing downstream
+word-splits, substitutes or glob-expands. Under a profile that did not name the
+tool, the model listed only `read, write, edit, bash`.
+
+**What is honestly missing.** Parameters are all required strings — no optional
+slots, no numbers, no enums — which is the one place the shape is thinner than
+it needs to be and the first thing to widen. Output does not stream; a user tool
+returns when it exits.
+
 ### Not settled here
 
 - **Worker-hosted scripts** — the capability protocol, worker lifecycle, and handling of

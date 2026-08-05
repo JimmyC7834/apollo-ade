@@ -47,7 +47,21 @@ struct Running {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecRequest {
+    #[serde(default)]
     command: String,
+    /// Spawn this argv **directly, with no shell**, ignoring `command`.
+    ///
+    /// The user-tool path
+    /// (docs/wayfinder/pi-harness/tickets/13-user-authored-tools.md). A manifest
+    /// declares argv as an array and parameters fill whole elements, so nothing
+    /// is ever re-parsed, word-split or glob-expanded — which is the whole
+    /// reason the amendment on that ticket replaced command strings. Handing
+    /// the same argv to a shell as a joined string would put the injection hole
+    /// straight back.
+    ///
+    /// Everything else below is shared: the same cwd confinement, the same job
+    /// object, the same timeout and the same streaming.
+    argv: Option<Vec<String>>,
     /// Root-relative, like every other path the renderer sends.
     cwd: Option<String>,
     #[serde(default)]
@@ -289,8 +303,6 @@ pub async fn agent_exec(
     workspace: tauri::State<'_, WorkspaceState>,
 ) -> Result<ExecOutcome, ExecFailure> {
     let root = root_of(&workspace).map_err(|e| fail("spawn_error", e))?;
-    let (shell_path, shell_name) = shell()
-        .ok_or_else(|| fail("shell_unavailable", "no shell was found on this machine"))?;
 
     // Confine the cwd, and only the cwd.
     let cwd = match &request.cwd {
@@ -305,12 +317,29 @@ pub async fn agent_exec(
         None => root.clone(),
     };
 
-    let mut command = Command::new(shell_path);
-    if *shell_name == "bash" {
-        command.arg("-lc").arg(&request.command);
-    } else {
-        command.args(["-NoLogo", "-NoProfile", "-Command"]).arg(&request.command);
-    }
+    let mut command = match &request.argv {
+        Some(argv) => {
+            let (program, rest) = argv
+                .split_first()
+                .ok_or_else(|| fail("spawn_error", "argv is empty"))?;
+            let mut direct = Command::new(program);
+            direct.args(rest);
+            direct
+        }
+        None => {
+            let (shell_path, shell_name) = shell()
+                .ok_or_else(|| fail("shell_unavailable", "no shell was found on this machine"))?;
+            let mut shelled = Command::new(shell_path);
+            if *shell_name == "bash" {
+                shelled.arg("-lc").arg(&request.command);
+            } else {
+                shelled
+                    .args(["-NoLogo", "-NoProfile", "-Command"])
+                    .arg(&request.command);
+            }
+            shelled
+        }
+    };
     command.current_dir(&cwd);
     if !request.inherit_env {
         command.env_clear();
