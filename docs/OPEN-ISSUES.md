@@ -3,9 +3,15 @@
 Living document — **edit it**, unlike `DEVLOG.md`, which is append-only history.
 Close an item by deleting it and recording the fix in the dev log.
 
-Last updated after Slice 12e, which closed the last of the review defects. What
-is left is the unverified surface, which is the larger half of this file and
-always was.
+Last updated after **Slice 31**. What is left is the unverified surface, which is
+the larger half of this file and always was.
+
+**This file had been stale since Slice 12e** — nineteen slices, the whole of the
+agent — and it said the agent chat had never run in the native window while every
+slice from 13 onward was validated there. That is worse than saying nothing: this
+file is the one `context.md` tells the next agent to read *before* picking up a
+slice, so a false "never verified" spends someone's session re-proving what was
+already proven. Re-read it against the dev log whenever a slice closes.
 
 ---
 
@@ -90,15 +96,20 @@ still fine there.
 
 ## Open defects
 
-**None.** The two-axis review of slices 0 through 12 — 6,869 lines, run after
-Slice 12c — found seven, and Slices 12d and 12e closed all of them.
+**None known.** The two-axis review of slices 0 through 12 — 6,869 lines, run
+after Slice 12c — found seven, and Slices 12d and 12e closed all of them. Every
+agent slice since has been reviewed by a fresh-context sub-agent at the end of
+its own slice, and those findings were applied or recorded on their tickets
+before the slice closed.
 
-That is a statement about reading, not about running. Every one of those seven
-was found by reading the source, and every fix was verified the same way; the
-unverified surface below has not shrunk, and is now the only thing standing
-between this and a working app. Read it before believing the heading.
+That is a statement about reading, not about running. Read the unverified surface
+below before believing the heading.
 
 ### Not defects, but worth a cleanup pass
+
+**Compiled at Slice 12e and not re-audited since.** The nineteen slices that
+followed are almost entirely agent-side, so the workbench duplication listed here
+is probably still accurate and is definitely unchecked. Treat it as a lead.
 
 Duplication the review turned up, none of it wrong today:
 `forceCloseEditor` (`WorkbenchController.tsx:324`) and `close`
@@ -155,12 +166,44 @@ Driven over the WebView2 debugging port, in one session, against a real folder:
   including Discard, which is the only control in the app that destroys work.
   Confirmed by hand. Every editor path now has a real run behind it.
 
+### Verified in the native window (Slices 13–30)
+
+The agent, driven over the same debugging port against real providers —
+`deepseek-reasoner`, `deepseek-chat` and Google. This is the section whose
+absence made the file misleading.
+
+- **A real turn**, streamed: prose, a `read` tool call, a tool result and a
+  grounded answer. Since repeated against a second provider, which is what
+  exposed two defects one provider had hidden.
+- **`thinking` renders**, collapsed by default.
+- **The gate asks**, on `careful`, and a decline reaches the model as an ordinary
+  error `tool_result` rather than killing the turn.
+- **`exec`**, streaming a real command's output through Rust.
+- **Compaction**, four ways: `/compact` on a resumed session, automatic against a
+  forced 18,000-token window, proof that the next turn actually read less, and
+  the unconfigured default that shows a raw count and never compacts.
+- **Sessions survive the window** — a conversation resumed from JSONL.
+- **Profiles**: a switch mid-session leaves the model holding the new tool set,
+  the next turn asks under `careful`, and profile files merge project over
+  global.
+- **User-authored tools**, including one run into its own timeout, and one whose
+  resolved argv trips the deny list and raises the approval card.
+- **The agent asks a question**, and the answer reaches the turn.
+- **Skills**: the `<available_skills>` listing, `/skill <name>`, the collision
+  rule, and a global skill read through the mount together with its own relative
+  `references/note.md`.
+
 ### Never exercised in the native window
 
-- **Agent chat.** Slice 11 natively — streaming with real animation frames,
-  approval, cancellation, the live region. The deterministic provider paces on
-  `requestAnimationFrame` when the document is visible, which has therefore
-  still never been the code path under test.
+- **The `canRead` guard** (Slice 30) — a profile without `read` should publish no
+  skills listing. Covered by `systemPrompt.check.ts` only; the live runs all had
+  `read`.
+- **Both Slice 31 fixes.** `calculateContextTokens` only differs on a provider
+  that omits `totalTokens`, and neither configured provider does; the user-tool
+  output cap is covered by its check and has never been run against a real flood.
+- **A local model cannot get this far at all.** They emit tool calls as prose, so
+  every native run above used a hosted provider. This constrains any offline
+  story and is a template limitation rather than a pi one.
 
 ### Never exercised anywhere
 

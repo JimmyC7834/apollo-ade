@@ -160,8 +160,52 @@ Two consequences:
   and the auto-mode floor apply to the resolved command with no special handling.
 - **Profile membership does not lift the floor.** A trusted tool whose command hits the
   deny list is still stopped. Trust decides whether a tool may be *called*; it does not
-  decide what a command may *do*.
+  decide what a command may *do*. **Superseded — see the second amendment: the floor now
+  *asks* rather than stopping.**
 
 The mechanism is unchanged — `on("tool_call")` remains where a prompt can be raised,
 since it is the point that can await a user, and it still sees the resolved command for
 bash-shaped calls. What changed is the **policy** it applies.
+
+### Second amendment — the floor asks; it does not refuse
+
+Decision 3 and the amendment above both describe the deny list as something that
+*stops* a command. That is not what shipped, and the difference is the whole
+argument of [How a tool asks a question](18-tool-reaches-the-gate.md).
+
+**A deny-listed command raises the approval card, in auto mode too.** `gate.ts`'s
+`onToolCall` computes a `reason` from `destructive(command)` before it consults the
+policy, and a reason forces the question whatever the policy says. `gate.confirm` is
+the same door for a user tool whose resolved argv trips the list — same event, same
+card, same yes/no.
+
+**Why refusing was the worse end of the trade.** Refusing never stopped anyone deleting
+the directory. It made them write `["python3", "cleanup.py"]`, where the deny list
+cannot read the command and never asks at all. Strictness bought indirection and cost
+the one case a foot-gun guard is any use for: the destruction written plainly enough to
+show you. This does not weaken decision 3's honesty clause — a shell still evades the
+list trivially, and it is still **not a security boundary**. It changes what the guard
+does when it does fire.
+
+The real boundary is unchanged and is still the only thing called one: **writes outside
+the workspace root, refused in Rust, unconditionally.**
+
+### What shipped, so the ticket can be read without the code
+
+All six decisions are built, and two of the three "not settled" items are answered:
+
+- The hook is `harness.on('tool_call', …)` in `provider.ts`, handled by `createGate()`.
+- **Auto is the default** and the `careful` profile is the asking one; `gatePolicy` is
+  the profile field decision 6 promised.
+- The **git checkpoint** of decision 4 is `git_checkpoint` in `src-tauri/src/git.rs`,
+  called per turn from `provider.ts` — and deliberately non-fatal, because a checkpoint
+  is a safety net rather than a precondition.
+- **Approval payload shape**: settled by [the event contract](05-event-contract.md) and
+  widened by ticket 18 — `{ kind: 'approval', id, name, input, reason }`, where `input`
+  is structured and, for a user tool, the argv **array** rather than a joined string.
+  `["echo", "a b"]` and `["echo", "a", "b"]` read identically once joined, which is the
+  whole reason the array exists.
+- **Approval memory** stays deferred, and ticket 18 added a second caller waiting on it.
+- Two failure modes the resolution warned about are now asserted in `gate.check.ts`: a
+  declined approval returns `{ block: true }` rather than throwing, and a second question
+  while one is outstanding is refused rather than left to strand the first promise.
