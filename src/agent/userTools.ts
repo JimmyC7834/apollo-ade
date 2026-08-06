@@ -19,7 +19,12 @@
 // against it here.
 
 import { Type, type TSchema } from 'typebox';
-import type { AgentHarnessTool } from '@earendil-works/pi-agent-core';
+import {
+	formatSize,
+	sanitizeBinaryOutput,
+	truncateTail,
+	type AgentHarnessTool,
+} from '@earendil-works/pi-agent-core';
 // Explicit extension, like `events.ts` — this module is reachable from a check
 // script, which node resolves without Vite's help.
 import { destructive, type Gate } from './gate.ts';
@@ -340,9 +345,27 @@ function schemaFor(spec: UserToolParameter): TSchema {
 
 type ExecOutcome = { stdout: string; stderr: string; exitCode: number };
 
-/** What the model gets back: whatever the command printed, and how it ended. */
-function report(argv: readonly string[], outcome: ExecOutcome): string {
-	const body = [outcome.stdout.trim(), outcome.stderr.trim()].filter(Boolean).join('\n');
+/**
+ * What the model gets back: whatever the command printed, and how it ended.
+ *
+ * **Truncated by pi's own limits**, not by ours. A user tool calls `agent_exec`
+ * directly rather than through `env.exec`, so pi's bash tool — which caps what
+ * the model sees at 2000 lines or 50 KB — is not in the path, and the only cap
+ * left was Rust's 8 MiB transport guard. A tool that runs a build printed the
+ * whole log into the context window. `truncateTail` keeps the *end*, which is
+ * where a failing command says why, and it is the same rule and the same numbers
+ * `bash` already answers with.
+ *
+ * `sanitizeBinaryOutput` for the same reason: a tool may be pointed at anything,
+ * and pi strips control bytes before a model ever sees them.
+ */
+export function report(argv: readonly string[], outcome: ExecOutcome): string {
+	const printed = [outcome.stdout.trim(), outcome.stderr.trim()].filter(Boolean).join('\n');
+	const cut = truncateTail(sanitizeBinaryOutput(printed));
+	const body = cut.truncated
+		? `${cut.content}\n\n[showing the last ${cut.outputLines} of ${cut.totalLines} lines, ` +
+			`${formatSize(cut.outputBytes)} of ${formatSize(cut.totalBytes)}]`
+		: cut.content;
 	if (outcome.exitCode === 0) {
 		return body || '(no output)';
 	}

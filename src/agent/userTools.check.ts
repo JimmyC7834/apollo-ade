@@ -9,6 +9,7 @@
 import assert from 'node:assert/strict';
 import {
 	installUserTools,
+	report,
 	resolveArgv,
 	userToolDefinitions,
 	userTools,
@@ -293,6 +294,22 @@ const profileNamed = (name: string): Profile => {
 	const refused = activateProfile('armed');
 	assert.equal(refused.ok, false);
 	assert.match(refused.ok === false ? refused.reason : '', /tool "grep"/);
+}
+
+// A user tool's output is capped by pi's own limits before the model sees it,
+// and the *end* is what survives — the exit line is the last thing printed and
+// it is the thing a failure is diagnosed from.
+{
+	const flood = Array.from({ length: 5000 }, (_, line) => `line ${line}`).join('\n');
+	const capped = report(['build'], { stdout: flood, stderr: '', exitCode: 0 });
+
+	assert.ok(capped.length < flood.length, 'a flood is truncated');
+	assert.ok(capped.includes('line 4999'), 'the end is kept');
+	assert.ok(!capped.includes('line 0\n'), 'the start is dropped');
+	assert.match(capped, /showing the last \d+ of 5000 lines/);
+
+	const small = report(['build'], { stdout: 'done', stderr: '', exitCode: 1 });
+	assert.equal(small, 'done\n\nbuild exited with code 1', 'short output is untouched');
 }
 
 console.log('agent/userTools.check.ts: ok');

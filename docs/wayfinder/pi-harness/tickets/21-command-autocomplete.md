@@ -40,6 +40,35 @@ complete *from* — the first real decision is whether that chain becomes data.
 may or may not be the right home; slash commands are typed where the prompt is
 and the palette is a different surface.
 
+## A fifth command is coming, and pi ships it whole
+
+Found by the reuse audit, and it changes the table above rather than the
+decision. pi exports a **prompt template** system that is the user-authored
+half of a command system: `loadPromptTemplates(env, paths)` reads `.md` files
+from directories exactly as `loadSkills` reads skills — same diagnostics shape,
+same `loadSourcedPromptTemplates` provenance variant — and
+`AgentHarness.promptFromTemplate(name, args)` runs one. `parseCommandArgs`
+splits an argument string on shell quoting, and `substituteArgs` fills `$1`,
+`$@`, `$ARGUMENTS` and `${@:N:L}`.
+
+The map deleted "a command system for the agent chat" from its queue as *"one
+`promptFromTemplate` call"*, and that call has never been made. So the row that
+does not exist yet is:
+
+| Command | Argument | Source |
+| --- | --- | --- |
+| `/<template> [args]` | template name | `loadPromptTemplates` |
+
+Two consequences for this ticket. The completion list must be able to hold
+commands that come from **disk** rather than from the `startsWith` chain, which
+is a second reason for that chain to become data. And `parseCommandArgs` is what
+should split a command line here — `AgentChat` splits `/skill` arguments on
+whitespace, which is fine for free text and wrong the moment an argument is
+quoted.
+
+Neither is a reason to build prompt templates first. It is a reason not to shape
+the command list so that adding them later means shaping it again.
+
 ## Why it was not done with skills
 
 Nothing about skills is harder to find without completion than profiles already

@@ -20,7 +20,7 @@
 // driven from `profileFiles.ts` — one call reads every hand-authored thing, and
 // `/reload` gets skills for free.
 
-import { loadSkills as loadSkillsFrom, type ExecutionEnv, type Skill } from '@earendil-works/pi-agent-core';
+import { loadSourcedSkills, type ExecutionEnv, type Skill } from '@earendil-works/pi-agent-core';
 
 import type { Profile } from './profile';
 
@@ -194,18 +194,22 @@ export async function reloadSkills(where?: string): Promise<void> {
 	if (!source) {
 		return;
 	}
-	// Two calls rather than one with both directories, because pi's flat result
-	// carries no provenance and the merge rule needs to know which is which.
-	const global = await loadSkillsFrom(source, GLOBAL_SKILLS);
-	const project = await loadSkillsFrom(source, PROJECT_SKILLS);
-	const merged = mergeSkills(global.skills, project.skills);
+	// One call, because provenance is what `loadSourcedSkills` is for: it tags
+	// every skill *and* every diagnostic with the directory it came from, which
+	// is exactly what the merge rule needs to know. Calling `loadSkills` once per
+	// directory would rebuild the same tagging by hand.
+	const loaded = await loadSourcedSkills(source, [
+		{ path: GLOBAL_SKILLS, source: 'global' as const },
+		{ path: PROJECT_SKILLS, source: 'project' as const },
+	]);
+	const from = (where: 'global' | 'project') =>
+		loaded.skills.filter((tagged) => tagged.source === where).map((tagged) => tagged.skill);
+	const merged = mergeSkills(from('global'), from('project'));
 	set = {
 		skills: merged.skills,
 		warnings: [
 			...merged.warnings,
-			...[...global.diagnostics, ...project.diagnostics].map(
-				(problem) => `${problem.path}: ${problem.message}`
-			),
+			...loaded.diagnostics.map((problem) => `${problem.path}: ${problem.message}`),
 		],
 	};
 	for (const listener of listeners) {

@@ -127,6 +127,30 @@ something was accountable for making.
     where pi's mechanism assumes something this app does not have — chiefly a filesystem
     with no boundary — the mechanism does not transfer and the *data* still does.
 
+    **Audited against every export, once, after the rule was written.** The built-in
+    tools, the gate's `tool_call` hook, `clampThinkingLevel`, `shouldCompact`,
+    `loadSkills`, both formatters and every harness setter were already taken. Three
+    places were not, and all three were reuse *missed* rather than reuse rejected:
+    - `calculateContextTokens` — `events.ts` read `usage.totalTokens` raw. pi falls back
+      to `input + output + cacheRead + cacheWrite`, so a provider that omits the total
+      reported **zero** context tokens: the meter sat at 0% and auto-compaction could
+      never fire. The comment claiming the fallback was not "a richer number" was right
+      about the arithmetic and wrong about what happens when the field is missing.
+    - `truncateTail` / `sanitizeBinaryOutput` — a **user tool** calls `agent_exec`
+      directly, so pi's bash tool is not in the path and neither was its 2000-line /
+      50 KB cap. The only limit left was Rust's 8 MiB transport guard, which is a
+      transport guard and not a context-window one. A tool that ran a build printed the
+      whole log into the model's context. Now capped by pi's own numbers, keeping the
+      end, which is where a failing command says why.
+    - `loadSourcedSkills` — [ticket 20](tickets/20-skills.md) called `loadSkills` once
+      per directory and said pi's result "carries no provenance", in a file whose own
+      header cites `loadSourcedSkills` as existing for exactly this. One call now tags
+      both skills and diagnostics.
+
+    The one export still unused on purpose is **`loadPromptTemplates`** and its four
+    companions — see the autocomplete entry below. Nothing else in the two packages is
+    something this repo has written a second time.
+
 ## Decisions so far
 
 <!-- one line per closed ticket -->
@@ -419,6 +443,15 @@ something was accountable for making.
   it: a menu entry may hold a space, so `/skill grilling` completes exactly as well as
   pi's `/skill:grilling`. What is open is that `AgentChat.tsx` parses commands with a
   chain of `startsWith`, so there is no list of commands to complete *from*.
+  **Amended by the reuse audit above:** pi already ships the missing half of that list.
+  `loadPromptTemplates` reads user-authored `.md` commands the same way `loadSkills`
+  reads skills, `parseCommandArgs` splits an argument string on shell quoting where
+  `AgentChat` splits on whitespace, and `substituteArgs` +
+  `formatPromptTemplateInvocation` + `AgentHarness.promptFromTemplate` run one. This map
+  deleted "a command system for the agent chat" from the queue as *"one
+  `promptFromTemplate` call"* and nothing has yet made it — so the user-command half is
+  unbuilt rather than rewritten, and whoever builds the completion list should build it
+  over pi's loader rather than over the `startsWith` chain.
 
 ## Out of scope
 

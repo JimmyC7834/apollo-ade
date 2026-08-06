@@ -4,7 +4,7 @@
 // does exactly that. It is also the only place that knows pi's event vocabulary,
 // which is the vocabulary that breaks in minor releases every couple of days.
 
-import type { AgentHarnessEvent } from '@earendil-works/pi-agent-core';
+import { calculateContextTokens, type AgentHarnessEvent } from '@earendil-works/pi-agent-core';
 // Explicit extension: `events.check.ts` runs this file under plain node, which
 // does not resolve extensionless paths. Type-only imports are erased and so do
 // not need it; this one is a value.
@@ -89,11 +89,13 @@ export function mapEvent(event: AgentHarnessEvent, contextWindow?: number): Agen
 					kind: 'usage',
 					inputTokens: usage.input,
 					outputTokens: usage.output,
-					// The provider's own total. Revisited when this had to drive
-					// compaction, and it turned out to need no change:
-					// `calculateContextTokens` is `usage.totalTokens` with a
-					// fallback for providers that omit it, not a richer number.
-					contextTokens: usage.totalTokens,
+					// pi's own reader, not `usage.totalTokens`. It *is* that field
+					// first, but it falls back to `input + output + cacheRead +
+					// cacheWrite` for a provider that omits the total — and reading
+					// the field raw meant such a provider reported zero context
+					// tokens, so auto-compaction would never fire and the meter
+					// would sit at 0%. One call instead of a rule of ours.
+					contextTokens: calculateContextTokens(usage),
 					// Carried alongside so the meter can render a share rather
 					// than a bare count. Absent when nobody has configured one.
 					contextWindow,

@@ -3200,3 +3200,62 @@ cannot leak file names; `agent_create_dir` calls `agent_may_write` rather than
 `may_write`; and `/reload` grew a rejection handler, since it now awaits the
 skill loader and a throw would have left the composer disabled with nothing said.
 Rust tests 9 → 10.
+
+## Slice 31 — The pi reuse audit
+
+**User outcome.** Three things the app was doing itself, which the dependency
+already does: the context meter now reads a correct token count on providers that
+report one indirectly, a user tool can no longer flood the model with a whole
+build log, and skills load in one pass instead of two.
+
+**Added.** Nothing. Every change is a deletion of local code in favour of a call:
+`calculateContextTokens` in `events.ts`, `truncateTail` + `sanitizeBinaryOutput`
++ `formatSize` in `userTools.ts`, `loadSourcedSkills` in `skills.ts`. One new
+check in `userTools.check.ts` covering the truncation, which is the only one of
+the three with logic of its own.
+
+**Why it was run.** The map's standing preference — *take as much from pi's
+packages as they will give* — was written while grilling skills and applies
+backwards to everything already built. It had never been checked against the
+export list. The audit is now recorded on the map so it does not get run twice.
+
+**What the audit found, and what it did not.** The built-in tools, the gate's
+`tool_call` hook, `clampThinkingLevel`, `shouldCompact`, `isContextOverflow`,
+`loadSkills`, both skill formatters and every harness setter were already taken.
+Nothing in the two packages turned out to have been reimplemented; all three
+findings were reuse *missed*, and two of them were bugs the reuse fixes:
+
+- `events.ts` read `usage.totalTokens` raw. pi's reader falls back to
+  `input + output + cacheRead + cacheWrite`, so a provider omitting the total
+  reported **zero** context tokens — the meter would sit at 0% and
+  auto-compaction could never fire. The comment defending the raw read was right
+  that the fallback is not a richer number and wrong about the missing case.
+- A **user tool** calls `agent_exec` directly, so pi's bash tool — and its
+  2000-line / 50 KB cap — is not in the path. The only limit left was Rust's
+  8 MiB transport guard, which is a transport guard and not a context-window one.
+  Output is now capped by pi's own numbers, keeping the *end*, which is where a
+  failing command says why.
+- `skills.ts` called `loadSkills` once per directory with a comment saying pi's
+  result carries no provenance, in a file whose own header cites
+  `loadSourcedSkills` as existing for exactly that. One call now tags both skills
+  and diagnostics.
+
+**Left unused on purpose.** `loadPromptTemplates`, `loadSourcedPromptTemplates`,
+`parseCommandArgs`, `substituteArgs`, `formatPromptTemplateInvocation` and
+`AgentHarness.promptFromTemplate` — the user-authored command system. The map
+deleted "a command system for the agent chat" from its queue as *"one
+`promptFromTemplate` call"* and that call has never been made, so this half is
+**unbuilt rather than rewritten**. Recorded on
+`docs/wayfinder/pi-harness/tickets/21-command-autocomplete.md`, because a command
+list that has to hold commands read from disk is a different list, and
+`parseCommandArgs` is what should split an argument line that may be quoted.
+
+**Security boundary.** Unchanged. No Rust touched, no new command, no new path.
+The truncation narrows what reaches the model and widens nothing.
+
+**Validation.** `npx tsc --noEmit` clean, 15 `npm run check` scripts pass
+(including the new truncation case), `npm run build` clean. **Not validated
+live** — no native run was made for this change, and the two behavioural fixes
+have no live proof: the token fallback needs a provider that omits `totalTokens`,
+which neither configured provider does, and the truncation is covered only by its
+check. `cargo test` was not re-run because no Rust changed.
