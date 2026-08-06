@@ -1,10 +1,15 @@
-// pi's event stream, mapped down to the twelve kinds the UI understands.
+// pi's event stream, mapped down to the thirteen kinds the UI understands.
 //
 // Kept as a pure function so it can be checked without a model — `events.check.ts`
 // does exactly that. It is also the only place that knows pi's event vocabulary,
 // which is the vocabulary that breaks in minor releases every couple of days.
 
-import { calculateContextTokens, type AgentHarnessEvent } from '@earendil-works/pi-agent-core';
+import {
+	calculateContextTokens,
+	type AgentHarnessEvent,
+	type AgentMessage,
+} from '@earendil-works/pi-agent-core';
+import { contentText } from '@earendil-works/pi-ai';
 // Explicit extension: `events.check.ts` runs this file under plain node, which
 // does not resolve extensionless paths. Type-only imports are erased and so do
 // not need it; this one is a value.
@@ -30,6 +35,24 @@ export function resultText(result: unknown): string {
 		return text;
 	}
 	return typeof result === 'string' ? result : JSON.stringify(result ?? null);
+}
+
+/**
+ * A queued message as the user will read it back.
+ *
+ * `contentText` is pi-ai's own, which is what `AgentHarness` uses to read a
+ * message: a queued message is `{ role: "user", content: [{ type: "text" }] }`
+ * today and may carry images tomorrow, and this drops the parts that are not
+ * text rather than rendering `[object Object]` beside them.
+ */
+function queuedText(messages: readonly AgentMessage[]): string[] {
+	return messages
+		// `AgentMessage` is a union, and one arm of it — a bash execution record —
+		// has no `content` at all. Nothing this app queues is one of those (pi
+		// builds a user message from the text), so the guard is a narrowing rather
+		// than a case: an unrenderable message is dropped, not stringified.
+		.map((message) => ('content' in message ? contentText(message.content).trim() : ''))
+		.filter(Boolean);
 }
 
 /**
@@ -124,6 +147,17 @@ export function mapEvent(event: AgentHarnessEvent, contextWindow?: number): Agen
 					kind: 'compacted',
 					tokensBefore: event.compactionEntry.tokensBefore,
 					summary: event.compactionEntry.summary,
+				},
+			];
+		case 'queue_update':
+			return [
+				{
+					kind: 'queued',
+					steer: queuedText(event.steer),
+					followUp: queuedText(event.followUp),
+					// `event.nextTurn` is deliberately dropped. Nothing in this app
+					// calls `nextTurn` — Enter on an idle harness is `prompt()` — so
+					// carrying it would be carrying an array that is always empty.
 				},
 			];
 		case 'abort':

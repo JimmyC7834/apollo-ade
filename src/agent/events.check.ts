@@ -146,6 +146,27 @@ assert.deepEqual(
 	[{ kind: 'compacted', tokensBefore: 900, summary: 'earlier work' }]
 );
 
+// The queue crosses the seam as our own kind, carrying the state rather than
+// the change. `nextTurn` is dropped: nothing in this app calls it.
+{
+	const message = (text: string) => ({ role: 'user', content: [{ type: 'text', text }] });
+	assert.deepEqual(
+		mapEvent({
+			type: 'queue_update',
+			steer: [message('use the other file')],
+			followUp: [message('then run the tests')],
+			nextTurn: [message('never sent from here')],
+		} as never),
+		[{ kind: 'queued', steer: ['use the other file'], followUp: ['then run the tests'] }]
+	);
+	// A drained queue reports empty rather than nothing, or the UI would keep
+	// showing messages the agent has already read.
+	assert.deepEqual(
+		mapEvent({ type: 'queue_update', steer: [], followUp: [], nextTurn: [] } as never),
+		[{ kind: 'queued', steer: [], followUp: [] }]
+	);
+}
+
 // Lifecycle noise maps to nothing. Listed explicitly so the silence reads as a
 // decision rather than an oversight.
 for (const type of ['agent_start', 'turn_start', 'settled', 'tools_update', 'model_update']) {

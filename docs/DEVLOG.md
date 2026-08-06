@@ -3259,3 +3259,81 @@ live** — no native run was made for this change, and the two behavioural fixes
 have no live proof: the token fallback needs a provider that omits `totalTokens`,
 which neither configured provider does, and the truncation is covered only by its
 check. `cargo test` was not re-run because no Rust changed.
+
+## Slice 32 — Typing while the agent is running
+
+Two tickets in one slice, because the first is the second's precondition:
+[21](wayfinder/pi-harness/tickets/21-command-autocomplete.md) said the command
+chain becomes data before anything is built on it, and
+[22](wayfinder/pi-harness/tickets/22-steering.md) is what builds on it.
+
+**The command list.** `AgentChat.send` found commands with a chain of
+`startsWith`. It is now `src/agent/commands.ts`: a list of `SlashCommand`
+records — name, summary, argument source, and whether the command means anything
+mid-turn — plus `parseCommand`. The bodies stayed in `send`, because each one
+closes over the provider, the transcript sink and the announcer, and moving them
+would have dragged the component's state across the seam to save a switch.
+
+Not in `src/commands/commandRegistry.ts`. That registry is the workbench
+palette: its entries carry a `run`, are fuzzy-searched, and belong to the
+window. These are typed in the composer, take arguments, and mean nothing
+outside the agent — one shared list would need a "which surface" field on every
+entry.
+
+The matching rule is exact-name-or-name-plus-space, which is what stops `/skills`
+being read as `/skill` with the argument `s`. The check asserts it for **every
+pair** in the list rather than for the pair we thought of, so reordering the list
+cannot break it quietly.
+
+**Steering.** The composer was dead for the whole of a turn. Now: Enter queues a
+follow-up, `/steer <text>` changes the running turn. Enter is the safe verb
+deliberately — a steer lands *inside* a turn and changes what it is doing, so a
+steer the user meant as a follow-up spoils a turn that was already correct and
+nothing undoes that.
+
+**The thirteenth event kind.** `queued` carries both queues as state, not one
+message as a change: pi sends every queue whole on each `queue_update`, so an
+"a message was queued" event would make the UI rebuild a list it is handed
+complete. It crosses the seam as our own kind rather than being rendered from
+pi's — the dev overruled my recommendation here and was right, because
+`queue_update` is pi vocabulary and ticket 05 exists to keep that out of feature
+modules.
+
+`nextTurn` is dropped in the mapping. Enter on an idle harness is `prompt()`, so
+nothing in this app can put a message in that queue, and a field that is always
+empty is a field that will be misread.
+
+**The three small points, settled while building.**
+
+- *What a cancel says.* Not from pi's `abort`: `cancel()` synthesises `cancelled`
+  at once and disposes the subscription, so pi's cleared queues arrive after
+  nobody is listening. The app already holds the answer — the last `queued` state
+  is exactly what was never sent — and `queuedLabel` says it in one sentence. A
+  turn that *completes* with a queue left over gets the same sentence, because a
+  run that ends never drains what is left.
+- *The transcript model.* A queued message is **not a `Part`**. Every part is
+  something that happened; these have not. `Turn.queued` replaces whole on every
+  event. A follow-up does not open a second turn either — pi drains it inside the
+  same `prompt()` call, so it is one run and reads as one.
+- *Queue mode.* pi's defaults, untouched. Ticket 15's rule: two values and no
+  evidence.
+
+**What the review caught.** The `whileRunning` flag was decorative — the running
+branch hardcoded `/steer` and every *other* command typed mid-turn fell through
+to `follow()`, queueing the literal string "/compact" as prose for the model. The
+flag now decides both refusals, and a refusal keeps your text in the composer
+with a line saying why, because a refused command is not an event in the
+conversation and writing one into the transcript would make the record claim it
+was.
+
+**Security boundary.** Unchanged. Queued text is an ordinary user message and
+reaches the model through the same turn, under the same profile and the same
+gate — a queued message drains into whatever profile is active when it lands,
+which is the non-retroactive rule profile switching already follows. No Rust
+touched, no new command, no new path.
+
+**Validation.** `npx tsc --noEmit` clean, 16 `npm run check` scripts pass (the
+new `commands.check.ts`, plus the queue cases added to `events.check.ts` and
+`transcript.check.ts`), `npm run build` clean. **Not validated live** — no native
+run was made, so nothing here has live proof, and the queue's real behaviour
+under a running model is exactly the part a check cannot reach.

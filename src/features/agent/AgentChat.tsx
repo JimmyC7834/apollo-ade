@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { AgentEvent, AgentProvider, AgentRun } from '../../agent';
+import { parseCommand } from '../../agent/commands';
 import { pressure } from '../../agent/compaction';
 import { activateProfile, activeProfile, listProfiles } from '../../agent/profile';
 import { loadProfileFiles, profileSources } from '../../agent/profileFiles';
@@ -21,6 +22,7 @@ import {
 	asPlainText,
 	canAnswer,
 	questionLabel,
+	queuedLabel,
 	resolveApproval,
 	toolLabel,
 	type Part,
@@ -285,6 +287,16 @@ export function AgentChat({ provider, onAnnounce }: AgentChatProps) {
 	// pi's `compact()` takes no abort signal — so the Stop button must be gone
 	// rather than present and inert.
 	const [compacting, setCompacting] = useState(false);
+	/**
+	 * Why the last thing you typed did not go anywhere.
+	 *
+	 * Composer state rather than a transcript part, because *nothing happened* —
+	 * a refused command is not an event in the conversation, and writing one into
+	 * the transcript would make the record claim it was. The typed text is kept
+	 * with it, so the answer to the notice is to press Enter again once the
+	 * condition it names has changed.
+	 */
+	const [notice, setNotice] = useState<string>();
 
 	const runRef = useRef<AgentRun>(null);
 	const promptRef = useRef<HTMLTextAreaElement>(null);
@@ -339,20 +351,87 @@ export function AgentChat({ provider, onAnnounce }: AgentChatProps) {
 		[onAnnounce]
 	);
 
+	/** Refuse, visibly and audibly, without touching the transcript. */
+	const say = useCallback(
+		(message: string) => {
+			setNotice(message);
+			onAnnounce?.(message);
+		},
+		[onAnnounce]
+	);
+
 	const send = useCallback(() => {
 		const text = prompt.trim();
-		if (!text || running) {
+		if (!text) {
 			return;
 		}
-		setPrompt('');
+		/*
+		 * The command list is data, in `agent/commands.ts`. What is matched here is
+		 * the same list ticket 21's completion will read and pi's prompt templates
+		 * will extend; what is *done* about each command stays here, because every
+		 * body closes over the provider and this component's state.
+		 */
+		const parsed = parseCommand(text);
+		setNotice(undefined);
+
+		// The one command that only means something *inside* a turn, so the idle
+		// path has to refuse it: pi throws `invalid_state` on an idle harness, and
+		// falling through would send the word "/steer" to the model as a prompt.
+		if (!running && parsed?.command.whileRunning) {
+			return say(`${parsed.command.name} only works while the agent is running.`);
+		}
 
 		/*
-		 * The command lives here rather than in the workbench palette: slash
-		 * commands are typed where the prompt is, and the user-authored half that
-		 * follows — `promptFromTemplate(name, args)` — needs a command line to
-		 * take arguments from. See ticket 16.
+		 * Typing while the agent works, which used to be impossible: `send`
+		 * returned early for the whole of a turn and the composer was dead.
+		 *
+		 * **Enter is a follow-up, and steering needs the word.** Both put text in
+		 * front of the model, but a steer lands *inside* the running turn and
+		 * changes what it is doing — so a steer the user meant as a follow-up
+		 * spoils a turn that was already correct, and nothing undoes that. A
+		 * follow-up has no such failure, which is why it is the one you get for
+		 * free.
 		 */
-		if (text === '/compact') {
+		if (running) {
+			const run = runRef.current;
+			if (!run) {
+				// Compaction. There is no run and therefore no queue, and it cannot be
+				// stopped either — so the only honest answer is to keep what was typed
+				// and say why it did not go.
+				return say('Summarising. Nothing can be queued until it finishes.');
+			}
+			/*
+			 * A command that is not `/steer` is refused rather than queued. Queueing
+			 * it would send the literal word "/compact" to the model as if it were an
+			 * instruction — a command silently becoming prose is worse than a command
+			 * that does not run, because nothing tells you it happened.
+			 *
+			 * The list says which commands survive a running turn, so a second one
+			 * needs no change here.
+			 */
+			if (parsed && !parsed.command.whileRunning) {
+				return say(`${parsed.command.name} only works when nothing is running.`);
+			}
+			if (parsed?.command.name === '/steer') {
+				// An empty `/steer` is not a steer. Sending it would put a bare
+				// command in front of the model as if it were an instruction.
+				if (!parsed.args) {
+					return say('/steer needs something to say.');
+				}
+				setPrompt('');
+				run.steer(parsed.args);
+				onAnnounce?.('Steering the current turn');
+				return;
+			}
+			setPrompt('');
+			run.follow(text);
+			onAnnounce?.('Queued for after this turn');
+			return;
+		}
+
+		setPrompt('');
+
+		if (parsed?.command.name === '/compact') {
 			setCompacting(true);
 			onAnnounce?.('Summarising the conversation');
 			provider.compact(beginTurn(text));
@@ -371,7 +450,7 @@ export function AgentChat({ provider, onAnnounce }: AgentChatProps) {
 		 * the active one by name, and the tool store replaces its set and tells
 		 * the harness. Nothing here is a first-load special case.
 		 */
-		if (text === '/reload') {
+		if (parsed?.command.name === '/reload') {
 			const emit = beginTurn(text);
 			void loadProfileFiles()
 				.then((loaded) => {
@@ -416,9 +495,8 @@ export function AgentChat({ provider, onAnnounce }: AgentChatProps) {
 		 * hold whole strings either way — and one separator is one rule. Completion
 		 * itself is ticket 21.
 		 */
-		if (text === '/skill' || text.startsWith('/skill ')) {
-			const rest = text.slice('/skill'.length).trim();
-			const [name, ...words] = rest.split(/\s+/);
+		if (parsed?.command.name === '/skill') {
+			const [name, ...words] = parsed.args.split(/\s+/);
 			const emit = beginTurn(text);
 			if (!name) {
 				// Not an error: it is the discoverable half of a command whose
@@ -442,7 +520,7 @@ export function AgentChat({ provider, onAnnounce }: AgentChatProps) {
 		 * anywhere else — `loadSkills` reports it as diagnostics and this is the
 		 * only thing that reads them.
 		 */
-		if (text === '/skills') {
+		if (parsed?.command.name === '/skills') {
 			const emit = beginTurn(text);
 			const answer = skillList(activeProfile());
 			emit({ kind: 'text', text: answer });
@@ -451,10 +529,9 @@ export function AgentChat({ provider, onAnnounce }: AgentChatProps) {
 			return;
 		}
 
-		if (text === '/profile' || text.startsWith('/profile ')) {
+		if (parsed?.command.name === '/profile') {
 			const emit = beginTurn(text);
-			const name = text.slice('/profile'.length).trim();
-			const result = name ? activateProfile(name) : undefined;
+			const result = parsed.args ? activateProfile(parsed.args) : undefined;
 			const answer = result
 				? result.ok
 					? `Switched to "${result.profile.name}". It applies from the next turn; nothing already said is changed.`
@@ -505,7 +582,7 @@ export function AgentChat({ provider, onAnnounce }: AgentChatProps) {
 		}
 
 		runRef.current = provider.start(text, beginTurn(text));
-	}, [beginTurn, onAnnounce, prompt, provider, running]);
+	}, [beginTurn, onAnnounce, prompt, provider, running, say]);
 
 	const resolve = useCallback(
 		(approved: boolean) => {
@@ -566,6 +643,9 @@ export function AgentChat({ provider, onAnnounce }: AgentChatProps) {
 						{turn.status === 'cancelled' ? (
 							<p className="ide-agent-status">Stopped.</p>
 						) : null}
+						{queuedLabel(turn) ? (
+							<p className="ide-agent-status">{queuedLabel(turn)}</p>
+						) : null}
 						{turn.usage ? <UsageView usage={turn.usage} /> : null}
 					</article>
 				))}
@@ -583,7 +663,13 @@ export function AgentChat({ provider, onAnnounce }: AgentChatProps) {
 					ref={promptRef}
 					rows={3}
 					value={prompt}
-					placeholder="Ask the agent…"
+					// The composer works during a turn now, and nothing else says so.
+					// A user who was trained by the old behaviour will not try it.
+					placeholder={
+						running && !compacting
+							? 'Enter queues it for after this turn. /steer changes this one…'
+							: 'Ask the agent…'
+					}
 					aria-label="Prompt"
 					onChange={(event) => setPrompt(event.target.value)}
 					onKeyDown={(event) => {
@@ -627,6 +713,7 @@ export function AgentChat({ provider, onAnnounce }: AgentChatProps) {
 					// the run is paused on something above that only you can settle.
 					<p className="ide-agent-status">Waiting for your answer above.</p>
 				) : null}
+				{notice ? <p className="ide-agent-status">{notice}</p> : null}
 			</form>
 
 			<Overlay

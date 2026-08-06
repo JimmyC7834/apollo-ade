@@ -1,7 +1,7 @@
 // The agent seam. The chat UI talks to `AgentProvider` and never to a model, a
 // network client, or a native command.
 //
-// The twelve kinds below are the contract settled in
+// The thirteen kinds below are the contract settled in
 // docs/wayfinder/pi-harness/tickets/05-event-contract.md and falsified against
 // three live providers by the spike that preceded this slice. Providers adapt
 // *down* to them; the contract does not widen to match whatever pi emits. That
@@ -76,6 +76,30 @@ export type AgentEvent =
 	  }
 	/** History was summarised. Without this the transcript silently loses detail. */
 	| { readonly kind: 'compacted'; readonly tokensBefore: number; readonly summary: string }
+	/**
+	 * What you typed while the turn was running and has not been sent yet.
+	 *
+	 * The thirteenth kind, added by
+	 * [ticket 22](docs/wayfinder/pi-harness/tickets/22-steering.md). The queue is
+	 * pi's, and `queue_update` is a pi event — rendering that event directly would
+	 * put pi's vocabulary inside a feature module, which is the one thing this
+	 * contract exists to prevent.
+	 *
+	 * **The state, not the change.** pi sends all of its queues on every update,
+	 * so a "one message was queued" event would make the UI rebuild a list it is
+	 * already handed whole. Each array replaces the last.
+	 *
+	 * pi's third queue, `nextTurn`, is not here: it is what Enter already does
+	 * when the harness is idle, so nothing can ever put a message in it and a
+	 * field that is always empty is a field that will be misread.
+	 */
+	| {
+			readonly kind: 'queued';
+			/** Bound for the running turn. */
+			readonly steer: readonly string[];
+			/** Bound for a turn of its own, after this one. */
+			readonly followUp: readonly string[];
+	  }
 	/** A failure worth styling and acting on, rather than prose that reads like one. */
 	| { readonly kind: 'error'; readonly message: string; readonly code?: string }
 	| { readonly kind: 'complete' }
@@ -83,6 +107,17 @@ export type AgentEvent =
 
 export interface AgentRun {
 	cancel(): void;
+	/**
+	 * Put text into the running turn, or after it.
+	 *
+	 * Both are pi's, and both throw `invalid_state` on an idle harness — so they
+	 * live on the run rather than on the provider, which is what makes them
+	 * unreachable once the run is over. `follow` is what Enter does; `steer` is
+	 * `/steer <text>`, because a steer that was meant as a follow-up changes a
+	 * turn that was already correct, and that error cannot be undone.
+	 */
+	steer(text: string): void;
+	follow(text: string): void;
 	resolveApproval(approved: boolean): void;
 	/** Answer the outstanding `question`. One or more of the offered choices,
 	 * and/or whatever the user typed in the free-text box. */

@@ -21,20 +21,23 @@ Skill names cannot contain a space — pi's validator permits lower case letters
 digits and hyphens — so the argument ends at the first space in either format,
 and the free text after it is unambiguous.
 
-## Settled in the grill: the chain becomes data, and it goes first
+## Done: the chain is data — **deferred, not now: the menu itself**
 
-The dev settled this while grilling the deferred list. `AgentChat` finds a
-command with a chain of `startsWith` inside `send`. That chain becomes a **list
-of commands**, and the work happens **before** this ticket completes anything and
-before [ticket 22](22-steering.md) adds `/steer`.
+The precondition shipped in Slice 32 with [ticket 22](22-steering.md).
+[`src/agent/commands.ts`](../../../../src/agent/commands.ts) holds the list —
+name, summary, argument source, and whether the command means anything mid-turn
+— plus `parseCommand`. `AgentChat.send` matches against it, `/steer` was added
+by editing a list rather than a chain, and the argument-source column below is
+already a field on every entry.
 
-Three consumers want the list: completion here, `/steer` in ticket 22, and
-prompt templates if they land. A list built for one consumer gets built again for
-the next two.
+It lives beside the agent rather than in `src/commands/commandRegistry.ts`. That
+registry is the workbench palette: its entries carry a `run`, are fuzzy-searched
+and belong to the window, where these are typed in the composer, take arguments
+and mean nothing outside the agent.
 
-Where it lives is still open. `src/commands/commandRegistry.ts` exists for the
-workbench palette. Slash commands are typed in the composer, which is a different
-surface, so the registry may be the wrong home.
+**What is deferred is the menu**: the popup, the keys that move through it, and
+filling the argument from the source column. The dev deferred it when the list
+landed. Nothing blocks it now.
 
 ## What is open
 
@@ -48,12 +51,9 @@ argument comes from, and there are four commands and three sources:
 | `/profile <name>` | profile name | `listProfiles()` |
 | `/compact`, `/reload`, `/skills` | none | — |
 
-The work is not the table. It is that `AgentChat.tsx` currently parses commands
-with a chain of `startsWith` inside `send`, so there is no list of commands to
-complete *from* — the first real decision is whether that chain becomes data.
-`src/commands/commandRegistry.ts` already exists for the workbench palette and
-may or may not be the right home; slash commands are typed where the prompt is
-and the palette is a different surface.
+The table is now the `argument` field on each `SlashCommand`, and `/steer` added
+a fourth value to it: free text, which nothing completes. What is still open is
+only the wiring — which function each source name calls, and where.
 
 ## A fifth command is coming, and pi ships it whole
 

@@ -685,6 +685,21 @@ function createRunner(
 			// registrations into the next turn.
 			.finally(release);
 
+		/** Report a queueing failure into the transcript instead of losing it. */
+		async function queued(call: Promise<void> | undefined) {
+			try {
+				if (!call) {
+					throw new Error('The turn is no longer running.');
+				}
+				await call;
+			} catch (cause: unknown) {
+				onEvent({
+					kind: 'error',
+					message: `That was not queued: ${cause instanceof Error ? cause.message : String(cause)}`,
+				});
+			}
+		}
+
 		return {
 			/**
 			 * Stop now, rather than when the network agrees.
@@ -719,6 +734,25 @@ function createRunner(
 				release();
 				void running?.abort();
 			},
+			/*
+			 * The two queues, straight through to pi.
+			 *
+			 * Not through `enqueue`: that serialiser exists to keep two *turns* off
+			 * one harness, and these are calls made while a turn is running — going
+			 * through it would hold every steer until the turn it was meant for had
+			 * ended. Queueing is what pi does with them.
+			 *
+			 * Both throw `invalid_state` on an idle harness, and the window between
+			 * a turn settling and the UI hearing `complete` is real, so the throw is
+			 * reported rather than swallowed. `running` being undefined is the same
+			 * case one moment earlier: the session has not opened yet.
+			 *
+			 * The queue itself is not echoed here. pi emits `queue_update` from
+			 * inside both calls, and that is what reaches the transcript — so what
+			 * the UI shows is pi's queue rather than our record of what we sent.
+			 */
+			steer: (text: string) => void queued(running?.steer(text)),
+			follow: (text: string) => void queued(running?.followUp(text)),
 			resolveApproval: (approved: boolean) => gate.resolve(approved),
 			answerQuestion: (chosen: readonly string[]) => asker.answer(chosen),
 		};

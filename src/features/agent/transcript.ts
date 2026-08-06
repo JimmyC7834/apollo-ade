@@ -78,6 +78,18 @@ export interface Turn {
 	readonly status: 'running' | 'complete' | 'cancelled';
 	/** Last reported usage for the turn. Absent until the provider reports any. */
 	readonly usage?: Usage;
+	/**
+	 * What you typed during the turn that has not been sent yet.
+	 *
+	 * Not `Part`s. A part is something that happened, and these have not happened
+	 * — they are the turn's pending state, and pi replaces both lists whole on
+	 * every change. Appending them as parts would leave the transcript claiming a
+	 * message was sent when the queue had in fact drained it, or thrown it away.
+	 */
+	readonly queued?: {
+		readonly steer: readonly string[];
+		readonly followUp: readonly string[];
+	};
 }
 
 /**
@@ -235,12 +247,42 @@ export function applyEvent(turn: Turn, event: AgentEvent): Turn {
 					{ kind: 'compacted', tokensBefore: event.tokensBefore, summary: event.summary },
 				],
 			};
+		case 'queued':
+			return { ...turn, queued: { steer: event.steer, followUp: event.followUp } };
 		case 'error':
 			return {
 				...turn,
 				parts: [...turn.parts, { kind: 'error', message: event.message, code: event.code }],
 			};
 	}
+}
+
+/**
+ * What the turn still owes the user, in one sentence.
+ *
+ * The answer to "what does a cancel say about the messages it threw away", and
+ * it is the same list either way: a stopped turn had its queues cleared by pi,
+ * so the last thing the user was shown as pending is exactly what was lost.
+ * Saying nothing was the cheap option and the one that loses typed text in
+ * silence.
+ *
+ * The two queues are not told apart here. From the composer they are one thing —
+ * text you typed that the agent has not read — and where it was bound for stops
+ * mattering the moment it is gone.
+ */
+export function queuedLabel(turn: Turn): string | undefined {
+	const pending = [...(turn.queued?.steer ?? []), ...(turn.queued?.followUp ?? [])];
+	if (pending.length === 0) {
+		return undefined;
+	}
+	const list = pending.map((text) => `"${text}"`).join(', ');
+	if (turn.status === 'running') {
+		return `Waiting to send: ${list}`;
+	}
+	// A turn that ended without draining its queue threw it away. `complete` is
+	// as much a loser of messages as `cancelled` is — pi clears both queues on
+	// abort, and a run that ends never drains what is left.
+	return `Not sent: ${list}`;
 }
 
 /**
@@ -378,7 +420,11 @@ export function asPlainText(turns: readonly Turn[]): string {
 			const usage = turn.usage
 				? `\n[usage] ${turn.usage.inputTokens} in, ${turn.usage.outputTokens} out, ${turn.usage.contextTokens} context`
 				: '';
-			return `You: ${turn.prompt}\n\nAgent: ${body.join('')}\n[${turn.status}]${usage}`;
+			const queued = queuedLabel(turn);
+			return (
+				`You: ${turn.prompt}\n\nAgent: ${body.join('')}\n[${turn.status}]${usage}` +
+				(queued ? `\n[queued] ${queued}` : '')
+			);
 		})
 		.join('\n\n———\n\n');
 }

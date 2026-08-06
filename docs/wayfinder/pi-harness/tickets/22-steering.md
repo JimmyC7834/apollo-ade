@@ -1,10 +1,15 @@
 ---
 label: wayfinder:ticket
 title: Typing while the agent is running
-status: open
+status: closed
 ---
 
 # Typing while the agent is running
+
+**Shipped in Slice 32.** Enter queues a follow-up, `/steer <text>` changes the
+running turn, and the queue crosses the seam as the thirteenth event kind. The
+three small points left open below were settled while building; each one is
+recorded where it was decided.
 
 Found by the reuse audit recorded on the map, and it is the largest thing pi
 ships that this app does not use. Today the composer is dead for the whole of a
@@ -61,37 +66,62 @@ the names that change in minor releases every couple of days.
 So the queue crosses the seam as our own kind, `mapEvent` maps it, and
 `events.check.ts` covers it like the other twelve.
 
-**Open, and small.** The kind carries the queue, not one message: `queue_update`
-sends all three arrays every time, and a "one message was queued" event would
-make `AgentChat` rebuild a list pi already sends whole. Shape it as the state, not
-as the change.
+The kind carries the queue, not one message: `queue_update` sends all three
+arrays every time, and a "one message was queued" event would make `AgentChat`
+rebuild a list pi already sends whole. It is shaped as the state, not as the
+change.
 
-### 0. The command list comes first
+**Two arrays, not three.** `nextTurn` is dropped in `mapEvent`. Enter on an idle
+harness is `prompt()`, so nothing in this app can ever put a message in that
+queue — and a field that is always empty is a field that will be misread.
 
-Settled with [ticket 21](21-command-autocomplete.md) in the same grill. `/steer`
-is a fourth typed command, and `AgentChat` still finds commands with a chain of
-`startsWith`. The chain becomes **data** before either ticket builds anything.
-Three consumers now want the list: completion, `/steer`, and prompt templates
-later. Building it twice costs more than building it once.
+### ~~0. The command list comes first~~ — **done**
 
-### 3. What a cancel says
+Settled with [ticket 21](21-command-autocomplete.md) in the same grill, and
+built first. The chain of `startsWith` is now
+[`src/agent/commands.ts`](../../../../src/agent/commands.ts): a list of commands
+with a summary, an argument source and a `whileRunning` flag, plus
+`parseCommand`. `AgentChat.send` matches against the list and keeps the bodies,
+because each body closes over the provider and the component's state.
 
-`abort` returns the cleared queues, so the app knows exactly which of your
-sentences it threw away. Saying nothing is the cheapest option and the one that
-loses typed text silently. This is small but it is the kind of thing that is
-never added later.
+It is not in `src/commands/commandRegistry.ts`. That registry is the workbench
+palette — entries there carry a `run`, are fuzzy-searched, and belong to the
+window. Sharing one list would mean a "which surface" field on every entry.
 
-### 4. The transcript model
+### ~~3. What a cancel says~~ — **settled: it says what was not sent**
 
-`AgentChat` keeps one `Turn` per prompt. A steered message arrives *inside* an
-existing turn and a followed-up one starts a new turn that the user did not
-press Send for. Both need a shape before either verb is wired.
+**Not from `abort`.** The cleared queues pi returns arrive too late to be
+useful: `cancel()` synthesises `cancelled` at once rather than waiting for pi
+(the reason is in `provider.ts`), and the subscription is disposed before pi's
+`abort` lands. So the app already holds the answer — the last `queued` state is
+exactly what was never sent — and `queuedLabel` reads it.
 
-### 5. Queue mode
+One sentence, and the two queues are not told apart in it. From the composer
+they are one thing: text you typed that the agent has not read. Where it was
+bound for stops mattering the moment it is gone.
 
-`"all"` versus `"one-at-a-time"`, per queue. Probably pi's defaults untouched,
-for [ticket 15](15-core-already-does-this.md)'s reason — but it is a field with
-two values and no evidence yet, so it is named rather than assumed.
+A turn that *completes* with a queue left over gets the same sentence, which is
+not a special case: a run that ends never drains what is left, so the message is
+as lost as a cancelled one.
+
+### ~~4. The transcript model~~ — **settled: state on the turn, not a part**
+
+A queued message is not a `Part`. Every part is something that **happened**, and
+these have not — so `Turn` grows a `queued` field instead, replaced whole on
+every `queued` event because pi sends both queues whole on every change.
+Appending parts would have left the transcript claiming a message was sent after
+the queue had drained it, or thrown it away.
+
+The follow-up does *not* open a second `Turn`. pi drains it inside the same
+`prompt()` call, so its output arrives on the same subscription and lands in the
+same turn — which is also the truthful rendering, since it was one run.
+
+### ~~5. Queue mode~~ — **settled: pi's defaults, untouched**
+
+`setSteeringMode` and `setFollowUpMode` are not called. pi defaults follow-up to
+`"one-at-a-time"`, and there is still no evidence for anything else —
+[ticket 15](15-core-already-does-this.md)'s rule. The setters are there when a
+user asks for the other behaviour.
 
 ## What is already decided and does not need revisiting
 

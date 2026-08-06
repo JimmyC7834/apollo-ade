@@ -14,6 +14,7 @@ import {
 	asPlainText,
 	canAnswer,
 	questionLabel,
+	queuedLabel,
 	resolveApproval,
 	toolLabel,
 	type QuestionPart,
@@ -313,4 +314,28 @@ const started = (): Turn => ({ id: 1, prompt: 'go', parts: [], status: 'running'
 	assert.equal(loud.parts.length, 2);
 }
 
-console.log('transcript.check.ts: twelve kinds ok');
+// The thirteenth kind: what you typed while the turn was running.
+{
+	const empty: Turn = { id: 9, prompt: 'go', parts: [], status: 'running' };
+	assert.equal(queuedLabel(empty), undefined, 'nothing queued says nothing');
+
+	// The state replaces, it does not accumulate — pi sends both queues whole on
+	// every change, so folding them in would double every message.
+	let live = applyEvent(empty, { kind: 'queued', steer: ['use utf-8'], followUp: [] });
+	live = applyEvent(live, { kind: 'queued', steer: ['use utf-8'], followUp: ['then commit'] });
+	assert.deepEqual(live.queued, { steer: ['use utf-8'], followUp: ['then commit'] });
+	assert.equal(live.parts.length, 0, 'a queued message is not a part: it has not happened');
+	assert.match(queuedLabel(live)!, /^Waiting to send: "use utf-8", "then commit"$/);
+
+	// Draining empties it. Without this the transcript keeps offering messages the
+	// agent has already read.
+	assert.equal(queuedLabel(applyEvent(live, { kind: 'queued', steer: [], followUp: [] })), undefined);
+
+	// What a cancel says about the text it threw away — the whole reason the state
+	// is kept after the turn ends rather than cleared with it.
+	const stopped = applyEvent(live, { kind: 'cancelled' });
+	assert.match(queuedLabel(stopped)!, /^Not sent: "use utf-8", "then commit"$/);
+	assert.match(asPlainText([stopped]), /\[queued\] Not sent: "use utf-8"/);
+}
+
+console.log('transcript.check.ts: thirteen kinds ok');
