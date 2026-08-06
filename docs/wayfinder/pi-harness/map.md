@@ -251,7 +251,9 @@ something was accountable for making.
   JS. Forced by user-authored tools sharing the renderer. Pin `transport: "sse"` (a
   custom fetch does not cover websockets). **API key** behind a Rust resolver seam, so
   env-var now and OS keychain later needs no TypeScript change. OAuth is a later
-  additional resolver.
+  additional resolver. **The keychain is deferred, not now** (grill): it becomes worth
+  doing when a second person runs the app, and the resolver seam means waiting costs
+  nothing.
 
 - [What the agent does under `npm run dev`](tickets/10-browser-mode-env.md) — dev mode
   runs the **real pi loop** against a canned `ProviderStreams` and a `Map`-backed
@@ -313,6 +315,18 @@ something was accountable for making.
 
 ## Not yet specified
 
+**How to read this list, set by the dev in the grill.** The entries are not one kind of
+thing, and listing them flat hides which ones need him. Group them three ways when
+reporting them:
+
+- **Deferred, not now** — decided in principle, and the work waits. `rtk`, the OS
+  keychain, subagents, worker-hosted user scripts. Do not re-ask these. Report them as
+  one group and move on.
+- **Not decided** — the answer is genuinely open and blocks the work. These are the ones
+  worth a grill.
+- **Closed, kept for the record** — struck through, so that a settled answer does not
+  later read as never having been considered.
+
 - **What the app knows about a model** — [ticket 19](tickets/19-model-entries.md),
   **closed**. The obligation the ⚠ note above stated and no ticket ever owned. One table
   in `src/agent/models.ts` — `contextWindow`, `reasoning`, `thinkingLevelMap` — copied at
@@ -340,8 +354,11 @@ something was accountable for making.
   second caller for whatever that becomes.
 - **Profiles as subagent definitions.** The same payload (tools + prompt + model)
   configures both a session and a spawned child. Claude Code unifies them; whether
-  pi's core even supports subagent forking is unverified. Blocked behind the profile
-  data model.
+  pi's core even supports subagent forking is unverified. **Wanted — the dev confirmed
+  it in the grill — and deferred, not now.** The blocker named here is gone: profiles
+  shipped. What is deferred is the *grill*, so this entry keeps no answers, only the one
+  check that must come first: whether pi's core supports forking at all. If it does not,
+  the whole entry is a different and much larger effort.
 - **Which profile composes the skills** — [ticket 20](tickets/20-skills.md), **closed**.
   The map carried this as two entries and they were one question; the duplication is why
   nobody went back for it once profiles landed. **`profile.skills` is a default-off list
@@ -374,16 +391,28 @@ something was accountable for making.
   is free — it is **what Enter means while a turn is running**, because a steer meant as
   a follow-up derails a turn that was working, and guessing wrong is worse than not
   having the feature.
-- **Prompt-change mode as a setting** — append vs replace chosen *per profile* rather
-  than fixed. [Ticket 17](tickets/17-system-prompt-assembly.md) settled append as the
-  rule; this is the question of whether that is a default or a ceiling. Listed so that
-  choosing append does not later read as never having considered replace.
+- ~~**Prompt-change mode as a setting**~~ — **closed in the grill: append is the rule,
+  not a default.** [Ticket 17](tickets/17-system-prompt-assembly.md) settled that a
+  profile appends. This entry asked whether replace should ever be offered per profile.
+  It should not. pi puts the shell facts and the workspace facts **last** on purpose, and
+  a profile that replaces the prompt deletes them. The question stays recorded so that
+  append does not read as never having considered replace.
 - **Worker-hosted user scripts.** Deferred by
   [How a user adds their own tool](tickets/13-user-authored-tools.md) as the largest
   single piece of work on this map: a capability protocol over `postMessage`, worker
   lifecycle, and handling hangs, timeouts and errors in code we did not write. A Web
   Worker has no `window` and therefore no Tauri IPC, so the isolation is real — this is a
   known-good route, not an open question, but it is its own effort.
+
+  **Condition, from the grill.** This is where hook order stops being theoretical.
+  [Ticket 03](tickets/03-permission-gate.md) records that pi has no deny-precedence, and
+  the grill made the behaviour exact: `emitHook` **runs every handler** and keeps the
+  **last non-undefined result**. A handler with no opinion returns `undefined` and
+  changes nothing, which is why one gate handler is safe today. A user script that
+  installs a second `tool_call` handler and returns an object replaces the gate's
+  `{ block: true }`. So whatever hosts user scripts either denies them the `tool_call`
+  hook, or runs the handlers through a chaining runner with deny-precedence — the same
+  shape `systemPrompt.ts` already uses for `before_agent_start`, and for the same reason.
 - **Extension beyond tools** — hooks exposed to users, custom renderers, ADE chrome.
   The *tools* half of this graduated into
   [How a user adds their own tool](tickets/13-user-authored-tools.md) when the dev named
@@ -395,9 +424,13 @@ something was accountable for making.
   results. The twelve-kind contract does not preclude them — a new kind, or structured
   content inside `text`, are both open — but which of the two, and what the ADE renders,
   is unspecified. Revisit once the transcript has real content in it.
-- **Approval memory** — allow-once vs allow-for-session vs persistent rules. Moot while
-  auto is the default policy; becomes live when the `careful` profile is specified.
-  Deferred deliberately by [What stops a tool call](tickets/03-permission-gate.md).
+- **Approval memory** — allow-once vs allow-for-session vs persistent rules. Deferred
+  deliberately by [What stops a tool call](tickets/03-permission-gate.md), on the
+  grounds that it is moot while auto is the default and becomes live once `careful` is
+  specified. `careful` then shipped, so that condition was met and nobody noticed —
+  **the dev closed the gap in the grill: he always runs `auto`.** So this stays deferred
+  on a fact rather than on an expired argument. It becomes live if a second person runs
+  the app, or if `careful` stops being a profile nobody selects.
 - **Cancellation semantics below the event boundary** — mid-stream, mid-tool,
   mid-child-process. Sharp once the event contract and `exec` are settled.
 - **Whether pi's compaction defaults need touching.** pi's is the more carefully
@@ -428,8 +461,10 @@ something was accountable for making.
   entries, every number but DeepSeek's copied from pi's own catalog data rather than
   remembered. An unlisted model still has an *unknown* window, which is the answer that
   keeps auto-compaction from firing against a fabricated denominator.
-- **How rtk is obtained, and which seam it applies at.** Deferred with the evidence
-  gathered — see the amendment on
+- **How rtk is obtained, and which seam it applies at.** **Deferred, not now** — the
+  grill offered vendoring the filter data or removing the field, and the dev chose to
+  defer both. `rtk: boolean` stays on the profile and stays inert. Deferred with the
+  evidence gathered — see the amendment on
   [How rtk becomes a profile setting](tickets/11-rtk-in-profile.md). Five routes, priced:
   PATH lookup, bundled sidecar, library dependency (**ruled out — no lib target, and the
   crates.io name belongs to an unrelated project**), fetch-on-enable, and vendoring the

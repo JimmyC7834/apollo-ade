@@ -32,29 +32,33 @@ side of the seam.
 
 ## What is open
 
-### 1. What Enter means while a turn is running
+### ~~1. What Enter means while a turn is running~~ — **settled: `followUp`**
 
-The one decision that matters, because it is the whole feature to a user and
-there is no obviously right answer. `steer` interrupts and changes what the agent
-is doing now, which is what you want when it has gone the wrong way. `followUp`
-queues the next thing, which is what you want when it is doing fine and you have
-already thought of the next step. Guessing wrong is worse than not having the
-feature, because a steer that was meant as a follow-up derails a turn that was
-working.
+The one decision that mattered, and the dev settled it in the grill. `steer` puts
+your text into the running turn. `followUp` puts it after the turn. A `steer`
+that the user meant as a `followUp` changes a turn that was already correct, and
+that is the error nobody can undo. `followUp` has no such error.
 
-Three shapes to weigh: one verb chosen by a rule, two affordances the user picks
-between, or a modifier key. Note that the app already has a shape for this —
-`/skill` and `/profile` are typed commands rather than buttons — so a prefix is
-available and costs no chrome.
+So **Enter is `followUp`**, and **`/steer <text>` is the other verb**. The app
+already finds commands with a `/` prefix, so `steer` needs no new control and no
+new key. `nextTurn` gets no surface: it is what Enter already does when the
+harness is idle.
 
-### 2. Whether the event contract grows a kind
+### ~~2. Whether the event contract grows a kind~~ — **settled: no**
 
 [Ticket 05](05-event-contract.md) settled twelve kinds and none of them is "a
-message you typed that has not been sent yet". A queued message is not `text`
-(that is the model speaking) and it is not a turn of its own until it drains.
-Either a thirteenth kind carries it, or the queue is rendered from
-`queue_update` in `AgentChat` without crossing the seam at all. The second is
-smaller and the first is the one that survives a second UI.
+message you typed that has not been sent yet". The queue is **display in the chat
+UI and nothing else**: `AgentChat` reads `queue_update` and renders the pending
+messages. No thirteenth kind, and nothing crosses the domain interface. Your
+queued text is composer state, not something the agent said.
+
+### 0. The command list comes first
+
+Settled with [ticket 21](21-command-autocomplete.md) in the same grill. `/steer`
+is a fourth typed command, and `AgentChat` still finds commands with a chain of
+`startsWith`. The chain becomes **data** before either ticket builds anything.
+Three consumers now want the list: completion, `/steer`, and prompt templates
+later. Building it twice costs more than building it once.
 
 ### 3. What a cancel says
 

@@ -21,6 +21,21 @@ Skill names cannot contain a space — pi's validator permits lower case letters
 digits and hyphens — so the argument ends at the first space in either format,
 and the free text after it is unambiguous.
 
+## Settled in the grill: the chain becomes data, and it goes first
+
+The dev settled this while grilling the deferred list. `AgentChat` finds a
+command with a chain of `startsWith` inside `send`. That chain becomes a **list
+of commands**, and the work happens **before** this ticket completes anything and
+before [ticket 22](22-steering.md) adds `/steer`.
+
+Three consumers want the list: completion here, `/steer` in ticket 22, and
+prompt templates if they land. A list built for one consumer gets built again for
+the next two.
+
+Where it lives is still open. `src/commands/commandRegistry.ts` exists for the
+workbench palette. Slash commands are typed in the composer, which is a different
+surface, so the registry may be the wrong home.
+
 ## What is open
 
 **The argument source table.** Completing the second word requires knowing which
