@@ -147,9 +147,12 @@ something was accountable for making.
       header cites `loadSourcedSkills` as existing for exactly this. One call now tags
       both skills and diagnostics.
 
-    The one export still unused on purpose is **`loadPromptTemplates`** and its four
-    companions — see the autocomplete entry below. Nothing else in the two packages is
-    something this repo has written a second time.
+    Two things are unused and neither is a rewrite. **`loadPromptTemplates`** and its
+    four companions — see the autocomplete entry below. And **`steer` / `followUp` /
+    `nextTurn`**, which is the larger of the two and is now
+    [ticket 22](tickets/22-steering.md): the composer is dead for the whole of a turn
+    while pi ships three queues, a `queue_update` event and two queue modes. Nothing
+    else in the two packages is something this repo has written a second time.
 
 ## Decisions so far
 
@@ -361,6 +364,16 @@ something was accountable for making.
   by a **fixed read-only mount** rather than by a list the renderer supplies. Skills are
   the [Agent Skills standard](https://agentskills.io/specification) and not pi's format,
   which is what makes adopting it cost nothing.
+- **Typing while the agent is running** — [ticket 22](tickets/22-steering.md), **open**.
+  Raised by the reuse audit rather than by charting, which is [ticket 18](tickets/18-tool-reaches-the-gate.md)'s
+  pattern again: it was invisible while the map was being drawn because the map names
+  what the agent *is*, not what the composer does while it thinks. pi ships `steer`
+  (lands inside the running turn), `followUp` (lands after it) and `nextTurn` (lands
+  after the run), plus the `queue_update` event that renders them and the `abort` event
+  that says which ones a cancel threw away. The open decision is not the mechanism, which
+  is free — it is **what Enter means while a turn is running**, because a steer meant as
+  a follow-up derails a turn that was working, and guessing wrong is worse than not
+  having the feature.
 - **Prompt-change mode as a setting** — append vs replace chosen *per profile* rather
   than fixed. [Ticket 17](tickets/17-system-prompt-assembly.md) settled append as the
   rule; this is the question of whether that is a default or a ceiling. Listed so that
