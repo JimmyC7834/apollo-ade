@@ -53,6 +53,12 @@ import {
 	type ProfileModel,
 	type ProviderId,
 } from './profile';
+import {
+	allSkills,
+	onSkillsChange,
+	permittedSkills,
+	useSkillSource,
+} from './skills';
 import { onUserToolsChange, userToolDefinitions, userTools } from './userTools';
 
 /** Which shell Rust resolved, or undefined outside the native shell. */
@@ -327,10 +333,13 @@ function createRunner(
 	const declare = () =>
 		setCapabilities({
 			tools: tools.map((tool) => tool.name),
-			skills: [],
+			skills: allSkills().map((skill) => skill.name),
 			optIn: userTools().map((tool) => tool.name),
 		});
 	declare();
+
+	// The store reads through this environment, so it has to be told which one.
+	useSkillSource(env);
 
 	/**
 	 * The level this model will tolerate.
@@ -393,6 +402,7 @@ function createRunner(
 					composeSystemPrompt({
 						shell,
 						skills: context.resources.skills,
+						canRead: activeToolNames(activeProfile()).includes('read'),
 						instructions: activeProfile().instructions,
 					}),
 			})
@@ -458,7 +468,35 @@ function createRunner(
 				}
 				await harness.setActiveTools(activeToolNames(profile));
 				await harness.setThinkingLevel(thinkingFor(profile.thinkingLevel));
+				// Which skills the *next* turn may use, and which the system prompt
+				// lists. A third field the switch has to apply, for the same reason
+				// the tool set is one: the profile names them and they are off by
+				// default, so a switch that left them alone would leave the model
+				// holding the previous profile's skills.
+				await harness.setResources({ skills: [...permittedSkills(allSkills(), profile)] });
 			})
+		);
+	});
+
+	/**
+	 * The skills on disk, which land whenever `/reload` or the first root
+	 * selection reads them.
+	 *
+	 * `setResources` is pi's own setter and it emits `resources_update`, so the
+	 * harness treats a mid-session change as a real event rather than as
+	 * something we patched in behind it. Through the queue like every other
+	 * setter, so the skill list never changes under a run in flight.
+	 *
+	 * `declare()` first and synchronously: `installProfiles` validates skill
+	 * names against `setCapabilities` immediately after the load, where the
+	 * harness only needs to know by the next turn.
+	 */
+	onSkillsChange(() => {
+		declare();
+		void ready.then((harness) =>
+			enqueue(() =>
+				harness.setResources({ skills: [...permittedSkills(allSkills(), activeProfile())] })
+			)
 		);
 	});
 
@@ -505,7 +543,23 @@ function createRunner(
 		}
 	}
 
-	function start(prompt: string, onEvent: (event: AgentEvent) => void) {
+	/**
+	 * One turn, however it was started.
+	 *
+	 * `prompt()` and `skill()` are the same turn with a different first message —
+	 * pi's `skill()` looks the name up in `resources`, formats the body with
+	 * `formatSkillInvocation`, and hands it to the very same `executeTurn`. So
+	 * everything a turn owns (the gate, the asker, the hooks, held compaction,
+	 * cancellation) is shared, and only the call differs. `label` is what the
+	 * transcript shows as the prompt; for a skill that is the command the user
+	 * typed rather than the body, which would be a wall of instructions nobody
+	 * wrote.
+	 */
+	function begin(
+		label: string,
+		run: (harness: AgentHarness<{ env: ExecutionEnv }>) => Promise<unknown>,
+		onEvent: (event: AgentEvent) => void
+	) {
 		// Read at turn start, not at construction: switching to `careful` has to
 		// apply to the next turn rather than to the next window.
 		gate.begin(activeProfile().gatePolicy, onEvent);
@@ -602,8 +656,8 @@ function createRunner(
 					}
 					running = harness;
 					attach(harness);
-					await checkpoint(prompt);
-					await harness.prompt(prompt);
+					await checkpoint(label);
+					await run(harness);
 					// Deliberately after `prompt()` resolves rather than inside the
 					// event handler: `compact()` refuses a harness that is not idle,
 					// and `message_end` fires while the agent loop is still running.
@@ -670,6 +724,26 @@ function createRunner(
 		};
 	}
 
+	const start = (prompt: string, onEvent: (event: AgentEvent) => void) =>
+		begin(prompt, (harness) => harness.prompt(prompt), onEvent);
+
+	/**
+	 * `/skill <name>`, typed by the user.
+	 *
+	 * The user half of skills, and pi's own — `AgentHarness.skill()` finds the
+	 * skill in `resources`, wraps the body with `formatSkillInvocation` and runs
+	 * it as the turn's first message. `extra` is pi's `additionalInstructions`,
+	 * appended after the skill block.
+	 *
+	 * This is the *only* way the user reaches a skill and the only way the model
+	 * cannot: `skill()` throws `busy` unless the harness is idle, so it can never
+	 * be called from inside a turn and can never be a tool. The model's half is
+	 * the `<available_skills>` listing plus an ordinary `read`, which is why the
+	 * global directory had to become readable at all.
+	 */
+	const skill = (name: string, extra: string | undefined, onEvent: (event: AgentEvent) => void) =>
+		begin(`/skill ${name}`, (harness) => harness.skill(name, extra), onEvent);
+
 	/**
 	 * `/compact`, typed by the user.
 	 *
@@ -699,7 +773,7 @@ function createRunner(
 			.finally(() => onEvent({ kind: 'complete' }));
 	}
 
-	return { start, compact };
+	return { start, skill, compact };
 }
 
 export function createAgentProvider(): AgentProvider {
@@ -733,6 +807,11 @@ export function createAgentProvider(): AgentProvider {
 			canned.rearm();
 			return runner.start(prompt, onEvent);
 		},
+		// Not rearmed either, and it will not find a skill: the memory environment
+		// has no skill directories, so `/skill` in browser mode says the name is
+		// unknown. That is the honest answer rather than a fixture skill the
+		// native path would never load.
+		skill: runner.skill,
 		// Not rearmed: compaction asks the model for a summary, and the canned
 		// script has no answer for that. It reports "not enough conversation"
 		// or the script's own failure, which is the honest browser-mode answer

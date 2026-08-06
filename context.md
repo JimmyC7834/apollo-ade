@@ -24,6 +24,32 @@ The exceptions are fixed and small: input validation at trust boundaries, error
 handling that prevents data loss, the security boundary, and accessibility. These
 are never the thing that gets trimmed.
 
+## How to write to the dev
+
+When the dev asks for a pitch, a re-pitch, or an explanation of a choice, write in
+**ASD-STE100 simplified technical English**:
+
+- Write short sentences. Keep one idea in each sentence.
+- Use the active voice. Name who does the action.
+- Use the present tense.
+- Use one word for one meaning. Do not change words to make the text more
+  interesting.
+- Do not use more than three nouns together.
+- Do not use metaphors or rhetorical questions.
+
+Use the words of this repo for the things of this repo — slice, adapter, domain
+interface, boundary, root-confined, profile, gate, tool, harness, event. Do not
+invent a second name for something that has a name.
+
+This rule is about the pitch, not about the code comments. Comments keep the
+voice they already have.
+
+## Review agents
+
+Run every code-review sub-agent at **low effort**. Reviews are a second opinion
+on a diff that is already typechecked, checked and validated live; more effort
+buys length, not more findings.
+
 ## The guide is the spec
 
 `docs/# Building a VS Code-Like Agent IDE with Vertical Slices.md` is the

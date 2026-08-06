@@ -19,7 +19,11 @@ const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_DEPTH: usize = 12;
 /// Hidden from the explorer's tree. `.ade` holds the agent's own session
 /// transcripts, which are ours rather than the user's project.
-const IGNORED: [&str; 5] = [".git", "node_modules", "target", "dist", ".ade"];
+/// `.skills` is here because the mount books that id for the *global* skills
+/// directory. A project that really contains `<root>/.skills` would otherwise be
+/// listed and searched by these ids and then read from somewhere else entirely —
+/// the explorer showing one file and `read_file` opening another.
+const IGNORED: [&str; 6] = [".git", "node_modules", "target", "dist", ".ade", ".skills"];
 const MAX_RESULTS: usize = 500;
 /// Long lines are truncated in the preview: a minified bundle would otherwise
 /// ship a megabyte of one line to the UI for a three-character match.
@@ -109,6 +113,79 @@ pub(crate) fn resolve(root: &Path, id: &str) -> Result<PathBuf, String> {
         return Err("path escapes the workspace".into());
     }
     Ok(real)
+}
+
+/// The virtual directory that the global skills folder appears at.
+///
+/// **This is the second thing this app reads from outside the workspace root**,
+/// and the first that a *tool* can reach. `profiles.rs` opens one fixed file for
+/// the app itself; this opens one fixed directory for the agent, because a skill
+/// is only useful if the model can read it — see decision 4 of
+/// `docs/wayfinder/pi-harness/tickets/20-skills.md`.
+///
+/// It is a **mount, not an escape**. The renderer still names files by
+/// root-relative id and still never learns an OS path; ids beginning `.skills/`
+/// land under the global skills directory instead of under the root, and
+/// everything else about the policy is unchanged — no `..`, no symlinks, files
+/// only, 2 MiB. The prefix is fixed here, so the renderer cannot widen it.
+///
+/// **Read-only.** `may_write` refuses the prefix outright, so this grants the
+/// agent no way to author or alter a skill. Skills are hand-written, like
+/// profiles, and for the same reason: a skill the agent can rewrite is a system
+/// prompt the agent can rewrite.
+const SKILLS_MOUNT: &str = ".skills";
+
+/// The part of an id that is under the mount, if it is under the mount at all.
+///
+/// `.skills` alone is the directory itself, which `agent_list_dir` needs.
+fn under_mount(id: &str) -> Option<&str> {
+    let id = id.trim_start_matches('/');
+    match id.strip_prefix(SKILLS_MOUNT) {
+        Some("") => Some(""),
+        Some(rest) => rest.strip_prefix('/'),
+        None => None,
+    }
+}
+
+fn global_skills_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_config_dir()
+        .map(|dir| dir.join("skills"))
+        .map_err(|e| e.to_string())
+}
+
+/// Which directory an id is read from, and what is left of the id.
+///
+/// The one place the mount is applied. Every read command goes through it and
+/// no write command does, which is what makes "read-only" a property of the
+/// code rather than of a comment.
+fn read_base(
+    app: &tauri::AppHandle,
+    root: &Path,
+    id: &str,
+) -> Result<(PathBuf, String), String> {
+    match under_mount(id) {
+        Some(rest) => {
+            let dir = global_skills_dir(app)?;
+            // Canonicalised for the same reason `adopt` canonicalises the root,
+            // and missing it is what broke the first build of this: `resolve`
+            // confines by `starts_with`, so a base in one shape and a resolved
+            // path in another makes every file under the mount look like an
+            // escape. A directory that does not exist yet is left as-is — the
+            // callers all fail on it anyway, with a better message.
+            Ok((canonical(&dir).unwrap_or(dir), rest.to_string()))
+        }
+        None => Ok((root.to_path_buf(), id.to_string())),
+    }
+}
+
+/// Where the global skills go, so `/skills` can say it.
+///
+/// Same argument as `global_profiles_path`: a directory nobody names is a
+/// directory nobody uses.
+#[tauri::command]
+pub fn global_skills_path(app: tauri::AppHandle) -> Result<String, String> {
+    global_skills_dir(&app).map(|path| path.display().to_string())
 }
 
 fn walk(dir: &Path, prefix: &str, depth: usize, out: &mut Vec<Entry>) {
@@ -270,9 +347,14 @@ pub fn list_tree(state: tauri::State<'_, WorkspaceState>) -> Result<Vec<Entry>, 
 }
 
 #[tauri::command]
-pub fn read_file(id: String, state: tauri::State<'_, WorkspaceState>) -> Result<String, String> {
+pub fn read_file(
+    id: String,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, WorkspaceState>,
+) -> Result<String, String> {
     let root = root_of(&state)?;
-    let path = resolve(&root, &id)?;
+    let (base, rest) = read_base(&app, &root, &id)?;
+    let path = resolve(&base, &rest)?;
     let bytes = fs::read(path).map_err(|e| e.to_string())?;
     String::from_utf8(bytes).map_err(|_| "file is not valid UTF-8".to_string())
 }
@@ -302,10 +384,12 @@ pub struct PathMeta {
 #[tauri::command]
 pub fn stat_path(
     id: String,
+    app: tauri::AppHandle,
     state: tauri::State<'_, WorkspaceState>,
 ) -> Result<Option<PathMeta>, String> {
     let root = root_of(&state)?;
-    let candidate = Path::new(&id);
+    let (base, rest) = read_base(&app, &root, &id)?;
+    let candidate = Path::new(&rest);
     if candidate
         .components()
         .any(|c| !matches!(c, Component::Normal(_)))
@@ -313,7 +397,7 @@ pub fn stat_path(
         return Err("invalid path".into());
     }
 
-    let Ok(meta) = fs::symlink_metadata(root.join(candidate)) else {
+    let Ok(meta) = fs::symlink_metadata(base.join(candidate)) else {
         return Ok(None);
     };
     let file_type = meta.file_type();
@@ -357,11 +441,43 @@ pub fn stat_path(
 /// 02's confinement bounds that.
 const AGENT_PROTECTED: [&str; 1] = ["ade.profiles.json"];
 
+/// The project skills directory, protected on the same argument.
+///
+/// A prefix rather than a fixed name, because a skill is a directory tree. Added
+/// after review pointed out that the mount was made read-only to stop the agent
+/// rewriting its own system prompt — and the *project* half had exactly the same
+/// hole: a profile permits `deploy`, the agent writes
+/// `.agents/skills/deploy/SKILL.md`, and after the next `/reload` its own prose
+/// is in `<available_skills>` and is what `/skill deploy` runs. Project skills
+/// beat global ones, so it does not even need the name to be free.
+///
+/// Skills are configuration in the sense `ade.profiles.json` is, and the rule is
+/// already written down for that file: the agent may not write the things that
+/// decide what the agent does.
+const AGENT_PROTECTED_TREE: &str = ".agents/skills/";
+
 fn agent_may_write(id: &str) -> Result<(), String> {
     let normalised = id.replace('\\', "/");
     let normalised = normalised.trim_start_matches('/').to_lowercase();
     if AGENT_PROTECTED.contains(&normalised.as_str()) {
         return Err("refusing to write the agent's own profile file".into());
+    }
+    if normalised.starts_with(AGENT_PROTECTED_TREE) || normalised == ".agents/skills" {
+        return Err("refusing to write a skill: skills decide what the agent is told".into());
+    }
+    may_write(&normalised)
+}
+
+/// The mount is read-only, for everyone.
+///
+/// Checked separately from `AGENT_PROTECTED` because it binds the *editor* too.
+/// Reads under `.skills` come from the global skills directory and writes would
+/// go to `<root>/.skills` — a different real file with the same id. That shadow
+/// is worse than refusing: someone would open a global skill, edit it, save it,
+/// and see no change.
+fn may_write(id: &str) -> Result<(), String> {
+    if under_mount(&id.replace('\\', "/")).is_some() {
+        return Err("the global skills directory is read-only".into());
     }
     Ok(())
 }
@@ -449,6 +565,10 @@ pub fn agent_create_dir(
     state: tauri::State<'_, WorkspaceState>,
 ) -> Result<(), String> {
     let root = root_of(&state)?;
+    // `agent_may_write`, not `may_write`: this was the one agent write path that
+    // skipped `AGENT_PROTECTED`, so `mkdir ade.profiles.json` would make the
+    // profiles file uncreatable.
+    agent_may_write(&id)?;
     let target = contained(&root, &id)?;
     fs::create_dir_all(&target).map_err(|e| e.to_string())?;
     // Canonicalise the directory itself rather than its parent: this *is* the
@@ -472,10 +592,23 @@ pub fn agent_create_dir(
 #[tauri::command]
 pub fn agent_list_dir(
     id: String,
+    app: tauri::AppHandle,
     state: tauri::State<'_, WorkspaceState>,
 ) -> Result<Vec<PathMeta>, String> {
     let root = root_of(&state)?;
-    let target = contained(&root, &id)?;
+    let (base, rest) = read_base(&app, &root, &id)?;
+    let target = contained(&base, &rest)?;
+
+    // `contained` refuses `..` but does not canonicalise, and `read_dir` follows a
+    // symlinked *directory* — so without this, listing `.skills/link` would hand
+    // back the file names of wherever `link` points. Only the names: `resolve`
+    // still refuses to read them. Checked here rather than in `contained`,
+    // because every other caller creates the path it is asking about.
+    if let Ok(real) = canonical(&target) {
+        if !real.starts_with(&base) {
+            return Err("path escapes the workspace".into());
+        }
+    }
 
     let mut out = Vec::new();
     for entry in fs::read_dir(&target).map_err(|_| "not found".to_string())? {
@@ -618,6 +751,7 @@ pub fn write_file(
     state: tauri::State<'_, WorkspaceState>,
 ) -> Result<(), String> {
     let root = root_of(&state)?;
+    may_write(&id)?;
     let path = resolve(&root, &id)?;
     if content.len() as u64 > MAX_FILE_BYTES {
         return Err("file is larger than 2 MiB".into());
@@ -728,6 +862,31 @@ mod tests {
     }
 
     /// The agent may not edit the file that decides what the agent may do.
+    /// The agent may not author a skill, for the reason the mount is read-only.
+    ///
+    /// A profile permits `deploy`; the agent writes `.agents/skills/deploy/SKILL.md`;
+    /// after `/reload` its own prose is in the system prompt and is what
+    /// `/skill deploy` runs. Project skills beat global ones, so the name does
+    /// not even have to be free.
+    #[test]
+    fn agent_cannot_write_a_skill() {
+        assert!(agent_may_write(".agents/notes.md").is_ok(), "only the skills tree");
+        assert!(agent_may_write("agents/skills/x/SKILL.md").is_ok(), "and only at the root");
+
+        for spelling in [
+            ".agents/skills",
+            ".agents/skills/deploy/SKILL.md",
+            "/.agents/skills/deploy/SKILL.md",
+            r".agents\skills\deploy\SKILL.md",
+            ".Agents/Skills/deploy/SKILL.md",
+        ] {
+            assert!(
+                agent_may_write(spelling).is_err(),
+                "should have refused {spelling:?}"
+            );
+        }
+    }
+
     #[test]
     fn agent_cannot_write_its_own_profiles() {
         assert!(agent_may_write("src/main.rs").is_ok());
@@ -743,6 +902,43 @@ mod tests {
                 agent_may_write(spelling).is_err(),
                 "should have refused {spelling:?}"
             );
+        }
+    }
+
+    /// The mount is a prefix match on whole segments, not on characters.
+    ///
+    /// `.skillsets/x` starts with `.skills` as a string and must **not** be
+    /// mounted, or a project directory would silently read from somewhere else.
+    #[test]
+    fn mount_matches_whole_segments_only() {
+        assert_eq!(under_mount(".skills"), Some(""));
+        assert_eq!(under_mount("/.skills"), Some(""));
+        assert_eq!(under_mount(".skills/grilling/SKILL.md"), Some("grilling/SKILL.md"));
+
+        for outside in [
+            ".skillsets/x",
+            ".skills-old/x",
+            "src/.skills/x",
+            "skills/x",
+            ".agents/skills/x",
+        ] {
+            assert_eq!(under_mount(outside), None, "should not mount {outside:?}");
+        }
+    }
+
+    /// Read-only, and it is the code that says so rather than a comment.
+    ///
+    /// The editor is bound too: reads under the mount come from the config
+    /// directory and a write would land in `<root>/.skills`, so permitting one
+    /// would create two files with one id.
+    #[test]
+    fn the_mount_refuses_every_write() {
+        assert!(may_write("src/main.rs").is_ok());
+        assert!(may_write(".agents/skills/mine/SKILL.md").is_ok());
+
+        for spelling in [".skills", "/.skills", ".skills/mine/SKILL.md", r"\.skills\x"] {
+            assert!(may_write(spelling).is_err(), "should have refused {spelling:?}");
+            assert!(agent_may_write(spelling).is_err(), "and for the agent: {spelling:?}");
         }
     }
 

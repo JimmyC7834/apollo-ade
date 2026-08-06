@@ -13,8 +13,17 @@ import { formatSkillsForSystemPrompt, type Skill } from '@earendil-works/pi-agen
 export interface PromptParts {
 	/** Which shell `bash` got, or undefined when there is none. */
 	readonly shell?: string;
-	/** Skills the harness has loaded. Empty until ticket 15's loading lands. */
+	/** Skills the active profile permits, off the harness's own resources. */
 	readonly skills?: readonly Skill[];
+	/**
+	 * Whether this profile has the `read` tool.
+	 *
+	 * The listing names each skill's **location** and tells the model to open it,
+	 * so without `read` it advertises files nothing can fetch — and the model
+	 * fails rather than the app refusing, which is the worse of the two. pi guards
+	 * the same thing the same way (`system-prompt.ts:101`, `hasRead`).
+	 */
+	readonly canRead?: boolean;
 	/** The active profile's `instructions`. Appended, never substituted. */
 	readonly instructions?: string;
 }
@@ -64,7 +73,8 @@ function shellFacts(shell: string | undefined): string {
  * accumulate blank paragraphs as fields go unset.
  */
 export function composeSystemPrompt(parts: PromptParts): string {
-	const skills = parts.skills ? formatSkillsForSystemPrompt([...parts.skills]) : '';
+	const skills =
+		parts.skills && parts.canRead !== false ? formatSkillsForSystemPrompt([...parts.skills]) : '';
 	return [BASE, parts.instructions?.trim(), skills, shellFacts(parts.shell)]
 		.filter((segment): segment is string => Boolean(segment))
 		.join('\n\n');

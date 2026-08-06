@@ -9,6 +9,7 @@ import type { AgentEvent, AgentProvider, AgentRun } from '../../agent';
 import { pressure } from '../../agent/compaction';
 import { activateProfile, activeProfile, listProfiles } from '../../agent/profile';
 import { loadProfileFiles, profileSources } from '../../agent/profileFiles';
+import { skillList } from '../../agent/skills';
 import { userTools } from '../../agent/userTools';
 import { Icon, Overlay } from '../../ui';
 import { OTHER } from '../../agent/ask';
@@ -372,15 +373,24 @@ export function AgentChat({ provider, onAnnounce }: AgentChatProps) {
 		 */
 		if (text === '/reload') {
 			const emit = beginTurn(text);
-			void loadProfileFiles().then((loaded) => {
-				const answer =
-					loaded.problems.length > 0
-						? loaded.problems.join('\n')
-						: `Reloaded. ${listProfiles().length} profiles, ${userTools().length} of your tools.`;
-				emit({ kind: 'text', text: answer });
-				emit({ kind: 'complete' });
-				onAnnounce?.(answer);
-			});
+			void loadProfileFiles()
+				.then((loaded) => {
+					const answer =
+						loaded.problems.length > 0
+							? loaded.problems.join('\n')
+							: `Reloaded. ${listProfiles().length} profiles, ${userTools().length} of your tools.`;
+					emit({ kind: 'text', text: answer });
+					emit({ kind: 'complete' });
+					onAnnounce?.(answer);
+				})
+				// `loadProfileFiles` now awaits the skill loader as well, so this is
+				// a wider surface than the one that never rejected. Without a
+				// handler a rejection leaves the turn running for ever and the
+				// composer disabled, with nothing said.
+				.catch((cause: unknown) => {
+					emit({ kind: 'error', message: cause instanceof Error ? cause.message : String(cause) });
+					emit({ kind: 'complete' });
+				});
 			return;
 		}
 
@@ -394,6 +404,53 @@ export function AgentChat({ provider, onAnnounce }: AgentChatProps) {
 		 * divider is a session entry. What it does give is the same thing a divider
 		 * gives a reader mid-conversation — the switch is visible where it happened.
 		 */
+		/*
+		 * `/skill <name> [text]` — the user half of skills.
+		 *
+		 * A real turn, so it goes through `provider.skill` and keeps a run to
+		 * cancel. Everything after the name is `additionalInstructions`, appended
+		 * after the skill body exactly as pi's `/skill:name args` does.
+		 *
+		 * Space-separated rather than pi's `/skill:name`, matching `/profile
+		 * <name>`. The two formats complete equally well — an autocomplete list can
+		 * hold whole strings either way — and one separator is one rule. Completion
+		 * itself is ticket 21.
+		 */
+		if (text === '/skill' || text.startsWith('/skill ')) {
+			const rest = text.slice('/skill'.length).trim();
+			const [name, ...words] = rest.split(/\s+/);
+			const emit = beginTurn(text);
+			if (!name) {
+				// Not an error: it is the discoverable half of a command whose
+				// argument nothing yet completes.
+				const answer = skillList(activeProfile());
+				emit({ kind: 'text', text: answer });
+				emit({ kind: 'complete' });
+				onAnnounce?.(answer);
+				return;
+			}
+			runRef.current = provider.skill(name, words.join(' ') || undefined, emit);
+			return;
+		}
+
+		/*
+		 * `/skills`, which lists them and says why one is missing.
+		 *
+		 * Separate from `/profile` because the interesting failures are different:
+		 * a skill can be on disk and unpermitted, permitted and shadowed by a name
+		 * clash, or dropped for having no description. None of that is visible
+		 * anywhere else — `loadSkills` reports it as diagnostics and this is the
+		 * only thing that reads them.
+		 */
+		if (text === '/skills') {
+			const emit = beginTurn(text);
+			const answer = skillList(activeProfile());
+			emit({ kind: 'text', text: answer });
+			emit({ kind: 'complete' });
+			onAnnounce?.(answer);
+			return;
+		}
+
 		if (text === '/profile' || text.startsWith('/profile ')) {
 			const emit = beginTurn(text);
 			const name = text.slice('/profile'.length).trim();

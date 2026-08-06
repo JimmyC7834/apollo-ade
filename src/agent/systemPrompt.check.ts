@@ -57,6 +57,12 @@ const skill = {
 	// An empty skills array is not a skills section — pi's formatter returns ""
 	// and that must not become a paragraph of nothing.
 	assert.equal(composeSystemPrompt({ shell: 'bash', skills: [] }), bare);
+
+	// No `read`, no listing. The listing points the model at each skill's file
+	// and tells it to open one, so a profile without `read` would be advertising
+	// locations nothing can fetch — pi guards this the same way.
+	assert.equal(composeSystemPrompt({ shell: 'bash', skills: [skill], canRead: false }), bare);
+	assert.notEqual(composeSystemPrompt({ shell: 'bash', skills: [skill], canRead: true }), bare);
 	// Whitespace-only instructions are the same case, arriving from an env var
 	// someone set to "".
 	assert.equal(composeSystemPrompt({ shell: 'bash', instructions: '   ' }), bare);

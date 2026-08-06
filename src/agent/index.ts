@@ -92,6 +92,18 @@ export interface AgentRun {
 export interface AgentProvider {
 	start(prompt: string, onEvent: (event: AgentEvent) => void): AgentRun;
 	/**
+	 * Run a skill the user named, as its own turn.
+	 *
+	 * A sibling of `start` rather than a special prompt, because that is what it
+	 * is underneath: pi's `AgentHarness.skill()` looks the name up in the
+	 * harness's resources and formats the body itself, so the caller passes a
+	 * name and never sees the instructions. `extra` is appended after them.
+	 *
+	 * Returns an `AgentRun` — unlike `compact`, this one really is a turn and
+	 * really can be stopped.
+	 */
+	skill(name: string, extra: string | undefined, onEvent: (event: AgentEvent) => void): AgentRun;
+	/**
 	 * Summarise history now, on the user's instruction.
 	 *
 	 * Returns nothing rather than an `AgentRun`, because there is nothing to

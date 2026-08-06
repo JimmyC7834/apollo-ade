@@ -118,6 +118,14 @@ something was accountable for making.
   - Profile switching is **non-retroactive**: a switch applies to subsequent calls;
     prior history is never rewritten. (Zed independently arrived at the same rule —
     `docs/RESEARCH-zed-harness.md` §3.)
+  - **Take as much from pi's packages as they will give.** A standing preference, stated
+    by the dev while grilling skills and applying backwards to everything already built:
+    where pi ships the machinery, adopt it rather than write a parallel one — and read
+    `pi-coding-agent` as well as the core, because the client has already met most of
+    these problems. This is [ticket 15](tickets/15-core-already-does-this.md)'s "machinery
+    in, entries ours" promoted from a finding to a rule. It has a hard limit and only one:
+    where pi's mechanism assumes something this app does not have — chiefly a filesystem
+    with no boundary — the mechanism does not transfer and the *data* still does.
 
 ## Decisions so far
 
@@ -307,10 +315,28 @@ something was accountable for making.
   configures both a session and a spawned child. Claude Code unifies them; whether
   pi's core even supports subagent forking is unverified. Blocked behind the profile
   data model.
-- **Skills: composition with profiles.** pi loads skills into the system prompt up
-  front and ships `formatSkillsForSystemPrompt`. How a profile adds, removes, or
-  overrides them is unspecifiable until the profile exists. The *loading* half is
-  solved and deliberately not adopted yet — see the skills entry below.
+- **Which profile composes the skills** — [ticket 20](tickets/20-skills.md), **closed**.
+  The map carried this as two entries and they were one question; the duplication is why
+  nobody went back for it once profiles landed. **`profile.skills` is a default-off list
+  of names** — ticket 04's default-on exists for tools *pi* adds upstream, where the
+  author never had the chance to mention one, and a skill is ticket 13's case instead:
+  naming it in a profile is the trust decision. **Both entry points ship, because pi ships
+  both and says why** — the `<available_skills>` listing for the model, `/skill <name>`
+  for the user, and pi's own doc concedes the first is unreliable. They cannot be merged:
+  `AgentHarness.skill()` throws `busy` unless the harness is idle, so it can never be
+  reached from inside a turn and the model's only route is `read`. **Two directories**,
+  `.skills` (global) and `.agents/skills` (project — *not* `.ade/skills`, which is
+  gitignored and hidden from the tree, for the reason the profiles file already records).
+  **Project wins a collision, and a collision warns rather than refuses**: pi merges the
+  other way on a trust argument that stops applying once membership *is* the trust act,
+  and one merge rule for both file pairs beats agreeing with upstream. The decision that
+  took longest was **how the model gets a body**. Serving it from memory looked smaller —
+  `loadSkills` already returns `content` — until the standard's own shape settled it: a
+  skill is a *directory*, so a body without its `references/` is a half-working skill that
+  reads as a model failure rather than an app refusal. The read boundary therefore widens,
+  by a **fixed read-only mount** rather than by a list the renderer supplies. Skills are
+  the [Agent Skills standard](https://agentskills.io/specification) and not pi's format,
+  which is what makes adopting it cost nothing.
 - **Prompt-change mode as a setting** — append vs replace chosen *per profile* rather
   than fixed. [Ticket 17](tickets/17-system-prompt-assembly.md) settled append as the
   rule; this is the question of whether that is a default or a ceiling. Listed so that
@@ -385,10 +411,14 @@ something was accountable for making.
   chrome as much as the fields. Nothing is foreclosed; an editor writes the same file the
   reader already reads. Listed so that "no editor" reads as a decision rather than an
   oversight.
-- **Skills: which profile composes them.** Loading is solved —
-  [ticket 15](tickets/15-core-already-does-this.md) put `loadSkills` and
-  `formatSkillsForSystemPrompt` in the adopt list but **deferred them**, because skills
-  compose with profiles and profiles do not exist yet. Returns with profiles.
+- ~~**Skills: which profile composes them.**~~ **Merged upward** into the single skills
+  entry above and closed as [ticket 20](tickets/20-skills.md) — it was the same question
+  asked twice, and the duplication is why the answer sat unowned once profiles landed.
+- **Completing a slash command and its argument** — [ticket 21](tickets/21-command-autocomplete.md),
+  **open**. Deferred out of ticket 20 by the dev. The separator turned out not to decide
+  it: a menu entry may hold a space, so `/skill grilling` completes exactly as well as
+  pi's `/skill:grilling`. What is open is that `AgentChat.tsx` parses commands with a
+  chain of `startsWith`, so there is no list of commands to complete *from*.
 
 ## Out of scope
 

@@ -3100,3 +3100,103 @@ failed twice — Vite's optimised deps do not re-export `partial-json`'s `parse`
 through a hand-written import path. It ran first try under node, because the
 env readers now use `import.meta.env?.` so the module loads outside Vite. That
 was added to make the check possible and paid for itself twice over.
+
+## Slice 30 — Skills
+
+**User outcome.** The agent can use a skill you wrote — a directory with a
+`SKILL.md` in it — either by finding it itself, or because you typed
+`/skill <name>`. Skills live in one global directory and one per project, and a
+profile decides which of them the agent may use.
+
+**Added.** `src/agent/skills.ts` (the two directories, the merge rule, the
+`/skills` listing) and `skills.check.ts`. `/skill <name> [text]` and `/skills` in
+`AgentChat.tsx`; `AgentProvider.skill()` on the seam. In Rust, a read-only mount
+in `workspace.rs`: ids under `.skills` resolve to the global skills directory,
+and `global_skills_path` names it. Ticket
+`docs/wayfinder/pi-harness/tickets/20-skills.md`; autocomplete deferred to
+ticket 21.
+
+**UI extracted / reused.** Nothing extracted. `/skill` and `/skills` join the
+existing `startsWith` chain in `send`, which ticket 21 will replace with data.
+The `/skills` text is built in `skills.ts` rather than in the `.tsx`, because
+three of the states it reports are rules and a rule inside JSX cannot be checked.
+
+**Adapters and dependencies.** No new dependency. pi does the work: `loadSkills`
+walks the directories over our own `ExecutionEnv`, parses front matter, honours
+ignore files and reports diagnostics; `formatSkillsForSystemPrompt` writes the
+listing; `AgentHarness.skill()` runs the turn through `formatSkillInvocation`.
+What is ours is the two things pi's core deliberately leaves to the application —
+where to look, and which one wins — plus the mount that lets the model read the
+answer.
+
+**Security boundary.** This is the second thing the app reads from outside the
+workspace root, and the first a *tool* can reach, so it is worth being precise
+about. It is a **mount, not an exemption list**: the prefix is a constant in
+Rust, the renderer never supplies a path and never learns an OS one, and no `..`,
+symlink, non-file or over-2-MiB rule is relaxed. It is **read-only in code** —
+`read_base` is called by the three read commands and by no write command, and
+`may_write` refuses the prefix for the editor too, because a write would land in
+`<root>/.skills` and create two files with one id. The grill's version had Rust
+told which directories the active profile permitted; a constant is both safer and
+smaller.
+
+**Accessibility behavior.** `/skill` and `/skills` answer into ordinary turns and
+are announced through the same live region as `/profile`. No new control.
+
+**Validation performed.** `npx tsc --noEmit` clean, 15 `npm run check` scripts
+pass, `npm run build` clean, 9 `cargo test` including two new ones for the
+mount. Live in the native window against `deepseek-chat`, with a global skill, a
+project skill of the same name, and a global skill carrying a
+`references/note.md`:
+
+- `/skills` listed both, marked the unpermitted ones `○` and the permitted ones
+  `●` after a switch, and reported the collision naming **both** paths.
+- A profile naming skills that had not loaded refused to activate and said which.
+- `/skill probe-skill` returned `PROJECT-COPY-WON`, so the user half works and
+  project precedence reached the model.
+- Told only the *name* `global-only`, the agent read `/.skills/global-only/SKILL.md`
+  and then its relative `references/note.md`, returning `MOUNTED-MULTIFILE-OK`. It
+  could only have learned that path from `<available_skills>`, so that single run
+  proves the listing, the mount, and relative resolution at once.
+- `agent_write_file` under the mount was refused.
+
+**Not validated.** The `canRead` guard (no listing without the `read` tool) is
+asserted in `systemPrompt.check.ts` and was never exercised live, because no
+profile in the test set dropped `read`. Skill loading in browser mode is
+deliberately empty — the memory environment has no skill directories — so
+`/skill` there reports an unknown name and that path was not run either.
+
+**Caveats and deviations.** The grill settled "reload skills at every profile
+switch", on the belief that this app had no reload; it has one, so skills load
+inside `loadProfileFiles` — at root selection and at `/reload` — and a profile
+switch re-filters the already-loaded set. Smaller, and it serves the actual need
+better.
+
+Project skills are at `.agents/skills`, not the `.ade/skills` the grill named:
+`.ade/.gitignore` is `*` and `list_tree` skips `.ade`, so a skill meant to be
+committed and read would be neither. `profileFiles.ts` had already written that
+argument down for the project profiles file and I proposed the same mistake
+anyway.
+
+**One bug, found live and worth recording.** `read_file` under the mount failed
+with "path escapes the workspace" while `stat_path` and `agent_list_dir` both
+worked. `resolve` confines by `starts_with`, and I had passed it a base straight
+from `app_config_dir()` while the resolved path comes back canonicalised — the
+exact failure `canonical`'s own doc comment warns about, two functions above the
+code that ignored it. The asymmetry is what made it findable: the two commands
+that do not call `resolve` were fine.
+
+**Review found the hole on the other side.** The mount was made read-only on the
+argument that a skill the agent can rewrite is a system prompt the agent can
+rewrite. The *project* directory had that hole wide open: a profile permitting
+`deploy`, plus the agent writing `.agents/skills/deploy/SKILL.md`, is the agent
+authoring its own `<available_skills>` entry after the next `/reload` — and
+project skills beat global ones, so the name did not even have to be free.
+`.agents/skills/**` now sits beside `ade.profiles.json` in `agent_may_write`.
+Four smaller findings landed with it: `.skills` joins `IGNORED` so the mount does
+not double-book an id the explorer would otherwise list and open from elsewhere;
+`agent_list_dir` canonicalises under the mount, so a symlinked directory there
+cannot leak file names; `agent_create_dir` calls `agent_may_write` rather than
+`may_write`; and `/reload` grew a rejection handler, since it now awaits the
+skill loader and a throw would have left the composer disabled with nothing said.
+Rust tests 9 → 10.

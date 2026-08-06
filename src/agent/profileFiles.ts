@@ -22,6 +22,7 @@
 // necessary.
 
 import { installProfiles } from './profile';
+import { reloadSkills } from './skills';
 import { installUserTools } from './userTools';
 
 /**
@@ -164,6 +165,27 @@ export async function loadProfileFiles(): Promise<ProfileLoad> {
 	} catch (cause) {
 		problems.push(`could not read ${PROJECT_FILE}: ${reason(cause)}`);
 	}
+
+	/*
+	 * Skills are read here for two reasons, neither of them tidiness.
+	 *
+	 * **Order.** A profile naming a skill that has not been loaded yet fails
+	 * `danglingReferences` and refuses to activate — the same argument that puts
+	 * tools before profiles, one line down.
+	 *
+	 * **Timing.** Skills come off disk through the workspace commands, so they
+	 * cannot be read before a root exists, and this function is already the thing
+	 * that runs once a root does. It is also what `/reload` calls, which is how an
+	 * edited `SKILL.md` reaches a running app without a restart.
+	 */
+	let skillsPath: string | undefined;
+	try {
+		skillsPath = await invoke<string>('global_skills_path');
+	} catch {
+		// No config directory. `/skills` then names only the project directory,
+		// which is the honest answer rather than a path that does not exist.
+	}
+	await reloadSkills(skillsPath);
 
 	// Tools first. A profile naming a tool that has not been declared yet
 	// refuses to activate, which would make the order of two lines decide
