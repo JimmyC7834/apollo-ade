@@ -139,6 +139,16 @@ export interface AgentProvider {
 	 */
 	skill(name: string, extra: string | undefined, onEvent: (event: AgentEvent) => void): AgentRun;
 	/**
+	 * Run one of the user's own commands — a `.md` file in `.agents/commands`.
+	 *
+	 * The same shape as `skill` and for the same reason: pi's
+	 * `promptFromTemplate` finds the template in the harness's resources and
+	 * formats the turn itself, so the caller passes a name and the words that
+	 * follow it. `args` is already split — pi's `parseCommandArgs` honours shell
+	 * quoting, and the placeholders in the file are filled from that list.
+	 */
+	template(name: string, args: readonly string[], onEvent: (event: AgentEvent) => void): AgentRun;
+	/**
 	 * Summarise history now, on the user's instruction.
 	 *
 	 * Returns nothing rather than an `AgentRun`, because there is nothing to

@@ -10,7 +10,7 @@
 // tie-breaks are already tuned there.
 
 import { fuzzyFilter } from '../commands/fuzzy.ts';
-import { SLASH_COMMANDS, type ArgumentSource } from './commands.ts';
+import { SLASH_COMMANDS, type ArgumentSource, type SlashCommand } from './commands.ts';
 
 export interface Completion {
 	/** The whole composer text this entry leaves behind when accepted. */
@@ -42,7 +42,11 @@ export type CompletionSources = Readonly<Record<Exclude<ArgumentSource, 'text'>,
 export function complete(
 	text: string,
 	sources: CompletionSources,
-	running = false
+	running = false,
+	// The user's prompt templates arrive here, appended to the built-ins by the
+	// composer. Same defaulting as `parseCommand`, and for the same reason: a
+	// command from disk cannot be in a list compiled into the app.
+	commands: readonly SlashCommand[] = SLASH_COMMANDS
 ): Completion[] {
 	// Only a leading slash opens the menu, and it must be the first character:
 	// completing mid-sentence would put a popup over prose that mentions a path.
@@ -64,8 +68,8 @@ export function complete(
 	if (space === -1) {
 		return useful(
 			fuzzyFilter(
-			text,
-				SLASH_COMMANDS.filter((command) => Boolean(command.whileRunning) === running),
+				text,
+				commands.filter((command) => Boolean(command.whileRunning) === running),
 				(command) => command.name
 			).map(({ item }) => ({
 				// A command that takes an argument leaves the caret past a space, so
@@ -76,7 +80,7 @@ export function complete(
 		);
 	}
 
-	const command = SLASH_COMMANDS.find((entry) => entry.name === text.slice(0, space));
+	const command = commands.find((entry) => entry.name === text.slice(0, space));
 	// `text` arguments included: `/steer` takes a sentence, and no list holds one.
 	if (!command?.argument || command.argument === 'text') {
 		return [];

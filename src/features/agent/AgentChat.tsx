@@ -3,11 +3,14 @@
 // produced, so swapping the deterministic provider for a real model is a change
 // to `agent.ts` alone.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+
+import { parseCommandArgs } from '@earendil-works/pi-agent-core';
 
 import type { AgentEvent, AgentProvider, AgentRun } from '../../agent';
-import { parseCommand } from '../../agent/commands';
+import { parseCommand, SLASH_COMMANDS } from '../../agent/commands';
 import { complete } from '../../agent/completion';
+import { allTemplates, onTemplatesChange, templateCommands } from '../../agent/promptTemplates';
 import { pressure } from '../../agent/compaction';
 import { activateProfile, activeProfile, listProfiles } from '../../agent/profile';
 import { loadProfileFiles, profileSources } from '../../agent/profileFiles';
@@ -376,6 +379,17 @@ export function AgentChat({ provider, onAnnounce }: AgentChatProps) {
 	 * same lie as offering a command the running turn will refuse. `/skills`
 	 * remains the place that lists every one with a mark for which is which.
 	 */
+	/*
+	 * The built-ins plus whatever the user wrote in `.agents/commands`.
+	 *
+	 * Subscribed rather than read, because the templates change on `/reload` and
+	 * nothing else here would hear it — the store holds the same array until the
+	 * next load, which is what `useSyncExternalStore` requires. Built-ins come
+	 * first: the first match wins, and that is the whole name-clash rule.
+	 */
+	const templates = useSyncExternalStore(onTemplatesChange, templateCommands);
+	const commands = useMemo(() => [...SLASH_COMMANDS, ...templates], [templates]);
+
 	const completions = useMemo(
 		() =>
 			menuOpen
@@ -385,10 +399,11 @@ export function AgentChat({ provider, onAnnounce }: AgentChatProps) {
 							skill: permittedSkills(allSkills(), activeProfile()).map((skill) => skill.name),
 							profile: listProfiles().map((profile) => profile.name),
 						},
-						running
+						running,
+						commands
 					)
 				: [],
-		[menuOpen, prompt, running]
+		[commands, menuOpen, prompt, running]
 	);
 
 	/** Take an entry: it replaces the whole line, and may open the next menu. */
@@ -414,7 +429,7 @@ export function AgentChat({ provider, onAnnounce }: AgentChatProps) {
 		 * will extend; what is *done* about each command stays here, because every
 		 * body closes over the provider and this component's state.
 		 */
-		const parsed = parseCommand(text);
+		const parsed = parseCommand(text, commands);
 		setNotice(undefined);
 
 		// The one command that only means something *inside* a turn, so the idle
@@ -500,7 +515,8 @@ export function AgentChat({ provider, onAnnounce }: AgentChatProps) {
 					const answer =
 						loaded.problems.length > 0
 							? loaded.problems.join('\n')
-							: `Reloaded. ${listProfiles().length} profiles, ${userTools().length} of your tools.`;
+							: `Reloaded. ${listProfiles().length} profiles, ${userTools().length} of your tools, ` +
+								`${allTemplates().length} of your commands.`;
 					emit({ kind: 'text', text: answer });
 					emit({ kind: 'complete' });
 					onAnnounce?.(answer);
@@ -624,8 +640,29 @@ export function AgentChat({ provider, onAnnounce }: AgentChatProps) {
 			return;
 		}
 
+		/*
+		 * One of the user's own commands.
+		 *
+		 * Anything parsed that is not a built-in came from `.agents/commands`, and
+		 * identity is the test because the built-ins are the same objects in both
+		 * lists — a template is whatever the composer appended. It has to be last:
+		 * every branch above matches by name, and this one matches by exhaustion.
+		 *
+		 * `parseCommandArgs` is pi's, and it is the reason this is not
+		 * `args.split(/\s+/)`: a template fills `$1` and `${@:2}` from these words,
+		 * so `/deploy "the staging box"` has to be one argument and not three.
+		 */
+		if (parsed) {
+			runRef.current = provider.template(
+				parsed.command.name.slice(1),
+				parseCommandArgs(parsed.args),
+				beginTurn(text)
+			);
+			return;
+		}
+
 		runRef.current = provider.start(text, beginTurn(text));
-	}, [beginTurn, onAnnounce, prompt, provider, running, say]);
+	}, [beginTurn, commands, onAnnounce, prompt, provider, running, say]);
 
 	const resolve = useCallback(
 		(approved: boolean) => {

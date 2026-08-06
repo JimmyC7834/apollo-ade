@@ -147,8 +147,8 @@ something was accountable for making.
       header cites `loadSourcedSkills` as existing for exactly this. One call now tags
       both skills and diagnostics.
 
-    Two things are unused and neither is a rewrite. **`loadPromptTemplates`** and its
-    four companions — see the autocomplete entry below. And **`steer` / `followUp` /
+    Two things were unused and neither was a rewrite. **`loadPromptTemplates`** and its
+    four companions — adopted whole in Slice 35; see the command-system entry below. And **`steer` / `followUp` /
     `nextTurn`**, which is the larger of the two and is now
     [ticket 22](tickets/22-steering.md): the composer is dead for the whole of a turn
     while pi ships three queues, a `queue_update` event and two queue modes. Nothing
@@ -381,7 +381,9 @@ reporting them:
   by a **fixed read-only mount** rather than by a list the renderer supplies. Skills are
   the [Agent Skills standard](https://agentskills.io/specification) and not pi's format,
   which is what makes adopting it cost nothing.
-- **Typing while the agent is running** — [ticket 22](tickets/22-steering.md), **open**.
+- **Typing while the agent is running** — [ticket 22](tickets/22-steering.md),
+  **closed in Slice 32**: Enter is a follow-up, `/steer` is the other verb, and the
+  queues cross the seam as a thirteenth event kind.
   Raised by the reuse audit rather than by charting, which is [ticket 18](tickets/18-tool-reaches-the-gate.md)'s
   pattern again: it was invisible while the map was being drawn because the map names
   what the agent *is*, not what the composer does while it thinks. pi ships `steer`
@@ -443,10 +445,16 @@ reporting them:
   session that compacts badly. *Who calls `shouldCompact`* is a different question and
   is now [ticket 16](tickets/16-compaction.md) — core never calls it itself.
 - ~~**A command system for the agent chat.**~~ **Deleted from the queue** by
-  [ticket 15](tickets/15-core-already-does-this.md). Its builtin half is a lookup table
-  over harness methods that now exist; its user half is one `promptFromTemplate` call.
-  Nothing in it is a decision, so it ships alongside
-  [ticket 16](tickets/16-compaction.md) rather than being planned.
+  [ticket 15](tickets/15-core-already-does-this.md), and **both halves have now shipped**.
+  Its builtin half is a lookup table over harness methods, which is
+  [`src/agent/commands.ts`](../../../src/agent/commands.ts); its user half was one
+  `promptFromTemplate` call, made in Slice 35 —
+  [`src/agent/promptTemplates.ts`](../../../src/agent/promptTemplates.ts) reads `.md`
+  files from `.agents/commands` and the composer runs one. The two decisions it did
+  contain, and ticket 15 could not have known about: a template is **not gated by a
+  profile** (a skill is listed to the model, where a template only reaches it when the
+  user types the name — the typing is the trust act), and a built-in **wins a name
+  clash** and says so.
 - ~~**Session forking and a session picker.**~~ **Decided: no UI in v1**
   ([ticket 15](tickets/15-core-already-does-this.md)). The data model is in and costs
   nothing to carry; a branch view, picker and fork affordance are three UI surfaces for
@@ -487,7 +495,7 @@ reporting them:
   entry above and closed as [ticket 20](tickets/20-skills.md) — it was the same question
   asked twice, and the duplication is why the answer sat unowned once profiles landed.
 - **Completing a slash command and its argument** — [ticket 21](tickets/21-command-autocomplete.md),
-  **open**. Deferred out of ticket 20 by the dev. The separator turned out not to decide
+  **closed in Slice 33**. Deferred out of ticket 20 by the dev. The separator turned out not to decide
   it: a menu entry may hold a space, so `/skill grilling` completes exactly as well as
   pi's `/skill:grilling`. What is open is that `AgentChat.tsx` parses commands with a
   chain of `startsWith`, so there is no list of commands to complete *from*.

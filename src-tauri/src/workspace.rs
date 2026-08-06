@@ -454,7 +454,13 @@ const AGENT_PROTECTED: [&str; 1] = ["ade.profiles.json"];
 /// Skills are configuration in the sense `ade.profiles.json` is, and the rule is
 /// already written down for that file: the agent may not write the things that
 /// decide what the agent does.
-const AGENT_PROTECTED_TREE: &str = ".agents/skills/";
+///
+/// `.agents/commands` joins it on exactly that rule. A prompt template is a file
+/// whose body becomes the prompt when the user types its name, so an agent that
+/// can write one can write the instructions it will later be given — and the
+/// user typing `/deploy` is what makes it run, which is the trust act templates
+/// have instead of a profile field.
+const AGENT_PROTECTED_TREES: [&str; 2] = [".agents/skills/", ".agents/commands/"];
 
 fn agent_may_write(id: &str) -> Result<(), String> {
     let normalised = id.replace('\\', "/");
@@ -462,8 +468,14 @@ fn agent_may_write(id: &str) -> Result<(), String> {
     if AGENT_PROTECTED.contains(&normalised.as_str()) {
         return Err("refusing to write the agent's own profile file".into());
     }
-    if normalised.starts_with(AGENT_PROTECTED_TREE) || normalised == ".agents/skills" {
-        return Err("refusing to write a skill: skills decide what the agent is told".into());
+    for tree in AGENT_PROTECTED_TREES {
+        // The directory itself as well as everything under it: `trim_end_matches`
+        // is what makes `.agents/skills` and `.agents/skills/` the same refusal.
+        if normalised.starts_with(tree) || normalised == tree.trim_end_matches('/') {
+            return Err(
+                "refusing to write that: it decides what the agent is told".into(),
+            );
+        }
     }
     may_write(&normalised)
 }
@@ -862,15 +874,16 @@ mod tests {
     }
 
     /// The agent may not edit the file that decides what the agent may do.
-    /// The agent may not author a skill, for the reason the mount is read-only.
+    /// The agent may not author a skill or a command, for the reason the mount
+    /// is read-only.
     ///
     /// A profile permits `deploy`; the agent writes `.agents/skills/deploy/SKILL.md`;
     /// after `/reload` its own prose is in the system prompt and is what
     /// `/skill deploy` runs. Project skills beat global ones, so the name does
     /// not even have to be free.
     #[test]
-    fn agent_cannot_write_a_skill() {
-        assert!(agent_may_write(".agents/notes.md").is_ok(), "only the skills tree");
+    fn agent_cannot_write_a_skill_or_command() {
+        assert!(agent_may_write(".agents/notes.md").is_ok(), "only the two trees");
         assert!(agent_may_write("agents/skills/x/SKILL.md").is_ok(), "and only at the root");
 
         for spelling in [
@@ -879,6 +892,11 @@ mod tests {
             "/.agents/skills/deploy/SKILL.md",
             r".agents\skills\deploy\SKILL.md",
             ".Agents/Skills/deploy/SKILL.md",
+            // A prompt template is the same hole with fewer steps: the body of
+            // the file becomes the prompt the moment the user types its name.
+            ".agents/commands",
+            ".agents/commands/deploy.md",
+            "/.agents/commands/deploy.md",
         ] {
             assert!(
                 agent_may_write(spelling).is_err(),

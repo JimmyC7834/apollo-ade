@@ -55,6 +55,11 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
 /**
  * The command the text names, and whatever follows it.
  *
+ * `commands` defaults to the built-ins and is passed in whole by the composer,
+ * which appends the user's own prompt templates — commands that come from disk
+ * and cannot be in a list compiled into the app. Built-ins come first in that
+ * array, which is the whole of the name-clash rule: the first match wins.
+ *
  * Exact name or name-plus-space, which is what keeps `/skills` from being read
  * as `/skill` with the argument `s` — the space is required, so no name can
  * shadow a longer one and the list needs no ordering rule.
@@ -63,9 +68,12 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
  * it differs: `/skill` takes a name and then free text, where a prompt template
  * will want pi's `parseCommandArgs` for shell quoting.
  */
-export function parseCommand(text: string): { command: SlashCommand; args: string } | undefined {
+export function parseCommand(
+	text: string,
+	commands: readonly SlashCommand[] = SLASH_COMMANDS
+): { command: SlashCommand; args: string } | undefined {
 	const trimmed = text.trim();
-	for (const command of SLASH_COMMANDS) {
+	for (const command of commands) {
 		if (trimmed === command.name) {
 			return { command, args: '' };
 		}

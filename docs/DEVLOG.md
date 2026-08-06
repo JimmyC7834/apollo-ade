@@ -3452,3 +3452,80 @@ it takes.
 (`ids.check.ts` is new), `npm run build` clean apart from the two standing
 warnings. **Not validated live** — this is a refactor with no behaviour change
 to observe, but the workbench itself has not been run since it was made.
+
+---
+
+## Slice 35 — Commands the user writes
+
+**User outcome:** A `.md` file in `.agents/commands` is a slash command. Its
+body becomes the prompt, `$1` and `$ARGUMENTS` are filled from the words after
+the name, and it appears in the completion menu beside the built-ins. Recorded
+as [ticket 23](wayfinder/pi-harness/tickets/23-prompt-templates.md), written
+after the fact because this was never a charted question — the map had deleted
+it from the queue as *"one `promptFromTemplate` call"*, and ticket 21 found the
+call had never been made.
+
+**pi ships all of it.** `loadPromptTemplates` reads the directory over our own
+`ExecutionEnv` and reports failures as diagnostics; `promptFromTemplate` finds
+the template in the harness's resources, fills the placeholders with
+`substituteArgs`, and hands the result to the same `executeTurn` a prompt goes
+through — so the gate, the asker, the hooks and cancellation are shared, and an
+unknown name fails as pi's `invalid_argument` rather than as a prompt that says
+"/deploy". `parseCommandArgs` splits the argument string, which is why
+`/deploy "the staging box"` is one argument and not three.
+
+**The one asymmetry worth arguing about: a template is not gated by a profile,
+and a skill is.** Ticket 13's rule is that naming a thing in a profile is the
+trust act *because the model can reach it* — a skill is listed to the model in
+`<available_skills>`. A template only reaches the model when the user types its
+name, so the typing is already the trust act, and a `templates` field would be a
+second decision about the same thing.
+
+**The protection moved to the write side instead.** `.agents/commands` is
+refused to the agent in `workspace.rs`, beside `.agents/skills` and on the same
+argument: an agent that can write a template can write the instructions it will
+later be given. The two protected trees became a list rather than a second
+constant, and the existing Rust test grew the three new spellings.
+
+**A built-in wins a name clash and the loser is named.** `parseCommand` matches
+built-ins first, so a template called `compact` could never run; it is dropped
+with a warning that `/reload` prints. Silently shadowing it would leave someone
+typing into a command they wrote and getting compaction.
+
+**Project only.** A global directory needs a second Rust mount — `.skills` is
+one mount, not a mechanism — and nothing has asked for one.
+
+**The defect this slice nearly shipped, found while reading pi rather than by a
+test.** `setResources` **replaces**: it rebuilds `resources` from the object it
+is handed, so the two existing calls passing only `skills` would have emptied
+the templates on the next profile switch or `/reload`. Every caller now goes
+through one `resourcesFor(profile)`, which is the only thing keeping the three
+setters from deleting each other's half.
+
+**`parseCommand` and `complete` take the command list as an argument** now,
+defaulting to the built-ins. That is what ticket 21 meant by shaping the list so
+that adding templates later did not mean shaping it again: the composer passes
+`[...SLASH_COMMANDS, ...templateCommands()]`, built-ins first, and the
+first-match rule is the whole of the clash rule.
+
+**What the review caught.** The command list was rebuilt on a `useMemo` keyed on
+the prompt text — correct only because a stale list is only visible to someone
+typing, which changes the key. Both reviewers called it coincidental
+correctness, and they were right: the store now holds the commands array across
+a load and the composer subscribes to it with `useSyncExternalStore`, so the
+dependency is the thing that actually changes.
+
+**Security boundary.** One change, and it is a tightening: `.agents/commands`
+joins `.agents/skills` in what the agent may not write. A template runs under
+the same gate, the same profile and the same tools as any other turn — it is a
+prompt, not a capability. Still a foot-gun guard rather than a boundary: an
+agent with a shell reaches the directory, and only ticket 02's confinement
+bounds that.
+
+**Validation.** `npx tsc --noEmit` clean, 19 `npm run check` scripts pass
+(`promptTemplates.check.ts` is new and covers the clash rule against every
+built-in rather than the two anyone would type), `cargo test workspace::` passes
+7 tests including the widened refusal, `npm run build` clean apart from the two
+standing warnings. **Not validated live** — browser mode has no
+`.agents/commands` at all, so no template has ever run, and `substituteArgs` is
+covered by pi's tests rather than by ours.

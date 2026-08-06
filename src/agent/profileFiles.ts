@@ -23,6 +23,7 @@
 
 import { installProfiles } from './profile';
 import { isTauri } from '../native';
+import { reloadTemplates, templateWarnings } from './promptTemplates';
 import { reloadSkills } from './skills';
 import { installUserTools } from './userTools';
 
@@ -187,6 +188,19 @@ export async function loadProfileFiles(): Promise<ProfileLoad> {
 		// which is the honest answer rather than a path that does not exist.
 	}
 	await reloadSkills(skillsPath);
+
+	/*
+	 * The user's commands, read on the same trip and for the same two reasons —
+	 * they come off disk through the workspace commands, and `/reload` is how an
+	 * edited file reaches a running app.
+	 *
+	 * Its warnings *are* problems here, where a skill's are not: a shadowed or
+	 * unparseable skill is reported by `/skills`, and there is no `/commands` to
+	 * report a template. The completion menu is the listing, and a file missing
+	 * from it says nothing about why.
+	 */
+	await reloadTemplates();
+	problems.push(...templateWarnings());
 
 	// Tools first. A profile naming a tool that has not been declared yet
 	// refuses to activate, which would make the order of two lines decide

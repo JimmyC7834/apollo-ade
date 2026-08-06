@@ -43,6 +43,7 @@ import { installRustFetch } from './rustFetch';
 import { cannedProvider, FIXTURE_FILES } from './canned';
 import { createGate } from './gate';
 import { isTauri } from '../native';
+import { allTemplates, onTemplatesChange, useTemplateSource } from './promptTemplates';
 import { createAskTool, createAsker } from './ask';
 import { applyContributors, composeSystemPrompt } from './systemPrompt';
 import {
@@ -52,6 +53,7 @@ import {
 	PROVIDER_IDS,
 	setCapabilities,
 	type ProfileModel,
+	type Profile,
 	type ProviderId,
 } from './profile';
 import {
@@ -339,8 +341,22 @@ function createRunner(
 		});
 	declare();
 
-	// The store reads through this environment, so it has to be told which one.
+	// The stores read through this environment, so they have to be told which one.
 	useSkillSource(env);
+	useTemplateSource(env);
+
+	/**
+	 * Everything `setResources` holds, always both halves.
+	 *
+	 * `setResources` **replaces** — it rebuilds `resources` from the object it is
+	 * given, so a call passing only `skills` silently empties the templates. Every
+	 * caller goes through this, which is the only thing keeping the three setters
+	 * below from deleting each other's half.
+	 */
+	const resourcesFor = (profile: Profile) => ({
+		skills: [...permittedSkills(allSkills(), profile)],
+		promptTemplates: [...allTemplates()],
+	});
 
 	/**
 	 * The level this model will tolerate.
@@ -474,7 +490,7 @@ function createRunner(
 				// the tool set is one: the profile names them and they are off by
 				// default, so a switch that left them alone would leave the model
 				// holding the previous profile's skills.
-				await harness.setResources({ skills: [...permittedSkills(allSkills(), profile)] });
+				await harness.setResources(resourcesFor(profile));
 			})
 		);
 	});
@@ -495,9 +511,20 @@ function createRunner(
 	onSkillsChange(() => {
 		declare();
 		void ready.then((harness) =>
-			enqueue(() =>
-				harness.setResources({ skills: [...permittedSkills(allSkills(), activeProfile())] })
-			)
+			enqueue(() => harness.setResources(resourcesFor(activeProfile())))
+		);
+	});
+
+	/*
+	 * The user's commands, which land on the same `/reload` the skills do.
+	 *
+	 * No `declare()` beside it, unlike skills: a template is not a capability a
+	 * profile names, so nothing validates against it. See `promptTemplates.ts`
+	 * for why the profile does not gate them.
+	 */
+	onTemplatesChange(() => {
+		void ready.then((harness) =>
+			enqueue(() => harness.setResources(resourcesFor(activeProfile())))
 		);
 	});
 
@@ -780,6 +807,30 @@ function createRunner(
 		begin(`/skill ${name}`, (harness) => harness.skill(name, extra), onEvent);
 
 	/**
+	 * `/<command>`, typed by the user — one of their own prompt templates.
+	 *
+	 * The same one-line shape `skill` has, because underneath it is the same
+	 * thing: `promptFromTemplate` looks the name up in `resources`, fills the
+	 * placeholders with `substituteArgs`, and hands the result to the very same
+	 * `executeTurn`. So the gate, the asker, the hooks and cancellation are all
+	 * shared, and an unknown name fails as pi's `invalid_argument` rather than
+	 * as a prompt that says "/deploy".
+	 *
+	 * The label is what the user typed, for the reason `/skill`'s is: the body is
+	 * a file they wrote and the transcript should show the command, not the file.
+	 */
+	const template = (
+		name: string,
+		args: readonly string[],
+		onEvent: (event: AgentEvent) => void
+	) =>
+		begin(
+			[`/${name}`, ...args].join(' '),
+			(harness) => harness.promptFromTemplate(name, [...args]),
+			onEvent
+		);
+
+	/**
 	 * `/compact`, typed by the user.
 	 *
 	 * Its own subscription, because there is no turn running to borrow one from
@@ -808,7 +859,7 @@ function createRunner(
 			.finally(() => onEvent({ kind: 'complete' }));
 	}
 
-	return { start, skill, compact };
+	return { start, skill, template, compact };
 }
 
 export function createAgentProvider(): AgentProvider {
@@ -847,6 +898,10 @@ export function createAgentProvider(): AgentProvider {
 		// unknown. That is the honest answer rather than a fixture skill the
 		// native path would never load.
 		skill: runner.skill,
+		// Nor rearmed, and it will find no template either: the memory environment
+		// has no `.agents/commands`, so a command from disk cannot exist in browser
+		// mode. Same honest answer as `/skill` gives there.
+		template: runner.template,
 		// Not rearmed: compaction asks the model for a summary, and the canned
 		// script has no answer for that. It reports "not enough conversation"
 		// or the script's own failure, which is the honest browser-mode answer
