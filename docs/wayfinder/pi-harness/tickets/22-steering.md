@@ -44,13 +44,27 @@ already finds commands with a `/` prefix, so `steer` needs no new control and no
 new key. `nextTurn` gets no surface: it is what Enter already does when the
 harness is idle.
 
-### ~~2. Whether the event contract grows a kind~~ — **settled: no**
+### ~~2. Whether the event contract grows a kind~~ — **settled: a thirteenth kind**
 
 [Ticket 05](05-event-contract.md) settled twelve kinds and none of them is "a
-message you typed that has not been sent yet". The queue is **display in the chat
-UI and nothing else**: `AgentChat` reads `queue_update` and renders the pending
-messages. No thirteenth kind, and nothing crosses the domain interface. Your
-queued text is composer state, not something the agent said.
+message you typed that has not been sent yet". The dev chose to add one.
+
+**I recommended the opposite and he overruled it, correctly.** My argument was
+that queued text is composer state, so it does not belong on the domain
+interface. The argument is wrong in one place: `queue_update` is a **pi** event,
+and the seam exists so that no feature module reads pi's vocabulary. Rendering
+the queue straight from `queue_update` puts pi's event shape inside `AgentChat`,
+which is the one thing [ticket 05](05-event-contract.md) exists to prevent. It
+also breaks the rule that `mapEvent` is the only place that knows pi's names —
+the names that change in minor releases every couple of days.
+
+So the queue crosses the seam as our own kind, `mapEvent` maps it, and
+`events.check.ts` covers it like the other twelve.
+
+**Open, and small.** The kind carries the queue, not one message: `queue_update`
+sends all three arrays every time, and a "one message was queued" event would
+make `AgentChat` rebuild a list pi already sends whole. Shape it as the state, not
+as the change.
 
 ### 0. The command list comes first
 
