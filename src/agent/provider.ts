@@ -42,6 +42,7 @@ import { mapEvent } from './events';
 import { installRustFetch } from './rustFetch';
 import { cannedProvider, FIXTURE_FILES } from './canned';
 import { createGate } from './gate';
+import { isTauri } from '../native';
 import { createAskTool, createAsker } from './ask';
 import { applyContributors, composeSystemPrompt } from './systemPrompt';
 import {
@@ -811,7 +812,7 @@ function createRunner(
 }
 
 export function createAgentProvider(): AgentProvider {
-	const native = '__TAURI_INTERNALS__' in globalThis;
+	const native = isTauri();
 	// The active profile names the model. An empty id means nobody has named one
 	// — there is still no picker and no profile file, so it comes from an env var
 	// — and that falls to the canned provider exactly as a missing env var did.

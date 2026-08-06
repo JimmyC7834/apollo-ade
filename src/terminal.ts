@@ -2,6 +2,8 @@
 // owns an xterm.js instance and an opaque session id, and everything else
 // happens behind this adapter.
 
+import { isTauri } from './native';
+
 export type OutputListener = (id: string, data: string) => void;
 export type ExitListener = (id: string, code: number | undefined) => void;
 
@@ -144,6 +146,5 @@ function tauriAdapter(): TerminalAdapter {
 }
 
 export function createTerminalAdapter(): TerminalAdapter {
-	const isTauri = '__TAURI_INTERNALS__' in window;
-	return isTauri ? tauriAdapter() : echoAdapter();
+	return isTauri() ? tauriAdapter() : echoAdapter();
 }

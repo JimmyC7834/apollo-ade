@@ -2,6 +2,9 @@
 // Tauri directly, so the UI runs in a plain browser (`npm run dev`) against
 // the fixture provider with no native process involved.
 
+import { basename } from './ids';
+import { isTauri } from './native';
+
 export interface WorkspaceEntry {
 	readonly id: string;
 	readonly name: string;
@@ -85,10 +88,6 @@ export const FIXTURE: Record<string, string> = {
 	'src/main.ts': "console.log('hello from the fixture');\n",
 	'src/util.ts': 'export const noop = (): void => {};\n',
 };
-
-function basename(id: string): string {
-	return id.slice(id.lastIndexOf('/') + 1);
-}
 
 function fixtureProvider(): WorkspaceProvider {
 	const entries: WorkspaceEntry[] = [
@@ -380,7 +379,7 @@ function tauriProvider(): WorkspaceProvider {
 }
 
 export function createWorkspaceProvider(): WorkspaceProvider {
-	if ('__TAURI_INTERNALS__' in window) {
+	if (isTauri()) {
 		return tauriProvider();
 	}
 	// Firefox and Safari have no picker; there the fixture is the whole story.

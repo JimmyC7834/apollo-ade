@@ -29,6 +29,7 @@ import {
 // script, which node resolves without Vite's help.
 import { destructive, type Gate } from './gate.ts';
 import { ASK_TOOL } from './ask.ts';
+import { isTauri } from '../native.ts';
 
 /** Model-visible tool names travel in the request; keep them boring. */
 const NAME = /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/;
@@ -422,7 +423,7 @@ function createUserTool(tool: UserTool, gate: Gate): AgentHarnessTool<{ env: unk
 				throw new Error(`refused: this ${why}, and you declined it.`);
 			}
 
-			if (!('__TAURI_INTERNALS__' in globalThis)) {
+			if (!isTauri()) {
 				throw new Error('user tools need the native shell');
 			}
 			const { Channel, invoke } = await import('@tauri-apps/api/core');

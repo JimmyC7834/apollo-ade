@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 
+import { dirname } from '../../ids';
 import { WorkbenchTree, type TreeNode } from '../../ui';
 import type { WorkspaceEntry } from '../../workspace';
 
@@ -13,12 +14,6 @@ export interface ExplorerTreeProps {
 	 * workbench, so the empty state has to offer the action itself.
 	 */
 	readonly onOpenFolder?: () => void;
-}
-
-/** Parent directory id of `src/a/b.ts` -> "src/a"; undefined at the root. */
-function parentOf(id: string): string | undefined {
-	const cut = id.lastIndexOf('/');
-	return cut < 0 ? undefined : id.slice(0, cut);
 }
 
 /*
@@ -36,7 +31,7 @@ export function ExplorerTree({
 		() =>
 			entries.map((entry) => ({
 				id: entry.id,
-				parentId: parentOf(entry.id),
+				parentId: dirname(entry.id),
 				label: entry.name,
 				icon: entry.kind === 'dir' ? 'folder' : 'file',
 				iconExpanded: entry.kind === 'dir' ? 'folder-opened' : undefined,

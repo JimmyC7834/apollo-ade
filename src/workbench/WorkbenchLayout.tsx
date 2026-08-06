@@ -24,6 +24,8 @@ export const DEFAULT_LAYOUT: WorkbenchLayoutState = {
 	panelHeight: 220,
 };
 
+// Also `--ide-region-min` in `tokens.css`, which is the same floor stated to
+// CSS: the sashes enforce it here, and the max-width rules enforce it there.
 const MIN = 170;
 const MAX_SIDEBAR = 600;
 const MAX_PANEL = 600;

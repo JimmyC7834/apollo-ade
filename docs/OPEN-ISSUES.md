@@ -3,7 +3,7 @@
 Living document — **edit it**, unlike `DEVLOG.md`, which is append-only history.
 Close an item by deleting it and recording the fix in the dev log.
 
-Last updated after **Slice 31**. What is left is the unverified surface, which is
+Last updated after **Slice 34**. What is left is the unverified surface, which is
 the larger half of this file and always was.
 
 **This file had been stale since Slice 12e** — nineteen slices, the whole of the
@@ -105,27 +105,38 @@ before the slice closed.
 That is a statement about reading, not about running. Read the unverified surface
 below before believing the heading.
 
-### Not defects, but worth a cleanup pass
+### The cleanup pass — done in Slice 34
 
-**Compiled at Slice 12e and not re-audited since.** The nineteen slices that
-followed are almost entirely agent-side, so the workbench duplication listed here
-is probably still accurate and is definitely unchecked. Treat it as a lead.
+The list below was compiled at Slice 12e and carried unchecked for twenty-two
+slices. Every item was re-verified and then acted on, so what remains here is the
+record of what each one turned into.
 
-Duplication the review turned up, none of it wrong today:
-`forceCloseEditor` (`WorkbenchController.tsx:324`) and `close`
-(`TerminalPanel.tsx:33`) are the same close-and-select-neighbour algorithm;
-`parentOf` (`ExplorerTree.tsx:19`) and `directoryOf` (`ChangesView.tsx:31`) are
-identical bodies under two names; `basename` (`workspace.ts:84`) is re-inlined
-twice in `changes.ts`; the `'__TAURI_INTERNALS__' in window` test appears in four
-files; the same Arrow/Home/End cascade appears in four components; and
-`WorkbenchLayout.tsx:27` hardcodes three sizes that `tokens.css:96` already
-defines, two of which are now unused.
+- **The close-and-select-neighbour algorithm**, in `WorkbenchController` and
+  `TerminalPanel` — now `neighbourId` in `src/ids.ts`, with a check. It was two
+  copies of an off-by-one that only shows itself at the end of the list.
+- **`parentOf` / `directoryOf`** — one `dirname`, same file.
+- **`basename`**, private in `workspace.ts` and inlined twice in `changes.ts` —
+  same file again.
+- **`'__TAURI_INTERNALS__' in window`** — `isTauri()` in `src/native.ts`. Seven
+  sites, not four, and in two forms: `in window` throws under Node, where the
+  check scripts import these modules, so the surviving form tests `globalThis`.
+- **`WorkbenchLayout` versus `tokens.css`** — the two unread tokens are deleted.
+  `DEFAULT_LAYOUT` owns the sizes, because geometry is state the user drags and
+  persists rather than a token. Only the floor is stated twice, deliberately:
+  the sashes enforce it in TS and the max-width rules enforce it in CSS.
+- **Unused surface** — `IconButton.className`, `Icon.label` and
+  `MonacoDiffEditor`'s `id` are gone.
 
-Unused surface: `IconButton.className`, `Icon.label`, `MonacoDiffEditor`'s `id`.
+**The Arrow/Home/End cascade was left alone, and that is now a decision rather
+than a lead.** Four components have one, and only the `switch` is shared: tabs
+wrap and select and move focus, the context menu clamps and only moves focus,
+the separator maps arrows onto a number with a min, a max, an orientation and an
+inversion, and the tree expands and collapses. What differs *is* the behaviour.
 
 The confirm-dialog shape now has two real consumers (`ConfirmDiscard.tsx:13`,
 `ChangesView.tsx:172`), which is exactly the threshold the extraction rule names
 — *extract a UI primitive only after two real consumers show the same behavior*.
+Still open, and unlike the cascade it is a real candidate.
 
 ---
 

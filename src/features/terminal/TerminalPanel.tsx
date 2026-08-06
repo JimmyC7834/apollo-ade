@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
 
+import { neighbourId } from '../../ids';
 import type { TerminalAdapter } from '../../terminal';
 import { ActionBar, Badge, IconButton, Tabs } from '../../ui';
 import { TerminalInstance } from './TerminalInstance';
@@ -30,10 +31,8 @@ export function TerminalPanel({ adapter }: TerminalPanelProps) {
 	// Unmounting the instance kills the session; nothing to do here but drop it.
 	const close = useCallback((id: string) => {
 		setSessions((current) => {
-			const index = current.findIndex((session) => session.id === id);
-			const next = current.filter((session) => session.id !== id);
-			setActiveId((active) => (active === id ? (next[index] ?? next[index - 1])?.id : active));
-			return next;
+			setActiveId((active) => (active === id ? neighbourId(current, id) : active));
+			return current.filter((session) => session.id !== id);
 		});
 	}, []);
 

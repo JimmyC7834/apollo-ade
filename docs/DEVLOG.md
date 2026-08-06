@@ -3399,3 +3399,56 @@ same refusals. No Rust, no new command, no new path.
 must stay *shut* — an open menu steals Enter, so a wrong one breaks sending),
 `npm run build` clean apart from the two standing warnings. **Not validated
 live** — no native run was made, so the keys have no proof beyond the check.
+
+---
+
+## Slice 34 — The cleanup pass
+
+**User outcome:** None, and that is the honest heading. This is the duplication
+list `OPEN-ISSUES.md` has carried since Slice 12e, re-verified and acted on
+twenty-two slices later. Every item was still exactly as recorded.
+
+**Two new modules, both smaller than what they replaced.** `src/ids.ts` holds
+`dirname`, `basename` and `neighbourId` — the rules over the string ids the
+workbench identifies things by. `src/native.ts` holds `isTauri()`.
+
+**`neighbourId` is the only one that earned a check.** The other two are one
+`slice` each; this one was two copies of "select the tab that takes its place,
+or the one before it at the end", which is an off-by-one that only shows itself
+on the last tab. Both call sites lost two lines as well, because the index they
+were computing was the thing being extracted.
+
+**The `__TAURI_INTERNALS__` test was written seven times, not four**, and in two
+forms — four against `window` and three against `globalThis`. They are not
+interchangeable: `in window` throws under Node, where the check scripts import
+these modules, so the surviving form is the safe one. The sites that had it
+right no longer have to be found to know that.
+
+**The layout tokens were deleted rather than plumbed.** `--ide-sidebar-width`
+and `--ide-panel-height` were read by nothing; `DEFAULT_LAYOUT` holds those
+numbers, because geometry is state the user drags and persists rather than a
+token. Reading them back out through `getComputedStyle` would have been more
+code to say the same thing worse. The floor stays in both places on purpose —
+the sashes enforce it in TS, the max-width rules in CSS.
+
+**The Arrow/Home/End cascade was left alone, and that is now a decision.** Four
+components have one, and only the `switch` is shared: tabs wrap, select and move
+focus; the context menu clamps and only moves focus; the separator maps arrows
+onto a number with a min, a max, an orientation and an inversion; the tree
+expands and collapses. What differs *is* the behaviour, so a shared cascade
+would be a parameter per caller. Recorded as answered rather than left as a
+lead, which is the point of doing the pass at all.
+
+**Unused surface deleted:** `IconButton.className`, `Icon.label`,
+`MonacoDiffEditor`'s `id`. `Icon.label` had a comment explaining when to use it
+and no caller in the whole repo — an icon that needs its own name means the
+control around it is missing one.
+
+**Security boundary.** Untouched. `isTauri()` is the same test under a name;
+nothing about what Rust will do changed, and no call site changed which branch
+it takes.
+
+**Validation.** `npx tsc --noEmit` clean, 17 `npm run check` scripts pass
+(`ids.check.ts` is new), `npm run build` clean apart from the two standing
+warnings. **Not validated live** — this is a refactor with no behaviour change
+to observe, but the workbench itself has not been run since it was made.

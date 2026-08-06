@@ -7,7 +7,6 @@ export interface IconButtonProps {
 	readonly onClick: () => void;
 	readonly pressed?: boolean;
 	readonly danger?: boolean;
-	readonly className?: string;
 	readonly disabled?: boolean;
 }
 
@@ -17,13 +16,12 @@ export function IconButton({
 	onClick,
 	pressed,
 	danger,
-	className,
 	disabled,
 }: IconButtonProps) {
 	return (
 		<button
 			type="button"
-			className={`ide-icon-button${danger ? ' ide-icon-button-danger' : ''}${className ? ` ${className}` : ''}`}
+			className={`ide-icon-button${danger ? ' ide-icon-button-danger' : ''}`}
 			title={label}
 			aria-label={label}
 			aria-pressed={pressed}

@@ -82,7 +82,6 @@ export function EditorWorkbench({
 			{active?.kind === 'diff' ? (
 				<MonacoDiffEditor
 					ref={editorRef}
-					id={active.id}
 					name={active.name}
 					original={active.original}
 					modified={active.modified}

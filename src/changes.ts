@@ -2,6 +2,9 @@
 // not know whether the working tree is real: in the browser it is a fixture,
 // under Tauri it is the installed `git` in the selected workspace.
 
+import { basename } from './ids';
+import { isTauri } from './native';
+
 export type ChangeStatus = 'added' | 'modified' | 'deleted';
 
 export interface Change {
@@ -95,7 +98,7 @@ function fixtureChangesProvider(): ChangesProvider {
 		async getChanges() {
 			return seeds.map((seed) => ({
 				id: seed.id,
-				name: seed.id.slice(seed.id.lastIndexOf('/') + 1),
+				name: basename(seed.id),
 				status: seed.status,
 				staged: staged.has(seed.id),
 				// Mirrors git: an addition has no earlier version to restore.
@@ -106,7 +109,7 @@ function fixtureChangesProvider(): ChangesProvider {
 			const seed = find(id);
 			return {
 				id: seed.id,
-				name: seed.id.slice(seed.id.lastIndexOf('/') + 1),
+				name: basename(seed.id),
 				original: seed.original,
 				modified: seed.modified,
 			};
@@ -182,6 +185,5 @@ function signal() {
 }
 
 export function createChangesProvider(): ChangesProvider {
-	const isTauri = '__TAURI_INTERNALS__' in window;
-	return isTauri ? gitChangesProvider() : fixtureChangesProvider();
+	return isTauri() ? gitChangesProvider() : fixtureChangesProvider();
 }

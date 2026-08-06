@@ -9,6 +9,7 @@ import { createChangesProvider } from '../changes';
 import { buildCommands } from '../commands/commandRegistry';
 import { EditorDialog } from '../editor/EditorDialog';
 import { isDirty, type EditorInput } from '../editor/EditorWorkbench';
+import { neighbourId } from '../ids';
 import { AgentChat } from '../features/agent/AgentChat';
 import { ChangesView } from '../features/changes/ChangesView';
 import { CommandCenter } from '../features/commandCenter/CommandCenter';
@@ -365,13 +366,9 @@ export function WorkbenchController() {
 
 	const forceCloseEditor = useCallback((id: string) => {
 		setInputs((current) => {
-			const index = current.findIndex((input) => input.id === id);
-			const next = current.filter((input) => input.id !== id);
 			// Closing the active tab selects its neighbour rather than nothing.
-			setActiveEditorId((active) =>
-				active === id ? (next[index] ?? next[index - 1])?.id : active
-			);
-			return next;
+			setActiveEditorId((active) => (active === id ? neighbourId(current, id) : active));
+			return current.filter((input) => input.id !== id);
 		});
 	}, []);
 

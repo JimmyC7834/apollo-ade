@@ -93,7 +93,12 @@
 	--ide-row-height: 22px;
 	--ide-control-size: 24px;
 	--ide-sash-size: 4px;
-	--ide-sidebar-width: 260px;
-	--ide-panel-height: 220px;
+	/*
+	 * Only the floor is here. The sidebar width and panel height that used to
+	 * sit beside it were never read by any rule — `DEFAULT_LAYOUT` in
+	 * `WorkbenchLayout.tsx` holds the sizes, because geometry is state the user
+	 * drags and persists, not a token. The floor stays because CSS enforces it
+	 * too, in the max-width rules that keep a region from eating the center.
+	 */
 	--ide-region-min: 170px;
 }

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import type { Change, ChangesProvider } from '../../changes';
+import { dirname } from '../../ids';
 import {
 	ActionBar,
 	Badge,
@@ -26,12 +27,6 @@ const STATUS_LABEL: Record<Change['status'], string> = {
 
 const STAGED = 'group:staged';
 const UNSTAGED = 'group:unstaged';
-
-/** Directory part of the path, shown muted after the file name. */
-function directoryOf(id: string): string | undefined {
-	const cut = id.lastIndexOf('/');
-	return cut < 0 ? undefined : id.slice(0, cut);
-}
 
 export function ChangesView({ provider, activeDiffId, onOpenDiff }: ChangesViewProps) {
 	const [changes, setChanges] = useState<readonly Change[]>([]);
@@ -75,7 +70,8 @@ export function ChangesView({ provider, activeDiffId, onOpenDiff }: ChangesViewP
 					id: change.id,
 					parentId: groupId,
 					label: change.name,
-					description: directoryOf(change.id),
+					// The directory, shown muted after the file name.
+					description: dirname(change.id),
 					icon: 'file',
 					accessory: (
 						<Badge

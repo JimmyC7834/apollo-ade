@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import type { Window as TauriWindow } from '@tauri-apps/api/window';
+import { isTauri } from '../native';
 
-const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+const native = isTauri();
 
 async function appWindow() {
 	const { getCurrentWindow } = await import('@tauri-apps/api/window');
@@ -17,7 +18,7 @@ async function appWindow() {
  * native-only module and rejects with nobody listening.
  */
 function nativeWindow(run: (win: TauriWindow) => Promise<void>): void {
-	if (isTauri) {
+	if (native) {
 		// Nothing useful follows a window that refuses to minimize, and an
 		// unhandled rejection in a pointer handler is worse than silence.
 		void appWindow().then(run).catch(noop);
@@ -44,7 +45,7 @@ export function useWindowControls(): WindowControls {
 	const [maximized, setMaximized] = useState(false);
 
 	useEffect(() => {
-		if (!isTauri) {
+		if (!native) {
 			return;
 		}
 		let unlisten: (() => void) | undefined;
@@ -73,5 +74,5 @@ export function useWindowControls(): WindowControls {
 	const close = useCallback(() => nativeWindow((w) => w.close()), []);
 	const startDragging = useCallback(() => nativeWindow((w) => w.startDragging()), []);
 
-	return { available: isTauri, maximized, minimize, toggleMaximize, close, startDragging };
+	return { available: native, maximized, minimize, toggleMaximize, close, startDragging };
 }

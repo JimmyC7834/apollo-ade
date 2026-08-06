@@ -7,8 +7,6 @@ import { languageForPath } from './monacoEnvironment';
 
 export interface MonacoDiffEditorProps {
 	readonly ref?: Ref<EditorHandle>;
-	/** Namespaced diff id, used only as a React key hint. */
-	readonly id: string;
 	/** Workspace path, used to pick the language. */
 	readonly name: string;
 	readonly original: string;

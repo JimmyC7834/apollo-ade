@@ -22,6 +22,7 @@
 // necessary.
 
 import { installProfiles } from './profile';
+import { isTauri } from '../native';
 import { reloadSkills } from './skills';
 import { installUserTools } from './userTools';
 
@@ -124,7 +125,7 @@ export function profileSources(): ProfileSources {
  */
 export async function loadProfileFiles(): Promise<ProfileLoad> {
 	const problems: string[] = [];
-	if (!('__TAURI_INTERNALS__' in globalThis)) {
+	if (!isTauri()) {
 		// Browser mode has no config directory and no root. The built-ins are
 		// the whole set there, which is what `npm run dev` has always shown.
 		return { problems };
