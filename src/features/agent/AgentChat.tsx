@@ -3,14 +3,15 @@
 // produced, so swapping the deterministic provider for a real model is a change
 // to `agent.ts` alone.
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { AgentEvent, AgentProvider, AgentRun } from '../../agent';
 import { parseCommand } from '../../agent/commands';
+import { complete } from '../../agent/completion';
 import { pressure } from '../../agent/compaction';
 import { activateProfile, activeProfile, listProfiles } from '../../agent/profile';
 import { loadProfileFiles, profileSources } from '../../agent/profileFiles';
-import { skillList } from '../../agent/skills';
+import { allSkills, permittedSkills, skillList } from '../../agent/skills';
 import { userTools } from '../../agent/userTools';
 import { Icon, Overlay } from '../../ui';
 import { OTHER } from '../../agent/ask';
@@ -297,6 +298,9 @@ export function AgentChat({ provider, onAnnounce }: AgentChatProps) {
 	 * condition it names has changed.
 	 */
 	const [notice, setNotice] = useState<string>();
+	/** Which completion is selected, and whether Escape has closed the menu. */
+	const [picked, setPicked] = useState(0);
+	const [menuOpen, setMenuOpen] = useState(true);
 
 	const runRef = useRef<AgentRun>(null);
 	const promptRef = useRef<HTMLTextAreaElement>(null);
@@ -358,6 +362,45 @@ export function AgentChat({ provider, onAnnounce }: AgentChatProps) {
 			onAnnounce?.(message);
 		},
 		[onAnnounce]
+	);
+
+	/*
+	 * The completion menu — ticket 21.
+	 *
+	 * The two source lists are read on every keystroke rather than cached,
+	 * because `/reload` replaces both and nothing here would hear about it. They
+	 * are a handful of strings; the alternative is a stale menu.
+	 *
+	 * Only *permitted* skills are offered. An unpermitted skill is on disk and
+	 * refused (ticket 13), and completing a name that is about to fail is the
+	 * same lie as offering a command the running turn will refuse. `/skills`
+	 * remains the place that lists every one with a mark for which is which.
+	 */
+	const completions = useMemo(
+		() =>
+			menuOpen
+				? complete(
+						prompt,
+						{
+							skill: permittedSkills(allSkills(), activeProfile()).map((skill) => skill.name),
+							profile: listProfiles().map((profile) => profile.name),
+						},
+						running
+					)
+				: [],
+		[menuOpen, prompt, running]
+	);
+
+	/** Take an entry: it replaces the whole line, and may open the next menu. */
+	const accept = useCallback(
+		(index: number) => {
+			const entry = completions[index];
+			if (entry) {
+				setPrompt(entry.value);
+				setPicked(0);
+			}
+		},
+		[completions]
 	);
 
 	const send = useCallback(() => {
@@ -671,14 +714,80 @@ export function AgentChat({ provider, onAnnounce }: AgentChatProps) {
 							: 'Ask the agent…'
 					}
 					aria-label="Prompt"
-					onChange={(event) => setPrompt(event.target.value)}
+					// The combobox half of the pattern: the list below is the popup,
+					// and the selected row is named rather than focused, so the caret
+					// never leaves the text being typed.
+					role="combobox"
+					aria-autocomplete="list"
+					aria-expanded={completions.length > 0}
+					aria-controls="agent-completions"
+					aria-activedescendant={
+						completions.length > 0 ? `agent-completion-${picked}` : undefined
+					}
+					onChange={(event) => {
+						setPrompt(event.target.value);
+						setPicked(0);
+						// Typing reopens what Escape closed: the menu was dismissed for
+						// the text it was showing, not for the rest of the session.
+						setMenuOpen(true);
+					}}
 					onKeyDown={(event) => {
+						if (completions.length > 0) {
+							if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+								event.preventDefault();
+								const step = event.key === 'ArrowDown' ? 1 : completions.length - 1;
+								setPicked((current) => (current + step) % completions.length);
+								return;
+							}
+							// Tab and Enter both take the entry. Enter is what the hands
+							// already do, and Tab is what a completion menu means
+							// everywhere else — neither reaches `send` while the menu is
+							// open, which is why an entry equal to the typed text is
+							// dropped rather than shown.
+							if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey)) {
+								event.preventDefault();
+								accept(picked);
+								return;
+							}
+							if (event.key === 'Escape') {
+								event.preventDefault();
+								setMenuOpen(false);
+								return;
+							}
+						}
 						if (event.key === 'Enter' && !event.shiftKey) {
 							event.preventDefault();
 							send();
 						}
 					}}
 				/>
+				{completions.length > 0 ? (
+					<ul className="ide-agent-completions" id="agent-completions" role="listbox">
+						{completions.map((entry, index) => (
+							<li
+								key={entry.value}
+								id={`agent-completion-${index}`}
+								role="option"
+								aria-selected={index === picked}
+								className={
+									index === picked
+										? 'ide-agent-completion ide-agent-completion-picked'
+										: 'ide-agent-completion'
+								}
+								// Pointer down rather than click: click fires after the
+								// textarea has already lost focus, and blur is what a
+								// user reaching for the mouse should not be punished by.
+								onMouseDown={(event) => {
+									event.preventDefault();
+									accept(index);
+								}}
+							>
+								<span className="ide-agent-completion-value">{entry.value.trim()}</span>
+								<span className="ide-agent-completion-summary">{entry.summary}</span>
+							</li>
+						))}
+					</ul>
+				) : null}
 				<div className="ide-agent-composer-actions">
 					<button
 						type="button"

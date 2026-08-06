@@ -1048,6 +1048,46 @@ body {
 	color: var(--ide-input-placeholder);
 }
 
+/*
+ * The completion menu. In flow under the textarea rather than floating over the
+ * transcript: it is a few rows at most, the composer is already at the bottom
+ * of the panel, and an absolutely positioned popup would need a stacking rule
+ * of its own for the one case it improves.
+ */
+.ide-agent-completions {
+	max-height: 12rem;
+	margin: var(--ide-space-2) 0 0;
+	padding: 0;
+	overflow-y: auto;
+	border: 1px solid var(--ide-border);
+	border-radius: var(--ide-radius);
+	background: var(--ide-bg-overlay);
+	list-style: none;
+}
+
+.ide-agent-completion {
+	display: flex;
+	justify-content: space-between;
+	gap: var(--ide-space-4);
+	padding: var(--ide-space-2) var(--ide-space-3);
+	cursor: default;
+}
+
+.ide-agent-completion-picked {
+	/* The same highlight the quick pick uses; one selected row, one colour. */
+	background: var(--ide-bg-active);
+}
+
+.ide-agent-completion-value {
+	font-family: var(--ide-font-family-mono);
+}
+
+.ide-agent-completion-summary {
+	color: var(--ide-fg-muted);
+	font-size: var(--ide-font-size-small);
+	text-align: right;
+}
+
 .ide-agent-composer-actions {
 	display: flex;
 	justify-content: flex-end;

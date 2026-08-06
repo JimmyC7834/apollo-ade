@@ -3337,3 +3337,65 @@ new `commands.check.ts`, plus the queue cases added to `events.check.ts` and
 `transcript.check.ts`), `npm run build` clean. **Not validated live** — no native
 run was made, so nothing here has live proof, and the queue's real behaviour
 under a running model is exactly the part a check cannot reach.
+
+---
+
+## Slice 33 — Completing a slash command
+
+**User outcome:** Typing `/` in the composer lists the commands, and typing a
+command's name lists what its argument can be. Up and Down move, Tab or Enter
+takes the entry, Escape closes it. Closes [ticket
+21](wayfinder/pi-harness/tickets/21-command-autocomplete.md), which was deferred
+when its precondition shipped in Slice 32.
+
+**The rule is a function, not a component.** `complete(text, sources, running)`
+in `src/agent/completion.ts` returns the entries for the text now in the
+composer, and `AgentChat` renders them. A rule inside a `.tsx` cannot be checked,
+which is the reason `transcript.ts` and `skillList` are where they are; the
+interesting cases here are all ones the eye would pass over.
+
+**Two positions, and the space between them decides which.** The first word is a
+command name; the second is its argument; everything after the argument is free
+text for the model and nothing completes it. The argument lists arrive as a
+`CompletionSources` record rather than being imported, so the rule stays a
+function of its arguments and the check needs no skill loader.
+
+**Four decisions the ticket did not ask, and the building did.**
+
+- *The palette's scorer is reused.* `/prof` finding `/profile` is the question
+  `tog` finding `Toggle Panel` already is. `fuzzyFilter` is forty lines with
+  tuned tie-breaks, and a second matcher would be a second set of them.
+- *An entry equal to the typed text is dropped.* This reads like tidiness and is
+  not. The menu owns Enter while it is open, so a finished `/compact` offering
+  `/compact` costs a second press to send something already correct. Dropping the
+  identical entry closes the menu at exactly the point the typing stops.
+- *The menu offers only what `send` would accept.* `whileRunning` filters it, so
+  a running turn offers `/steer` and nothing else, and an idle one offers
+  everything but. Offering a command and then refusing it is a menu that lies —
+  and the flag that decides it is the one Slice 32's review made real.
+- *Only permitted skills are completed.* An unpermitted skill is on disk and
+  refused (ticket 13), and completing a name that is about to fail is the same
+  lie. `/skills` remains the listing that shows every skill with a mark for which
+  is which.
+
+**The menu is in flow, not floating.** A few rows under the textarea, above the
+buttons. An absolutely positioned popup would need a stacking rule of its own,
+and the composer is already at the bottom of the panel. The textarea is the
+combobox and keeps the caret: `aria-activedescendant` names the selected row
+rather than focusing it, and the mouse path uses `mousedown` so reaching for it
+does not blur the text first.
+
+**What the review caught.** The running filter covered the first word only. The
+menu correctly hides `/skill` mid-turn, but nothing stops a user typing it in
+full — and the argument branch then completed it happily into a line `send`
+refuses. Both branches now filter, and the check has the case.
+
+**Security boundary.** Untouched. Completion is a list of strings shown beside a
+textarea; it runs nothing, and every command still goes through `send` and the
+same refusals. No Rust, no new command, no new path.
+
+**Validation.** `npx tsc --noEmit` clean, 17 `npm run check` scripts pass
+(`completion.check.ts` is new, and its useful half is the cases where the menu
+must stay *shut* — an open menu steals Enter, so a wrong one breaks sending),
+`npm run build` clean apart from the two standing warnings. **Not validated
+live** — no native run was made, so the keys have no proof beyond the check.
