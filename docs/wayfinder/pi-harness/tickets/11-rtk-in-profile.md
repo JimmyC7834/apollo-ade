@@ -221,3 +221,134 @@ They are also not exclusive. E now and B or D later for the `cmds/` half is a co
 sequence, and E is the only one of the five that can be built without first settling a
 distribution or a security question.
 
+---
+
+## Amendment 2 — the source read, and the value question opened
+
+**Status: still deferred.** What changed is that the cost question is now answered with
+measurements, and a **value** question opened that neither the resolution nor Amendment 1
+saw. The full research note is
+[RESEARCH-rtk-filter-engine.md](../RESEARCH-rtk-filter-engine.md); this section is the
+part that decides the ticket.
+
+Amendment 1 said "all checked against the installed binary and the published
+repository", and it had never located the code that applies the filters. That gap is
+closed. The repository was cloned and read.
+
+### Corrections to Amendment 1
+
+- **63 TOML filter files, not 97.** 261 KB on disk, not "~100 KB".
+- **The pipeline has nine stages, not eight.** `head_lines` exists and is not in the
+  README, and there is an `unless` guard as well.
+- The rest of Amendment 1 stands: no `[lib]` target, not on crates.io, binary-only.
+
+### The engine, located and measured
+
+One file: **`src/core/toml_filter.rs`, 1,968 lines** — 804 production and 1,164 tests.
+The stages are 164 of those lines, at `:484-647`.
+
+- **The transform is pure.** `apply_filter(&CompiledFilter, &str) -> String`. No process
+  spawning, no stdout handles, no terminal detection. The global filter registry is
+  optional; `find_filter_in` takes a slice.
+- **It drags in almost nothing.** No config loader and no telemetry hook sit on the
+  transform path.
+- **Zero new crates.** It needs `regex`, `serde` and `toml`, and all three are already in
+  our `Cargo.lock`.
+- **The filters are compiled in**, through `include_str!` of a blob that `build.rs`
+  concatenates. Vendoring the data is a file copy plus about 50 lines of build script, or
+  one pre-concatenated file and no script at all.
+- **The schema is frozen and the engine is not.** `TomlFilterDef` is identical at v0.36.0,
+  v0.40.0 and v0.44.2. The engine moved 1,697 → 1,968 lines (+330/−59) in about two
+  months, at roughly one release per week.
+
+### The telemetry worry is cleared
+
+Amendment 1 flagged this as unverified and load-bearing. `[tracking]` is a **local SQLite
+database only**. `[telemetry]` defaults to off and needs both an opt-in consent and a
+compile-time `RTK_TELEMETRY_URL`. None of it appears in the engine, the build script or
+the filter data.
+
+### A sixth route, which Amendment 1 did not list
+
+**F — vendor the engine's Rust source into `src-tauri`.** Amendment 1 ruled out C as a
+*Cargo dependency* and never priced copying the source, which needs no lib target at all.
+
+Priced against E:
+
+| Route | Lines |
+|---|---|
+| **E** — vendor the 63 TOML files, write our own engine | **385–430 written** |
+| **F** — vendor the engine source, cut the tail | **510 copied + 60 written, ~290 cut** |
+| **C'** — fork and add a `lib.rs` | compiles all 20 crates, including bundled SQLite |
+
+**E over F**, and the margin is thin enough that it breaks on what we own afterwards
+rather than on the diff. **E vendors the frozen contract; F vendors the moving code.** F
+also brings Apache-2.0 §4(b) modified-file marking. C' stays ruled out.
+
+### The value question, which is now the blocker
+
+`RUST_HANDLED_COMMANDS` in `toml_filter.rs:250` holds **49 command names**, and a TOML
+filter can never fire for any of them. The list includes:
+
+> `git`, `cargo`, `npm`, `npx`, `pnpm`, `docker`, `kubectl`, `tsc`, `grep`, `find`, `ls`,
+> `curl`, `wget`, `pytest`, `mypy`, `pip`, `go`, `gh`, `aws`, `psql`, `diff`, `log`
+
+Those are handled by the `cmds/` half, which does not travel — see below. **What E
+actually buys is the other 63 names**: `gradle`, `terraform-plan`, `helm`, `rsync`,
+`make`, `gcc`, `jq`, `ssh`, `systemctl-status`, `pre-commit`, `shellcheck`, `biome`,
+`oxlint`, `turbo`, `nx`, `poetry-install`, `uv-sync`, `xcodebuild` and similar.
+
+For **this** repository the overlap is close to nothing. It is a Tauri, React and Rust
+project, so its commands are `cargo`, `npm` and `tsc` — all three Rust-handled.
+
+**So route E is cheap, safe, and aimed at commands this project does not run.** Nothing
+should be written until something measures what our own turns actually spend tokens on.
+
+### Why the `cmds/` half does not travel
+
+The repository is about 84,000 lines of Rust in eight modules. Line counts include tests.
+
+| Module | Files | Lines | What it is |
+|---|---|---|---|
+| `cmds/` | 76 | 43,903 | The tuned per-tool wrappers, in 12 language subdirectories |
+| `hooks/` | 11 | 13,374 | The Claude Code hook integration |
+| `core/` | 16 | 9,400 | Runner, stream, guard, truncate, tracking, and the filter engine |
+| `discover/` | 6 | 9,289 | `rtk discover`, which reads Claude Code history |
+| `main.rs` | 1 | 3,621 | The CLI |
+| `analytics/` | 5 | 2,759 | `rtk gain` |
+| `learn/` | 3 | 942 | |
+| `parser/` | 3 | 711 | |
+| `filters/` | 0 `.rs` | — | 63 TOML files |
+
+More than half of it is surface we would never want: the hook integration, the history
+scanner, `rtk gain`, and the CLI.
+
+Three reasons `cmds/` cannot be taken. Dependency weight is the third and the smallest.
+
+1. **Size.** `src/cmds/git/` is 7,864 lines across five files, and `git.rs` alone is
+   3,325 with no `#[cfg(test)]` block — all production. **Our whole Rust backend is 2,314
+   lines.** Taking git handling alone makes `src-tauri` about 2.4× its current size, and
+   git is one family of twelve.
+2. **It spawns the process itself, and this is the real objection.** `git.rs` imports
+   `std::process::Command` and `Stdio` and has six spawn sites. That is the design — the
+   `cmds/` half re-invokes the tool with tuned arguments, which is why `rtk git status`
+   returns *different* text rather than filtered text. The problem is not that Rust
+   spawns things; ours already does. It is that this is a **second** spawning path that
+   knows nothing about the first. [Ticket 02](02-exec-not-terminal.md) built root
+   confinement, Channel streaming, process-tree abort and the overflow file into our
+   `exec`, and `cmds/` bypasses all four. Rewriting it onto our runner is not reuse.
+3. **The drag is deeper than the filter engine's.** `git.rs` imports seven `core`
+   modules: `args_utils`, `guard`, `runner`, `stream`, `tracking`, `truncate` and
+   `utils`. `core` is 9,400 lines, and `tracking` is the SQLite analytics. The filter
+   engine is clean because it sits outside that path; `cmds/` sits inside it.
+
+The 20 dependencies — including `rusqlite` with `bundled`, which compiles SQLite from
+source, plus `ureq`, `clap`, `colored`, `quick-xml` and `flate2` — are why C' is ruled
+out. They are a consequence of taking the whole binary, not the reason `cmds/` is
+unusable.
+
+**The summary that matters:** the filter engine is takeable because it is pure, small and
+outside `core`'s web. `cmds/` is none of those. It is not a library that shipped as a
+binary — it is a CLI, and its value is in the process invocation, which is the one thing
+that cannot be imported.
+
