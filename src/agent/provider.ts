@@ -17,12 +17,14 @@ import {
 	createWriteTool,
 	type AgentHarnessEvent,
 	type ExecutionEnv,
+	type JsonlSessionMetadata,
 	type ThinkingLevel,
 } from '@earendil-works/pi-agent-core';
 import {
 	clampThinkingLevel,
 	createModels,
 	createProvider,
+	contentText,
 	type Api,
 	type Model,
 } from '@earendil-works/pi-ai';
@@ -49,6 +51,7 @@ import { applyContributors, composeSystemPrompt } from './systemPrompt';
 import {
 	activeProfile,
 	activeToolNames,
+	listProfiles,
 	onProfileChange,
 	PROVIDER_IDS,
 	setCapabilities,
@@ -56,6 +59,13 @@ import {
 	type Profile,
 	type ProviderId,
 } from './profile';
+import {
+	createActivity,
+	createTaskTool,
+	delegable,
+	type Delegation,
+	type DelegationRequest,
+} from './subagent';
 import {
 	allSkills,
 	onSkillsChange,
@@ -100,7 +110,21 @@ async function checkpoint(prompt: string): Promise<void> {
  */
 const SESSIONS_ROOT = '/.ade/sessions';
 
-let sessionOnce: Promise<Session> | undefined;
+/**
+ * The window's own conversation, and somewhere to put a subagent's.
+ *
+ * Both come from one place because they share a directory: ticket 24 chose one
+ * `/.ade/sessions` over a second root once pi's own parentage fields were found,
+ * and that only works if whatever opens the window's session is also what knows
+ * which files are children.
+ */
+interface SessionStore {
+	readonly own: Promise<Session>;
+	/** A session of a subagent's own, recorded as belonging to `own`. */
+	child(): Promise<Session>;
+}
+
+let sessionOnce: Promise<Session<JsonlSessionMetadata>> | undefined;
 
 /**
  * One session per window, however many times the provider is built.
@@ -116,8 +140,28 @@ let sessionOnce: Promise<Session> | undefined;
  * session and append to the same file. Nothing here prevents that, and nothing
  * needs to until sessions are something the user can pick.
  */
-function sharedSession(env: ExecutionEnv): Promise<Session> {
-	return (sessionOnce ??= openSession(env));
+function diskSessions(env: ExecutionEnv): SessionStore {
+	const repo = new JsonlSessionRepo({ fs: env, sessionsRoot: SESSIONS_ROOT });
+	const own = (sessionOnce ??= openSession(env, repo));
+	return {
+		own,
+		/*
+		 * **Both fields, and they are not the same claim.** `parentSessionPath`
+		 * because it is true and because the deferred child chat view needs the
+		 * link. `metadata.delegatedFrom` because that is what start-up filters on
+		 * — filtering on `parentSessionPath` alone would also hide a *forked*
+		 * session, and a fork is a session the user should still see on the day
+		 * forking gets a UI.
+		 */
+		child: async () => {
+			const parent = await (await own).getMetadata();
+			return repo.create({
+				cwd: '/',
+				parentSessionPath: parent.path,
+				metadata: { delegatedFrom: parent.path },
+			});
+		},
+	};
 }
 
 /**
@@ -128,14 +172,20 @@ function sharedSession(env: ExecutionEnv): Promise<Session> {
  * newest first and `fork()` is right there, so the UI is what is missing, not
  * the capability.
  *
+ * **Newest that is not a subagent's.** A child's file is written after its
+ * parent's by definition, so once delegation exists "the newest file" is usually
+ * a child — and the next launch would resume somebody's sub-task instead of the
+ * conversation the user was having.
+ *
  * Failing to open a stored session must not cost you the agent. A corrupt or
  * half-written JSONL file falls back to a fresh session — losing history is
  * bad, but refusing to run at all is worse, and the broken file is left on disk
  * rather than deleted.
  */
-async function openSession(env: ExecutionEnv): Promise<Session> {
-	const repo = new JsonlSessionRepo({ fs: env, sessionsRoot: SESSIONS_ROOT });
-
+async function openSession(
+	env: ExecutionEnv,
+	repo: JsonlSessionRepo
+): Promise<Session<JsonlSessionMetadata>> {
 	/*
 	 * A self-ignoring directory, so the transcript never reaches the user's
 	 * commits and their `.gitignore` is never edited by us. `git` reads a
@@ -146,13 +196,22 @@ async function openSession(env: ExecutionEnv): Promise<Session> {
 
 	try {
 		const existing = await repo.list({ cwd: '/' });
-		if (existing[0]) {
-			return await repo.open(existing[0]);
+		const mine = existing.find((entry) => !entry.metadata?.delegatedFrom);
+		if (mine) {
+			return await repo.open(mine);
 		}
 	} catch {
 		// Fall through to a new session.
 	}
 	return repo.create({ cwd: '/' });
+}
+
+/** Browser mode's, where there is no disk and a child is simply another one. */
+function memorySessions(): SessionStore {
+	return {
+		own: Promise.resolve(new Session(new InMemorySessionStorage())),
+		child: async () => new Session(new InMemorySessionStorage()),
+	};
 }
 
 /*
@@ -276,9 +335,19 @@ function allModels() {
  * settles; leaking one would deliver a later turn's events into a dead
  * transcript.
  */
+/**
+ * What a tool is handed at call time.
+ *
+ * `depth` is here rather than baked into the delegation tool because pi resolves
+ * the context **per turn snapshot**, so one tool instance can serve the main
+ * agent and every subagent below it. Building a tool set per level would be the
+ * same tools four times over. See `subagent.ts`.
+ */
+type ToolContext = { env: ExecutionEnv; depth: number };
+
 function createRunner(
 	env: ExecutionEnv,
-	session: Promise<Session>,
+	sessions: SessionStore,
 	models: ReturnType<typeof createModels>,
 	model: Model<Api>,
 	/**
@@ -315,12 +384,29 @@ function createRunner(
 	 */
 	const gate = createGate();
 
+	/*
+	 * Delegation, which is a tool and nothing more
+	 * ([ticket 24](docs/wayfinder/pi-harness/tickets/24-subagents.md)). It is
+	 * listed among the built-ins because a profile decides about it the way it
+	 * decides about `bash`: `"tools": { "task": false }` is how a profile that
+	 * must not delegate says so, and no second mechanism is needed.
+	 *
+	 * The store is read on every call rather than captured, so `/reload` changes
+	 * which profiles are delegable without rebuilding the tool.
+	 */
+	const task = createTaskTool({
+		delegable: () => delegable(listProfiles()),
+		profile: (name) => listProfiles().find((candidate) => candidate.name === name),
+		run: (request) => runSubagent(request),
+	});
+
 	const builtins = [
 		createReadTool(),
 		createWriteTool(),
 		createEditTool(),
 		createBashTool(),
 		createAskTool(asker),
+		task,
 	];
 
 	/*
@@ -391,9 +477,13 @@ function createRunner(
 	 * synchronous for the UI's sake, and the first prompt absorbs whatever the
 	 * open costs.
 	 */
-	const ready = Promise.all([session, resolveShell()]).then(
+	// Resolved once and shared with every subagent, which needs the same shell
+	// facts in its system prompt and must not each pay a native round trip.
+	const shellReady = resolveShell();
+
+	const ready = Promise.all([sessions.own, shellReady]).then(
 		([opened, shell]) =>
-			new AgentHarness<{ env: ExecutionEnv }>({
+			new AgentHarness<ToolContext>({
 				session: opened,
 				models,
 				model,
@@ -402,7 +492,9 @@ function createRunner(
 				thinkingLevel: thinkingFor(activeProfile().thinkingLevel),
 				tools,
 				activeToolNames: activeToolNames(activeProfile()),
-				toolContext: { env },
+				// Depth 1: the main agent counts toward the nesting limit, so a
+				// child is 2 and its child is 3 and that one may not delegate.
+				toolContext: { env, depth: 1 },
 				/*
 				 * A callback, never a string — the decision
 				 * [ticket 04](docs/wayfinder/pi-harness/tickets/04-profile-data-model.md)
@@ -434,6 +526,121 @@ function createRunner(
 	 */
 	const contextWindow = () => contextWindowFor(current.id);
 	const autoCompact = readAutoCompact();
+
+	/**
+	 * One subagent, start to finish.
+	 *
+	 * A second `AgentHarness` and nothing more — which is the whole finding behind
+	 * ticket 24. pi keeps no registry and no global agent state, so this is a
+	 * `new` beside the one above, sharing the environment, the providers and the
+	 * tool set and differing in the four things a profile decides.
+	 *
+	 * **It does not go through `enqueue`.** That serialiser exists to keep two
+	 * turns off *one* harness; this is a different harness, and routing it through
+	 * would hold every delegation until the turn that asked for it had ended.
+	 *
+	 * **The child starts from the prompt and nothing else.** No parent history is
+	 * copied: doing so would pay the context cost the delegation exists to avoid,
+	 * twice, and it is what makes the prompt the whole contract and therefore
+	 * makes a bad delegation debuggable.
+	 *
+	 * Auto-compaction is deliberately absent rather than forgotten. A child runs
+	 * exactly one turn, and pi will only compact an idle harness — so the rule
+	 * "compaction per child, on the same terms" has nothing to fire on until a
+	 * child can be talked to again, which is the deferred chat view.
+	 */
+	async function runSubagent(request: DelegationRequest): Promise<Delegation> {
+		const { profile, prompt, depth, signal, onLine } = request;
+		// The canned path keeps the script's own model for the same reason a
+		// profile switch does not change it there: the fixture answers as itself.
+		const childModel = modelFollowsProfile && profile.model.id ? modelFor(profile.model) : current;
+		const [session, shell] = await Promise.all([sessions.child(), shellReady]);
+
+		const harness = new AgentHarness<ToolContext>({
+			session,
+			models,
+			model: childModel,
+			thinkingLevel: clampThinkingLevel(childModel, profile.thinkingLevel),
+			tools,
+			activeToolNames: activeToolNames(profile),
+			toolContext: { env, depth },
+			resources: resourcesFor(profile),
+			systemPrompt: (context) =>
+				composeSystemPrompt({
+					shell,
+					skills: context.resources.skills,
+					canRead: activeToolNames(profile).includes('read'),
+					instructions: profile.instructions,
+				}),
+		});
+
+		/*
+		 * **The child's own profile decides how much it asks**, and the question
+		 * still reaches the user. This is the case that tests the premise: a
+		 * read-only `research` child can sit on `auto` while an `editor` child runs
+		 * `careful`, because the profile author decided that. Taking the parent's
+		 * policy instead would leave `gatePolicy` silently meaningless for
+		 * subagents.
+		 *
+		 * The gate is the runner's, not one of its own: `resolveApproval` on the
+		 * run reaches exactly one gate, so a child with its own could ask a
+		 * question nothing could ever answer. Four children asking at once is what
+		 * made the gate queue.
+		 */
+		const offGate = harness.on('tool_call', (event) => gate.onToolCall(event, profile.gatePolicy));
+
+		/*
+		 * The child's events stay inside the child. Only one line of them escapes,
+		 * and **`usage` never does**: adding a child's tokens to the parent's meter
+		 * would corrupt the number auto-compaction divides by — the parent's window
+		 * is not fuller because a child read a file. Both counts are kept and the
+		 * delegation carries the child's back separately.
+		 */
+		const activity = createActivity();
+		let inputTokens = 0;
+		let outputTokens = 0;
+		let said = '';
+		const off = harness.subscribe((event: AgentHarnessEvent) => {
+			for (const mapped of mapEvent(event, contextWindowFor(childModel.id))) {
+				if (mapped.kind === 'usage') {
+					inputTokens += mapped.inputTokens;
+					outputTokens += mapped.outputTokens;
+					continue;
+				}
+				if (mapped.kind === 'text') {
+					said += mapped.text;
+				}
+				const line = activity(mapped);
+				if (line !== undefined) {
+					onLine(line);
+				}
+			}
+		});
+
+		// Both the parent's cancellation and the child's own budget arrive here.
+		// The half-written session file is left on disk rather than deleted: a
+		// partial record beats no record when you are asking why it failed.
+		const stop = () => void harness.abort();
+		signal.addEventListener('abort', stop, { once: true });
+
+		try {
+			const answer = await harness.prompt(prompt);
+			return { answer: contentText(answer.content), inputTokens, outputTokens };
+		} catch (cause: unknown) {
+			// An aborted run unwinds through a rejection, and what it had reached is
+			// still worth reporting — a subagent stopped at fifteen minutes usually
+			// found most of the answer. Any other failure is a *harness* failure and
+			// travels on as one, which the tool turns into an error `tool_result`.
+			if (signal.aborted) {
+				return { answer: said, inputTokens, outputTokens };
+			}
+			throw cause;
+		} finally {
+			signal.removeEventListener('abort', stop);
+			offGate();
+			off();
+		}
+	}
 
 	/*
 	 * One harness, one thing at a time.
@@ -561,7 +768,7 @@ function createRunner(
 	 * keeps the marker landing in the right turn.
 	 */
 	async function compactWith(
-		harness: AgentHarness<{ env: ExecutionEnv }>,
+		harness: AgentHarness<ToolContext>,
 		onEvent: (event: AgentEvent) => void
 	) {
 		try {
@@ -585,7 +792,7 @@ function createRunner(
 	 */
 	function begin(
 		label: string,
-		run: (harness: AgentHarness<{ env: ExecutionEnv }>) => Promise<unknown>,
+		run: (harness: AgentHarness<ToolContext>) => Promise<unknown>,
 		onEvent: (event: AgentEvent) => void
 	) {
 		// Read at turn start, not at construction: switching to `careful` has to
@@ -597,7 +804,7 @@ function createRunner(
 
 		let released = false;
 		let stopped = false;
-		let running: AgentHarness<{ env: ExecutionEnv }> | undefined;
+		let running: AgentHarness<ToolContext> | undefined;
 		let dispose: (() => void) | undefined;
 
 		// The turn's latest context reading, and whether its `complete` is being
@@ -617,7 +824,7 @@ function createRunner(
 			dispose?.();
 		}
 
-		function attach(harness: AgentHarness<{ env: ExecutionEnv }>) {
+		function attach(harness: AgentHarness<ToolContext>) {
 			const offHook = harness.on('tool_call', (event) => gate.onToolCall(event));
 			/*
 			 * The extension point for the system prompt
@@ -874,7 +1081,7 @@ export function createAgentProvider(): AgentProvider {
 		// ones that refuse an injected `fetch`.
 		installRustFetch();
 		const env = createTauriEnv();
-		return createRunner(env, sharedSession(env), allModels(), modelFor(choice), true);
+		return createRunner(env, diskSessions(env), allModels(), modelFor(choice), true);
 	}
 
 	// No model configured, or no native shell: the canned provider. It is the
@@ -884,7 +1091,7 @@ export function createAgentProvider(): AgentProvider {
 	const canned = cannedProvider();
 	const runner = createRunner(
 		createMemoryEnv(FIXTURE_FILES),
-		Promise.resolve(new Session(new InMemorySessionStorage())),
+		memorySessions(),
 		canned.models,
 		canned.model
 	);

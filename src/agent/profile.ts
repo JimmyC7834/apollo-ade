@@ -11,6 +11,10 @@
 
 import type { ThinkingLevel } from '@earendil-works/pi-agent-core';
 import type { GatePolicy } from './gate';
+// Explicit extension: `profile.check.ts` runs this file under plain node. The
+// import is one way — `subagent.ts` takes only the *type* of a profile back —
+// so declaring the delegable rule beside the tool that uses it costs no cycle.
+import { delegable } from './subagent.ts';
 
 /**
  * The providers this app can talk to.
@@ -49,6 +53,29 @@ export interface Profile {
 	/** Route shell commands through rtk. Ticket 11; not yet applied. */
 	readonly rtk: boolean;
 	readonly gatePolicy: GatePolicy;
+	/**
+	 * Whether a parent agent may spawn this profile as a subagent.
+	 *
+	 * The tenth field, and the only one
+	 * [ticket 24](docs/wayfinder/pi-harness/tickets/24-subagents.md) added: the
+	 * dev's premise was that a profile is already a reasonable subagent
+	 * definition, and it survived the grill with one flag and one string.
+	 *
+	 * Off by default, because a profile the author never thought about as a
+	 * subagent is not one — unlike a *tool*, where the default-on rule protects
+	 * profiles written before the tool existed.
+	 */
+	readonly subagent: boolean;
+	/**
+	 * What this profile is for, in the parent model's words rather than the
+	 * child's.
+	 *
+	 * Required once `subagent` is true, and separate from `instructions` on
+	 * purpose: `instructions` is what the child is *told*, and this is what the
+	 * parent *reads to choose*. Using one string for both would make every
+	 * delegable profile advertise its own system prompt.
+	 */
+	readonly description?: string;
 }
 
 /** What the harness actually has, for references to be checked against. */
@@ -179,6 +206,10 @@ export function builtinProfiles(): Profile[] {
 		skills: [],
 		rtk: false,
 		gatePolicy: envGatePolicy(),
+		// No built-in is delegable. A subagent runs unattended, so which profiles
+		// one may be is the user's decision to write down rather than ours to ship
+		// a default for.
+		subagent: false,
 	};
 	return [
 		base,
@@ -307,6 +338,22 @@ function applyDefinition(base: Profile, raw: Record<string, unknown>, problems: 
 		}
 	}
 
+	if (raw.subagent !== undefined) {
+		if (typeof raw.subagent === 'boolean') {
+			next.subagent = raw.subagent;
+		} else {
+			reject('subagent', raw.subagent);
+		}
+	}
+
+	if (raw.description !== undefined) {
+		if (typeof raw.description === 'string') {
+			next.description = raw.description || undefined;
+		} else {
+			reject('description', raw.description);
+		}
+	}
+
 	if (raw.gatePolicy !== undefined) {
 		if (raw.gatePolicy === 'auto' || raw.gatePolicy === 'careful') {
 			next.gatePolicy = raw.gatePolicy;
@@ -345,6 +392,11 @@ export function installProfiles(definitions: readonly unknown[], problems: strin
 	}
 
 	profiles = [...merged.values()];
+
+	// Reported here rather than where the delegable list is read, because
+	// `/reload` is the moment the user can act on it — and reading it happens on
+	// every turn, which would repeat the warning forever.
+	delegable(profiles, problems);
 
 	/*
 	 * Re-resolving the active profile is the one place a switch can happen

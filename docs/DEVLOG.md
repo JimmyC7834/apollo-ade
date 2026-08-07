@@ -3529,3 +3529,110 @@ built-in rather than the two anyone would type), `cargo test workspace::` passes
 standing warnings. **Not validated live** — browser mode has no
 `.agents/commands` at all, so no template has ever run, and `substituteArgs` is
 covered by pi's tests rather than by ours.
+
+## Slice 36 — Subagents
+
+**User outcome.** The agent can hand a sub-task to a second agent running under
+a profile you marked delegable, and watch it on one line without its work
+flooding the conversation.
+
+**Added.** `src/agent/subagent.ts` — the `task` tool, the delegable rule, the
+progress line and the concurrency limiter. `runSubagent` in `provider.ts` builds
+the child harness. Two fields on `Profile`: `subagent` and `description`.
+`subagent.check.ts` is new; `gate.check.ts` and `profile.check.ts` grew cases.
+
+**The finding the whole slice rests on.** **pi has no subagent concept** —
+`subagent`, `spawnAgent`, `forkSession` and `childAgent` return nothing across
+its 34 dist files — and it needs none. `AgentHarness` is already the unit of one
+agent: its constructor takes plain options, and there is no registry, no
+singleton and no global state. A second agent is one `new` beside the first.
+Ticket 24's own text said a "no" here would make this "a different and much
+larger effort", and that was wrong; the ticket was corrected before the code was
+written.
+
+**A delegation is a tool call, so no event kind was added.** `tool_start`,
+`tool_update` and `tool_end` already carry an id and already stream partial
+output, and pi runs a batch of tool calls in parallel by default
+(`agent-loop.js:290`) — so four children at once needed no scheduling of ours.
+The thirteen kinds are untouched and `mapEvent` learned nothing.
+
+**Depth travels in the tool context, not in the tool.** pi resolves
+`toolContext` per turn snapshot and hands it to `execute`, so one `task`
+instance serves the main agent at depth 1 and every child below it. Building a
+tool set per level would have been the same five tools three times over.
+
+**The description is a getter.** `/reload` changes which profiles are delegable
+under a tool object that was built once. pi reads `description` while building
+each request, so a getter is live at no cost; the alternative was rebuilding the
+tool set on every profile switch to change a string.
+
+**The gate now queues instead of refusing.** A single pending slot was right
+while one turn's tools ran one at a time. Four subagents against one user is a
+real second question, and the old code answered it with `{ block: true, reason:
+"another approval is already pending" }` — a blocked tool call nobody asked for.
+The queue shows one card at a time, so `resolve` stays unambiguous, and
+`abandon` declines the whole queue rather than the front of it. `confirm` lost
+its refusal branch entirely, which is a deletion.
+
+**`onToolCall` takes a policy override**, defaulting to the turn's. A subagent
+runs under **its own profile's** `gatePolicy` — a read-only `research` child on
+`auto` while an `editor` child asks — and its question still reaches this turn's
+user through this turn's sink. Without the override the field would be silently
+meaningless for children. One gate, not one per child: `resolveApproval` on the
+run reaches exactly one gate, so a child with its own could ask something
+nothing could answer.
+
+**Child sessions share `/.ade/sessions` and start-up skips them.** Both
+`parentSessionPath` and `metadata.delegatedFrom` are written, and they are not
+the same claim: the first is true and the deferred chat view needs it, the
+second is what `openSession` filters on. Filtering on `parentSessionPath` alone
+would also hide a *forked* session, which is one the user should still see.
+Without the filter the next launch resumes a child's sub-task, because a child's
+file is newer than its parent's by definition.
+
+**Tokens are counted separately and travel back on the result's `details`.**
+Adding a child's usage to the parent's meter would corrupt the number
+auto-compaction divides by — the parent's window is not fuller because a child
+read a file. Showing them together is deferred UI; this is the tracking that
+decision needs to already exist.
+
+**Wall clock, not tool calls.** Fifteen minutes per child. A call budget counts
+actions, so it kills a child reading sixty files correctly and a child stuck in
+a cheap loop at the same number.
+
+**Two kinds of failure, kept apart.** A harness failure throws, and pi turns it
+into an error `tool_result`; a bad profile name, a profile with `subagent:
+false` and a delegation past depth 3 are all thrown for the same reason, so the
+model corrects itself inside the turn (ticket 18's pattern). A child that *ran*
+and did not achieve the job returns normally with its own account of it.
+
+**Security boundary.** Unchanged, and that is the point: a subagent runs the
+same tools through the same gate against the same Rust floor. It cannot exceed
+its parent because nothing about it is privileged — the profile it runs under is
+one the user wrote, its `bash` calls hit the same deny list, and writes outside
+the root are still refused in Rust. Delegation adds no new path to the
+filesystem or to a process. What it does add is *unattended* running, which is
+why `subagent` defaults to false on every built-in and no profile is delegable
+until the user says so in a file.
+
+**Accessibility.** Nothing new. A delegation renders as a tool call, so it
+inherits the transcript's existing announcements and the existing approval card.
+
+**Caveats and deviations.**
+
+- **Auto-compaction is not wired for children, deliberately.** Ticket 24 decided
+  "compaction per child, on the same rules". A child runs exactly one turn and pi
+  compacts only an idle harness, so the rule has nothing to fire on until a child
+  can be talked to again — which is the deferred chat view. Wiring it now would
+  be dead code; it is recorded here rather than silently skipped.
+- **Never exercised live.** Browser mode's canned provider answers from a script
+  that has no `task` call in it, so no subagent has actually run. Every
+  assertion is against `SubagentHost` as a seam, with no model and no harness.
+  The child harness construction in `runSubagent` is typechecked and unrun.
+- The child chat view, promoting a child to your own session, steering a running
+  child, child tokens in the main meter, and configurable caps are all deferred
+  by ticket 24 and none of them is scaffolded for.
+
+**Validation.** `npx tsc --noEmit` clean, 20 `npm run check` scripts pass
+(`subagent.check.ts` is new), `cargo test` passes 10 tests unchanged — no Rust
+was touched — and `npm run build` is clean apart from the two standing warnings.

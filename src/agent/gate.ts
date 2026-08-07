@@ -101,27 +101,50 @@ export interface Gate {
 	 * approval returns `{ block: true }` rather than rejecting. That is the
 	 * single easiest way to get this wrong, which is why it is asserted in
 	 * `gate.check.ts`.
+	 *
+	 * `policy` overrides the turn's for one harness. A subagent runs under **its
+	 * own profile's** policy (ticket 24), so a read-only `research` child can sit
+	 * on `auto` while an `editor` child asks — and the profile field would
+	 * otherwise silently do nothing for children. The sink is not overridden with
+	 * it: a child's question still has to reach the user.
 	 */
-	onToolCall(event: {
-		toolCallId: string;
-		toolName: string;
-		input: Record<string, unknown>;
-	}): Promise<{ block?: boolean; reason?: string } | undefined>;
-	/** Answer the question the gate is currently waiting on. */
+	onToolCall(
+		event: {
+			toolCallId: string;
+			toolName: string;
+			input: Record<string, unknown>;
+		},
+		policy?: GatePolicy
+	): Promise<{ block?: boolean; reason?: string } | undefined>;
+	/** Answer the question at the front of the queue. */
 	resolve(approved: boolean): void;
-	/** Abandon any pending question, so a cancelled run does not hang forever. */
+	/** Decline everything outstanding, so a cancelled run does not hang forever. */
 	abandon(): void;
 }
 
 export function createGate(): Gate {
-	let policy: GatePolicy = 'auto';
+	let turnPolicy: GatePolicy = 'auto';
 	let emit: ((event: AgentEvent) => void) | undefined;
-	let pending: ((approved: boolean) => void) | undefined;
+
+	/**
+	 * The questions waiting on the user, oldest first.
+	 *
+	 * A single slot was right while one turn's tools ran one at a time. Ticket 24
+	 * makes up to four subagents run at once against one user, so two tools can
+	 * genuinely need an answer at the same moment — and the old code refused the
+	 * second, which turns a parallel delegation into a blocked tool call nobody
+	 * asked for. **Only the front one is emitted**, so the UI still shows one card
+	 * and `resolve` is still unambiguous about which card it answered.
+	 */
+	const waiting: { readonly event: AgentEvent; readonly resolve: (approved: boolean) => void }[] =
+		[];
 
 	const settle = (approved: boolean) => {
-		const resolve = pending;
-		pending = undefined;
-		resolve?.(approved);
+		const front = waiting.shift();
+		front?.resolve(approved);
+		if (waiting[0]) {
+			emit?.(waiting[0].event);
+		}
 	};
 
 	/** Emit the question and hold until it is answered. Both callers' body. */
@@ -131,33 +154,31 @@ export function createGate(): Gate {
 		input: unknown,
 		reason?: string
 	): Promise<boolean> {
-		emit?.({ kind: 'approval', id, name, input, reason });
 		return await new Promise<boolean>((resolve) => {
-			pending = resolve;
+			waiting.push({ event: { kind: 'approval', id, name, input, reason }, resolve });
+			if (waiting.length === 1) {
+				emit?.(waiting[0].event);
+			}
 		});
 	}
 
 	return {
 		begin(next, sink) {
-			// A turn starting while an approval is outstanding can only mean the
-			// last one was never settled. Declining it here is what stops this
+			// A turn starting while approvals are outstanding can only mean the last
+			// turn's were never settled. Declining them here is what stops this
 			// turn's user from answering a question they were never shown.
-			settle(false);
-			policy = next;
+			while (waiting.length > 0) {
+				settle(false);
+			}
+			turnPolicy = next;
 			emit = sink;
 		},
 
 		async confirm(id, name, input, reason) {
-			// Refused rather than queued, for the reason below — but as a `false`,
-			// because this caller's failure path is a thrown tool error rather than
-			// a blocked hook, and it must not be a hung turn either way.
-			if (pending) {
-				return false;
-			}
 			return await ask(id, name, input, reason);
 		},
 
-		async onToolCall(event) {
+		async onToolCall(event, policy = turnPolicy) {
 			/*
 			 * What the tool *does*, not what it is called. `bash` is examined by
 			 * its command, which is why the deny list lives here rather than in
@@ -177,14 +198,6 @@ export function createGate(): Gate {
 				return undefined;
 			}
 
-			// A second question while one is outstanding would strand the first
-			// promise forever. Tools run sequentially in pi's loop, so this is a
-			// guard against a bug rather than an expected race — but a hung turn
-			// is the worst possible failure here, so it is refused loudly.
-			if (pending) {
-				return { block: true, reason: 'another approval is already pending' };
-			}
-
 			const approved = await ask(event.toolCallId, event.toolName, event.input, reason);
 			return approved ? undefined : { block: true, reason: 'The user declined this change.' };
 		},
@@ -193,6 +206,10 @@ export function createGate(): Gate {
 		// Treated as a decline: the call must not proceed on a run the user
 		// stopped. The transcript still records the question as unanswered,
 		// because cancelling is not an answer.
-		abandon: () => settle(false),
+		abandon: () => {
+			while (waiting.length > 0) {
+				settle(false);
+			}
+		},
 	};
 }

@@ -14,6 +14,7 @@ import { allTemplates, onTemplatesChange, templateCommands } from '../../agent/p
 import { pressure } from '../../agent/compaction';
 import { activateProfile, activeProfile, listProfiles } from '../../agent/profile';
 import { loadProfileFiles, profileSources } from '../../agent/profileFiles';
+import { delegable } from '../../agent/subagent';
 import { allSkills, permittedSkills, skillList } from '../../agent/skills';
 import { userTools } from '../../agent/userTools';
 import { Icon, Overlay } from '../../ui';
@@ -601,6 +602,13 @@ export function AgentChat({ provider, onAnnounce }: AgentChatProps) {
 								`${profile.name === activeProfile().name ? '●' : '○'} ${profile.name} — ` +
 								`${profile.model.id || 'no model'}, ${profile.gatePolicy}, ` +
 								`thinking ${profile.thinkingLevel}${profile.rtk ? ', rtk' : ''}` +
+								// Whether an agent may spawn this one — asked of the rule
+								// itself rather than re-derived from the two fields, so
+								// this cannot drift from what the parent model is
+								// actually offered. A profile marked `subagent` but
+								// missing its description is not delegable, and `/reload`
+								// has already said so.
+								`${delegable([profile]).length > 0 ? ', subagent' : ''}` +
 							// The one place a user finds out that a thinking level is
 							// not going to happen. `getSupportedThinkingLevels` returns
 							// `["off"]` for a model that does not reason, so pi clamps

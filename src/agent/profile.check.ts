@@ -134,6 +134,39 @@ const plan = builtinProfiles().find((profile) => profile.name === 'plan') as Pro
 	assert.ok(problems.some((problem) => problem.includes('"name"')));
 }
 
+// The tenth field, and the warning it produces. `subagent: true` with no
+// description is dropped from the delegable list rather than offered blind —
+// reported at `/reload`, because that is the moment the user can act on it.
+{
+	const problems = installProfiles([
+		{ name: 'researcher', subagent: true, description: 'reads and reports' },
+		{ name: 'half', subagent: true },
+		{ name: 'odd', subagent: 'yes' },
+	]);
+
+	const researcher = listProfiles().find((one) => one.name === 'researcher') as Profile;
+	assert.equal(researcher.subagent, true);
+	assert.equal(researcher.description, 'reads and reports');
+
+	assert.ok(
+		problems.some((problem) => problem.includes('"half"') && problem.includes('description')),
+		`warned about the undescribed one: ${problems.join(' | ')}`
+	);
+	assert.ok(problems.some((problem) => problem.includes('subagent')));
+
+	// The profile still works for the user; it is only invisible to a parent
+	// model. A warning is not a rejection.
+	assert.ok(listProfiles().some((one) => one.name === 'half'));
+
+	// And no built-in is delegable, because running unattended is the user's
+	// decision to write down rather than ours to ship a default for.
+	assert.deepEqual(
+		builtinProfiles().filter((one) => one.subagent),
+		[]
+	);
+	installProfiles([]);
+}
+
 // Reloading re-resolves the active profile by name, so editing the file you
 // are running under takes effect without a switch.
 {

@@ -139,17 +139,53 @@ function openGate(policy: GatePolicy, emit: (event: AgentEvent) => void) {
 	assert.equal((await decision)?.block, true, 'abandoning declines rather than hanging');
 }
 
-// A second question while one is outstanding would strand the first promise.
-// Refused loudly rather than silently queued.
+// Two questions at once queue, and only the front one is shown. Ticket 24 makes
+// this real: four subagents run in parallel against one user, so two tools can
+// genuinely need an answer at the same moment. Refusing the second — which is
+// what this did — turns a parallel delegation into a blocked call nobody asked
+// for.
 {
 	const log = recorder();
 	const gate = openGate('careful', log.emit);
 	const first = gate.onToolCall(call('write', 'c1'));
-	const second = await gate.onToolCall(call('edit', 'c2'));
-	assert.equal(second?.block, true);
-	assert.match(second?.reason ?? '', /already pending/);
+	const second = gate.onToolCall(call('edit', 'c2'));
+
+	assert.equal(log.events.length, 1, 'one card at a time, so `resolve` is unambiguous');
+	assert.equal((log.events[0] as { id: string }).id, 'c1');
+
 	gate.resolve(true);
-	assert.equal(await first, undefined, 'the first question still answers');
+	assert.equal(await first, undefined, 'the first answer went to the first question');
+	assert.equal(log.events.length, 2, 'and the next one is shown on its own');
+	assert.equal((log.events[1] as { id: string }).id, 'c2');
+
+	gate.resolve(false);
+	assert.equal((await second)?.block, true, 'the second answer went to the second question');
+}
+
+// Abandoning declines the whole queue. One left behind is a subagent that never
+// finishes and a turn that never settles.
+{
+	const log = recorder();
+	const gate = openGate('careful', log.emit);
+	const first = gate.onToolCall(call('write', 'c1'));
+	const second = gate.onToolCall(call('edit', 'c2'));
+	gate.abandon();
+	assert.equal((await first)?.block, true);
+	assert.equal((await second)?.block, true);
+}
+
+// A subagent runs under **its own profile's** policy, and its question still
+// reaches this turn's user. Without the override the profile field would be
+// silently meaningless for children — ticket 24's gate decision.
+{
+	const log = recorder();
+	const gate = openGate('careful', log.emit);
+	assert.equal(await gate.onToolCall(call('write', 'c1'), 'auto'), undefined, 'the child is auto');
+	assert.equal(log.events.length, 0);
+
+	void gate.onToolCall(call('write', 'c2'), 'careful');
+	assert.equal(log.events.length, 1, 'a careful child asks, on the parent turn’s sink');
+	gate.abandon();
 }
 
 // The deny list fires in auto mode too, which is what makes it a floor rather
@@ -254,17 +290,21 @@ function openGate(policy: GatePolicy, emit: (event: AgentEvent) => void) {
 	assert.equal(await running, false);
 }
 
-// One pending slot, shared with the hook. A second question would strand the
-// first promise, so it is declined rather than queued — `false` here rather than
-// the hook's `{ block: true }`, because this caller's refusal path is a throw.
+// One queue, shared with the hook. A tool's question waits behind a hook's
+// rather than being declined — the two callers differ in what they do with the
+// answer, not in whether they are entitled to ask.
 {
 	const log = recorder();
 	const gate = openGate('careful', log.emit);
 	const first = gate.onToolCall(call('write'));
-	assert.equal(await gate.confirm('c2', 'clean_build', ['rm', '-rf', 'x'], 'why'), false);
-	assert.equal(log.events.length, 1, 'the second question was never shown');
+	const second = gate.confirm('c2', 'clean_build', ['rm', '-rf', 'x'], 'why');
+	assert.equal(log.events.length, 1, 'the second question waits its turn');
+
 	gate.resolve(true);
 	assert.equal(await first, undefined, 'the first still answers');
+	assert.equal(log.events.length, 2);
+	gate.resolve(true);
+	assert.equal(await second, true);
 }
 
 // A new turn declines what the last one left outstanding, rather than letting

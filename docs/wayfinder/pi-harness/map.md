@@ -352,13 +352,34 @@ reporting them:
   at all. Strictness bought indirection and cost the one case a foot-gun guard is any use
   for. Still worth landing **approval memory** below beside it: a tool that can ask is a
   second caller for whatever that becomes.
-- **Profiles as subagent definitions.** The same payload (tools + prompt + model)
-  configures both a session and a spawned child. Claude Code unifies them; whether
-  pi's core even supports subagent forking is unverified. **Wanted — the dev confirmed
-  it in the grill — and deferred, not now.** The blocker named here is gone: profiles
-  shipped. What is deferred is the *grill*, so this entry keeps no answers, only the one
-  check that must come first: whether pi's core supports forking at all. If it does not,
-  the whole entry is a different and much larger effort.
+- **Profiles as subagent definitions** — [ticket 24](tickets/24-subagents.md), **built in
+  Slice 36.** The premise holds: a profile is the whole payload a child
+  needs, plus one field. The precondition this entry named is answered, and **the
+  conclusion it drew from it was wrong**. pi has no subagent concept — zero hits for
+  `subagent`, `spawnAgent`, `forkSession` or `childAgent` across `dist` — and the effort
+  does *not* grow, because the harness is already the unit of one agent. `AgentHarness`'s
+  constructor takes plain options with no registry, no singleton and no global state, so
+  **a second agent is one `new`**. pi also already models parentage: `JsonlSessionRepo`
+  writes `parentSessionPath` and a free-form `metadata` object and returns both from
+  `list()`. What pi does have and must not be confused with this is session **branching**,
+  which is one conversation splitting in two. The decisions: the **model** spawns through
+  a `task` tool listed in a profile's `tools`; `subagent: boolean` plus a required
+  description makes a profile delegable, and a missing description drops it with a warning
+  as Slice 35's shadowing rule already does; a child starts from the parent's prompt and
+  no history; four at once, depth 3 including the main agent, fifteen minutes each; the
+  **child's own** `gatePolicy` decides and its approvals queue to the user — which is what
+  made the gate hold a queue rather than one pending slot; compaction was decided per child
+  and turned out to have nothing to fire on, because a child runs one turn and pi compacts
+  only an idle harness; **one checkpoint per parent turn** covers all of them, because children share
+  one working tree and per-child checkpoints are not separable; tokens counted separately
+  so auto-compaction keeps an honest denominator; and it crosses the seam as **no new
+  event kind at all** — a delegation is a tool call, and `tool_update`'s partial output
+  carries `profile - label - [latest event]`. Child sessions live in the same directory
+  and start-up skips them, which is why they carry `metadata.delegatedFrom` and not only
+  `parentSessionPath` — the latter would also hide a fork. **Deferred and written down**:
+  the child chat view, which is the largest single piece and reopens the session-picker
+  question, plus steering a child, child tokens in the main meter, and making the three
+  constants configurable. The line-only version ships without any of them.
 - **Which profile composes the skills** — [ticket 20](tickets/20-skills.md), **closed**.
   The map carried this as two entries and they were one question; the duplication is why
   nobody went back for it once profiles landed. **`profile.skills` is a default-off list
@@ -479,6 +500,20 @@ reporting them:
   TOML filter data. The two numbers that decide it: rtk is **3.9 MB gzipped against a
   3.1 MB gzipped frontend**, and its filter half is **data, not code**. Blocks nothing
   else; `rtk: boolean` already round-trips on the profile.
+  **Amendment 2 read the source and moved the blocker.** The cost question is answered
+  and is small — the engine is one pure file, `apply_filter(&CompiledFilter, &str) ->
+  String`, 804 production lines, needing `regex`, `serde` and `toml`, all three already
+  in our `Cargo.lock`, so **zero new crates**. A sixth route appeared: **F**, vendoring
+  the engine source into `src-tauri`, which needs no lib target and which Amendment 1
+  never priced. E ≈ 385–430 lines written against F ≈ 510 copied; **E wins on what we own
+  after** — the TOML schema is frozen across three releases while the engine moved
+  +330/−59 in two months. What opened instead is a **value** question that decides the
+  ticket: `RUST_HANDLED_COMMANDS` holds 49 names, including `git`, `cargo`, `npm`,
+  `docker` and `tsc`, and **no TOML filter can ever fire for any of them**. They belong to
+  the `cmds/` half, which does not travel — it re-invokes the tool itself, so it is a
+  second process-spawning path that bypasses everything [ticket 02](tickets/02-exec-not-terminal.md)
+  built. E therefore buys `gradle`, `terraform`, `helm`, `make` and similar, and this
+  repo runs none of them. **Measure our own turns before writing the 400 lines.**
 - ~~**Where profiles are stored.**~~ **Answered and built** — see the shipped section on
   [What is a profile, concretely?](tickets/04-profile-data-model.md). The global file has
   its own narrow Rust command, the project file sits at the workspace root where it is
