@@ -352,3 +352,122 @@ outside `core`'s web. `cmds/` is none of those. It is not a library that shipped
 binary — it is a CLI, and its value is in the process invocation, which is the one thing
 that cannot be imported.
 
+
+---
+
+## Amendment 3 — the per-command read, and the seam that got built
+
+**Status: the seam is built; rtk itself is still deferred, and now for a smaller
+reason.** Amendment 2 closed the cost question and opened a value question. This
+amendment answers the value question one level down — per command, with the source
+in front of it — and the answer moved. The full note is
+[RESEARCH-rtk-crop-logic.md](../RESEARCH-rtk-crop-logic.md), read against **v0.44.2,
+commit `700bdde3`**.
+
+### Corrections to Amendment 2
+
+Amendment 2 corrected Amendment 1 on three counts and was itself wrong on three.
+
+- **The pipeline has eight stages, not nine.** Upstream's own doc comment at
+  `toml_filter.rs:486-493` numbers eight, and the `// N.` markers in the body agree.
+  `head_lines` is an undocumented *branch* inside stage 6, not a stage. `filter_stderr`
+  is a real ninth step, but it runs in the **caller**, before stage 1 — which is a
+  different claim and a more useful one.
+- **The filter data is 73,240 bytes, not 261 KB.** 2,402 lines across the 63 files, with
+  154 tests. Amendment 2's figure was off by 3.5×.
+- **`RUST_HANDLED_COMMANDS` is not the routing table — Clap is.** 49 names against **78
+  Clap subcommands**. It omits `gradlew`, `mvn`, `dotnet`, `uv`, `rspec` and `rubocop`,
+  so its shadow warning has false negatives, and **five shipped TOML filters are dead on
+  rtk's own hook path** (`gradle`, `dotnet-build`, `biome`, `yadm`, `uv-sync`). `uv sync`
+  is worse than dead: `uv_cmd.rs:63-67` passes it through unfiltered.
+
+The rest of Amendment 2 stands, including the finding that decides the ticket.
+
+### The (a)/(b) split was too coarse. It is four classes.
+
+Amendment 2 reasoned with two: a post-filter we can take, and a re-invocation we cannot.
+The middle is where the answer was hiding.
+
+| | | |
+|---|---|---|
+| **(a)** same argv, drop lines only | 5 commands | directly extractable |
+| **(a′)** same argv, bespoke Rust renderer | ~34 | the noise-dropping half is extractable; the formatting is not |
+| **(b)** different argv, then a parser | ~27 | not extractable, and it reintroduces the approval mismatch |
+| **(c)** rtk never spawns the tool | 5 | `rtk find` walks the tree with the `ignore` crate |
+
+**All 63 TOML filters are class (a) structurally, not by convention.** `main.rs:1321-1338`
+spawns `resolved_command(argv[0]).args(argv[1..])` — the user's exact argv — and hands
+the captured string to `apply_filter`. The schema has no field that can add an argument.
+That is a stronger guarantee than upstream's stated rule, because it is enforced by the
+type rather than by discipline.
+
+### What this changes for us
+
+Amendment 2's model was: the value lives in `cmds/`, `cmds/` cannot travel, so nothing is
+worth building. That model breaks, because **three of our four commands are
+argv-preserving**.
+
+| Our command | Class | argv changed | What we would write |
+|---|---|---|---|
+| `npm run …` | **(a)** | no | 4 regexes and an `on_empty`. Six lines. |
+| `cargo build/check/test/clippy` | **(a′)** | no | ~15 skip-regexes get most of it; grouping is extra |
+| `tsc` | **(a′)** | no | ~2 skip-regexes; the error-count summary is extra |
+| `git status/log/diff` | **(b)** | **yes** | not extractable |
+
+`cargo` is the surprise. It **injects nothing** (`rust/cargo_cmd.rs:267-273`) and declines
+to force `--message-format=json` on purpose (`:377-380`).
+
+Measured on this repository against the v0.43.0 binary: `git status` goes 437 → 101 bytes,
+**77%**. Roughly 43 of those points are reachable by a pure post-filter; the other ~34
+need the porcelain reformat — and buying them means the user approves one command while
+another runs, which is the thing route E existed to delete.
+
+### A sixth route, which Amendment 2 did not list
+
+> **G — take route E's engine, ship almost none of upstream's 63 filters, and write our
+> own for the commands we actually run.**
+
+Cheaper than E and aimed at our own commands rather than at `gradle` and `xcodebuild`. It
+carries **no Apache-2.0 obligation at all** when the filters are ours, since the licence
+attaches to copied expression and a list of regexes for `cargo`'s output is not upstream's
+expression. And it keeps E's structural win intact: the filter runs after the command, so
+the user approves exactly what runs.
+
+**What G cannot buy:** `git status`'s extra 34 points, `cargo clippy`'s lint grouping,
+`tsc`'s error-count summary. Each needs a parser, and a parser is per-tool work whether it
+is copied or written.
+
+### The seam is built. The filters are not.
+
+`src/agent/crop.ts` and its check. A pure `crop(command, text)` in the exec adapter,
+called at [`env.ts`]'s `exec` return — after `onStdout` has streamed the raw bytes to the
+UI, and before pi's 2000-line / 50 KB cap. Semantic first, positional second.
+
+Three rules, and the last two are lifted from rtk because rtk needed them for the same
+reason:
+
+1. **A command with no rule is untouched.** Matching is opt-in, so `cat` and `git diff`
+   pass through byte for byte.
+2. **Never worse** — `core/guard.rs:6-12`. A crop that grew its input is discarded.
+3. **It says what it dropped**, in the same place `[output truncated at 8 MiB]` is said.
+
+It ships with **one rule, `npm`**, transcribed from `js/npm_cmd.rs:136-168` rather than
+invented, because that one is proven and free. `cargo` and `tsc` are deliberately absent:
+their noise is extractable, but the share of their output that is noise has never been
+measured here, and a skip-list written on a guess is how a crop starts eating the errors
+it was meant to surface.
+
+### The blocker, restated and smaller
+
+Upstream's `savings_pct` values are **hard-coded constants in `src/discover/rules.rs`**,
+not measurements — `rules.rs:9-11`, defaulting to 60.0 at `:26`. Their own README hedges
+the headline (`README.md:60`). So both this ticket's amendments have been reasoning about
+rtk's estimates rather than about our spend.
+
+**That is what the seam now fixes.** Every crop writes its lines and bytes where a person
+can read them. The next rule is a number, not an argument — and rtk stays deferred until
+there is one.
+
+**`rtk: boolean` on the profile remains inert**, and is now doubly so: the crop applies to
+every profile, because a four-regex npm filter is not a thing worth a policy dial. If the
+field ever means anything, it will mean route G's engine rather than the binary.

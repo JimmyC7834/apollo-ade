@@ -19,6 +19,8 @@ import {
 	type Result,
 } from '@earendil-works/pi-agent-core';
 
+import { crop, cropNote } from './crop';
+
 /*
  * The path namespace is workspace-root-relative, rooted at "/". The renderer
  * does not know the OS path of the root and must not learn it — Rust is the
@@ -305,14 +307,34 @@ export function createTauriEnv(): ExecutionEnv {
 					},
 					onEvent: channel,
 				});
+
+				/*
+				 * The crop goes here, and the position is the decision.
+				 *
+				 * Above it, `onStdout` has already streamed the raw chunks to the
+				 * UI, so the human sees everything and only the model sees less —
+				 * which is the asymmetry worth having. Below it, pi's bash tool
+				 * applies its own 2000-line / 50 KB cap. Semantic first, then
+				 * positional: crop the noise and the cap rarely fires, cap first
+				 * and the interesting last thirty lines are already gone.
+				 */
+				const cropped = crop(command, outcome.stdout);
+				const note = cropNote(outcome.stdout, cropped);
+				if (note) {
+					// The measurement, and the only one there is. Every crop leaves
+					// its numbers somewhere a person can read them, so which rule to
+					// write next stops being an argument. See ticket 11.
+					console.debug(`crop ${JSON.stringify(command)} ${note}`);
+				}
+
 				return ok({
-					stdout: outcome.stdout,
-					// Said out loud rather than left as a silent short read: the
-					// model has to know its output stops early, or it will draw
-					// conclusions from a partial log.
-					stderr: outcome.truncated
-						? `${outcome.stderr}\n[output truncated at 8 MiB]`
-						: outcome.stderr,
+					stdout: cropped.text,
+					// Both said out loud rather than left as a silent short read:
+					// the model has to know its output stops early or arrives
+					// filtered, or it will draw conclusions from a partial log.
+					stderr: [outcome.stderr, note, outcome.truncated && '[output truncated at 8 MiB]']
+						.filter(Boolean)
+						.join('\n'),
 					exitCode: outcome.exitCode,
 				});
 			} catch (cause) {

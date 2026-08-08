@@ -3636,3 +3636,72 @@ inherits the transcript's existing announcements and the existing approval card.
 **Validation.** `npx tsc --noEmit` clean, 20 `npm run check` scripts pass
 (`subagent.check.ts` is new), `cargo test` passes 10 tests unchanged — no Rust
 was touched — and `npm run build` is clean apart from the two standing warnings.
+
+---
+
+## Slice 37 — The crop seam
+
+**User outcome.** Command output reaching the model is smaller when the command
+is known to be noisy, and every time that happens it says so and leaves a number
+behind. Nothing else changes: a command with no rule is passed through byte for
+byte.
+
+**Added.** `src/agent/crop.ts` and `crop.check.ts`. One call site, at
+`createTauriEnv().exec`'s return in `env.ts`. One rule, `npm`.
+
+**The position of the call is the whole design.** Above it, `onStdout` has
+already streamed the raw chunks to the UI, so the human sees everything and only
+the model sees less. Below it, pi's bash tool applies its 2000-line / 50 KB cap.
+Semantic first, positional second — crop the noise and the cap rarely fires;
+cap first and the interesting last thirty lines are already gone.
+
+**It is a post-filter, and that is a structural claim rather than a promise.**
+Nothing in `crop.ts` can add an argument, change a command or reach a process:
+it takes a string and returns a shorter one. That is what makes it safe where
+the original ticket-11 design was not. Rewriting the *command* — `git status`
+into `git status --porcelain` — is where rtk's remaining savings live, and it
+would mean the user approves one command while another runs. The dev proposed
+the output-side seam unprompted, which is the same conclusion the ticket's route
+E had reached from the other direction.
+
+**Three rules, and two of them are rtk's.** A command with no rule is untouched,
+because matching is opt-in. A crop that grew its input is discarded — rtk's
+`core/guard.rs:6-12`, which fires in practice because `on_empty: "ok"` is three
+bytes and can be longer than the whitespace it replaces. And every crop is
+announced in the same place `[output truncated at 8 MiB]` is announced, because
+a model reasoning from a silently shortened log is the failure this whole idea
+risks, and it looks exactly like the model being stupid.
+
+**One rule ships, and it is transcribed rather than invented.** `npm` is
+`js/npm_cmd.rs:136-168` at v0.44.2 — four `continue`s and an empty-check — in
+six lines. `cargo` and `tsc` are argv-preserving too, so their noise is equally
+extractable, and they are **deliberately absent**: nobody has measured what share
+of their output is noise on this repo, and a skip-list written on a guess is how
+a crop starts eating the errors it was meant to surface.
+
+**What the research corrected.** `RESEARCH-rtk-crop-logic.md` read v0.44.2 at
+commit `700bdde3` and moved the ticket's conclusion. The (a)/(b) split was too
+coarse — it is four classes, and the middle one carries the answer: **about 34
+commands keep the user's argv and only reformat**, so the noise-dropping half of
+each is extractable even though the rendering is not. `cargo` is one of them; it
+injects nothing and declines `--message-format=json` on purpose. Amendment 2's
+"route E buys nothing" was therefore wrong, and route G — our own filters on
+rtk's engine shape, with no Apache-2.0 obligation — is on the ticket now.
+
+Three of Amendment 2's own claims fell: **eight pipeline stages, not nine**;
+**73,240 bytes of filter data, not 261 KB**; and **`RUST_HANDLED_COMMANDS` is not
+the routing table, Clap is** — 49 names against 78 subcommands, which leaves five
+shipped filters dead on rtk's own hook path. Two amendments in a row have now
+been corrected by the next read, which is worth remembering before quoting
+either.
+
+**The blocker is unchanged and smaller.** Upstream's `savings_pct` values are
+hard-coded constants in `src/discover/rules.rs`, not measurements, and their own
+README hedges the headline. Both amendments had been reasoning about rtk's
+estimates rather than our spend. The `console.debug` in the call site is what
+fixes that: the next rule is a number now, not an argument.
+
+**Never run.** The crop is in `createTauriEnv`, and browser mode's
+`createMemoryEnv` has no shell — its `exec` returns `shell_unavailable`. So this
+is check-covered only, and proving it live needs a native run with a real model
+calling `bash npm run build`. It joins subagents in that bucket.

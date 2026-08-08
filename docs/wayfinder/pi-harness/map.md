@@ -514,6 +514,23 @@ reporting them:
   second process-spawning path that bypasses everything [ticket 02](tickets/02-exec-not-terminal.md)
   built. E therefore buys `gradle`, `terraform`, `helm`, `make` and similar, and this
   repo runs none of them. **Measure our own turns before writing the 400 lines.**
+  **Amendment 3 read it per command, and the seam is now built.** The (a)/(b) split was
+  too coarse — it is four classes, and the middle one carries the answer: **~34 commands
+  keep the user's argv and only reformat**, so their *noise-dropping* half is extractable
+  even though their rendering is not. `cargo` is one of them; it **injects nothing** and
+  declines `--message-format=json` on purpose. Three of our four commands are
+  argv-preserving, which is a materially different picture from "E buys nothing", and it
+  opens **route G — take the engine, ship almost none of upstream's 63 filters, write our
+  own**, with no Apache-2.0 obligation because the filters would be ours. What is **built**
+  is the seam alone: `src/agent/crop.ts`, a pure post-filter in the exec adapter, after raw
+  bytes have streamed to the UI and before pi's positional cap, carrying rtk's own
+  `never_worse` guard and announcing every crop. **One rule ships, `npm`**, transcribed
+  from source rather than invented. Three corrections to Amendment 2 are on the ticket:
+  **eight pipeline stages not nine**, **73,240 bytes of filter data not 261 KB**, and
+  **`RUST_HANDLED_COMMANDS` is not the routing table — Clap is**, which leaves five shipped
+  filters dead on rtk's own hook path. The blocker is unchanged but smaller: upstream's
+  `savings_pct` figures are hard-coded constants rather than measurements, and the seam is
+  what finally measures ours.
 - ~~**Where profiles are stored.**~~ **Answered and built** — see the shipped section on
   [What is a profile, concretely?](tickets/04-profile-data-model.md). The global file has
   its own narrow Rust command, the project file sits at the workspace root where it is
