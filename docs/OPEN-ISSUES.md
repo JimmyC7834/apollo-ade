@@ -3,7 +3,7 @@
 Living document — **edit it**, unlike `DEVLOG.md`, which is append-only history.
 Close an item by deleting it and recording the fix in the dev log.
 
-Last updated after **Slice 34**. What is left is the unverified surface, which is
+Last updated after **Slice 38**. What is left is the unverified surface, which is
 the larger half of this file and always was.
 
 **This file had been stale since Slice 12e** — nineteen slices, the whole of the
@@ -95,6 +95,20 @@ still fine there.
 ---
 
 ## Open defects
+
+### The restyle has never been looked at
+
+`src/App.css` and `src/ui/tokens.css` carry an uncommitted retune — the palette
+moves from VS Code's neutral greys to a cooler blue-grey, focus goes from 1px
+`#0078d4` to 2px `#4c9df0`, and five tokens are added (`--ide-ease`,
+`--ide-motion-fast`, `--ide-radius-sm/-lg`, `--ide-shadow-overlay`). It was built
+to a description and **nobody has judged the result**. `git checkout src/App.css
+src/ui/tokens.css` reverts it.
+
+`src/App.css.bak` and `src/ui/tokens.css.bak` sit beside them and are junk:
+`App.css.bak` duplicates HEAD and `tokens.css.bak` matches neither HEAD nor the
+working tree, so it is a stale intermediate that would mislead anyone who trusted
+it. HEAD is the baseline. Delete both.
 
 **None known.** The two-axis review of slices 0 through 12 — 6,869 lines, run
 after Slice 12c — found seven, and Slices 12d and 12e closed all of them. Every
@@ -215,6 +229,26 @@ absence made the file misleading.
 - **A local model cannot get this far at all.** They emit tool calls as prose, so
   every native run above used a hosted provider. This constrains any offline
   story and is a template limitation rather than a pi one.
+- **The crop seam** (Slices 37–38). `crop()` itself has now been measured against
+  real captured `npm run build` and `npm run check` output — that is where the
+  38.4% comes from — but the *seam* is `createTauriEnv().exec`, and browser mode's
+  `createMemoryEnv` has no shell. So the function is exercised and the call site
+  is not. A native run with a real model calling `bash npm run build` closes it,
+  and until then the `console.debug` in `env.ts` has never printed.
+- **Subagents against a real model** (Slices 36, 38). Delegation now runs end to
+  end in browser mode against the canned provider — real `runSubagent`, real
+  child harness, real `read` in the child. What that cannot reach: a real model
+  choosing to delegate on its own, more than one child, `MAX_CONCURRENT`
+  queueing, the 15-minute timeout, and depth 3. The faux provider hands responses
+  from one shared queue, so the fixture only works because a single delegation is
+  strictly sequential; two parallel children would interleave it. Concurrency
+  stays covered by `subagent.check.ts` against a fake host, and that is the only
+  cover it has.
+- **No `profiles.json` exists on this machine.** Every native run so far has used
+  the three built-ins. Nothing that only a profile file can turn on — a delegable
+  profile, a second model, a user tool, `careful` — has met the native window.
+  Slice 38's delegable profile is a browser-mode fixture and is installed nowhere
+  else.
 
 ### Never exercised anywhere
 
