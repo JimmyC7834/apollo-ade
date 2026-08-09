@@ -42,7 +42,7 @@ import {
 import { createMemoryEnv, createTauriEnv } from './env';
 import { mapEvent } from './events';
 import { installRustFetch } from './rustFetch';
-import { cannedProvider, FIXTURE_FILES } from './canned';
+import { cannedProvider, FIXTURE_FILES, FIXTURE_PROFILES } from './canned';
 import { createGate } from './gate';
 import { isTauri } from '../native';
 import { allTemplates, onTemplatesChange, useTemplateSource } from './promptTemplates';
@@ -51,6 +51,7 @@ import { applyContributors, composeSystemPrompt } from './systemPrompt';
 import {
 	activeProfile,
 	activeToolNames,
+	installProfiles,
 	listProfiles,
 	onProfileChange,
 	PROVIDER_IDS,
@@ -1089,6 +1090,14 @@ export function createAgentProvider(): AgentProvider {
 	// The session stays in memory here — browser mode has no disk to persist to,
 	// and inventing one would be the parallel fiction ticket 10 ruled out.
 	const canned = cannedProvider();
+	/*
+	 * The one profile browser mode adds to the built-ins. Natively these come
+	 * from `profiles.json` through Rust; there is no disk here, and without a
+	 * delegable profile the `task` tool can only ever answer that it has nobody
+	 * to delegate to — which would leave the whole feature unreachable in the
+	 * only mode that runs without an API key.
+	 */
+	installProfiles(FIXTURE_PROFILES);
 	const runner = createRunner(
 		createMemoryEnv(FIXTURE_FILES),
 		memorySessions(),
@@ -1097,7 +1106,7 @@ export function createAgentProvider(): AgentProvider {
 	);
 	return {
 		start: (prompt, onEvent) => {
-			canned.rearm();
+			canned.rearm(prompt);
 			return runner.start(prompt, onEvent);
 		},
 		// Not rearmed either, and it will not find a skill: the memory environment

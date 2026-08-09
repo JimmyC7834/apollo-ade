@@ -7,7 +7,7 @@
 
 import assert from 'node:assert';
 
-import { crop, cropNote, ruleFor, RULES } from './crop.ts';
+import { crop, cropNote, ruleFor, RULES, stripControl } from './crop.ts';
 
 // --- matching is opt-in -----------------------------------------------------
 
@@ -19,13 +19,52 @@ assert.ok(ruleFor('  npm exec vite'), 'leading whitespace does not defeat the ma
 assert.ok(ruleFor('npm x tsc'), 'the short aliases rtk lists match too');
 
 {
-	// The rule that matters most: anything without a rule is untouched, and it
-	// is untouched *identically*, not merely equivalently.
+	// The rule that matters most: anything without a rule keeps every line. With
+	// no control codes in the input there is nothing for the strip to do either,
+	// so this case is still byte for byte.
 	const raw = 'line one\n\nline two\n   \n';
 	const out = crop('cat notes.txt', raw);
 	assert.equal(out.text, raw, 'an unmatched command passes through byte for byte');
 	assert.equal(out.dropped, 0);
 	assert.equal(cropNote(raw, out), undefined, 'and says nothing');
+}
+
+// --- the escape strip, which is the part that pays ---------------------------
+
+{
+	// SGR colour: the 38% of a real `npm run build`. Content identical, bytes
+	// down, and it happens for a command with no rule at all.
+	const raw = '[36mvite v6.4.3 [32mbuilding[39m\n';
+	const out = crop('cat build.log', raw);
+	assert.equal(out.text, 'vite v6.4.3 building\n', 'colour goes, the words stay');
+	assert.equal(out.dropped, 0, 'stripping is not dropping — no line was lost');
+	assert.equal(
+		cropNote(raw, out),
+		`[stripped terminal control codes, ${raw.length} to ${out.text.length} bytes]`,
+		'and it still announces itself, with the other wording'
+	);
+}
+
+{
+	// Not only colour. Cursor movement and line erase are how a progress bar
+	// overdraws, and piped output keeps every frame.
+	assert.equal(stripControl('[2K[1Abuilding'), 'building', 'erase and cursor-up go');
+	assert.equal(stripControl('plain text'), 'plain text', 'text with no escapes is identical');
+	assert.equal(stripControl(''), '');
+	assert.equal(
+		stripControl('a\rb'),
+		'a\rb',
+		'bare carriage return is deliberately kept — see CONTROL'
+	);
+}
+
+{
+	// Order matters: the strip runs first, so a line that was *only* escapes is
+	// blank by the time the npm rule's blank-line pattern sees it. Reversing the
+	// two stages would leave it in.
+	const raw = ['> app@1.0.0 build', '[39m', 'real output'].join('\n');
+	const out = crop('npm run build', raw);
+	assert.equal(out.text, 'real output', 'an escapes-only line becomes blank and is then dropped');
 }
 
 // --- the npm rule, transcribed from rtk -------------------------------------

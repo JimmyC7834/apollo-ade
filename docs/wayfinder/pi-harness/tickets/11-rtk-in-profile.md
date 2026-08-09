@@ -471,3 +471,37 @@ there is one.
 **`rtk: boolean` on the profile remains inert**, and is now doubly so: the crop applies to
 every profile, because a four-regex npm filter is not a thing worth a policy dial. If the
 field ever means anything, it will mean route G's engine rather than the binary.
+
+## Amendment 4 — the seam ran, and the number was 0.3%
+
+Amendment 3 shipped the crop and did not run it. Running it changes what this
+ticket is about.
+
+**Measured on this repo, real captured stdout:**
+
+| | `npm run build` | `npm run check` |
+|---|---|---|
+| rtk's npm rule alone | 13,323 → 13,286 (**0.3%**) | 1,399 → 1,362 (**2.6%**) |
+| with the escape strip | 13,323 → 8,203 (**38.4%**) | — |
+
+The transcribed rule is mechanically correct — it drops the `> pkg@1.0.0 build`
+banner and blanks, keeps the echoed command line, announces itself, and the
+never-worse guard never has to fire. It is simply almost worthless here:
+
+1. `npm WARN` does not match npm 10's lowercase `npm warn`, and those go to
+   **stderr**, which `env.ts` does not crop. Dead twice over.
+2. 8,040 of 13,323 bytes are vite's 102-line asset table — real output the rule
+   correctly keeps. Whether a model needs 102 chunk sizes is a question nobody
+   has asked yet, and it is a rule, not a bug.
+3. **5,083 bytes, 38.2%, were ANSI escapes.** `exec.rs` pipes stdout and sets no
+   `NO_COLOR`; vite colours anyway.
+
+**This moves route G's centre of gravity.** The research read 1,042 lines of rtk
+and found ~34 argv-preserving commands whose line-dropping is extractable. That
+is still true and still the route. But the first thing built from it returned
+0.3%, and one stage rtk does not have at all returned 38.4% — so the next rule
+should be chosen by measuring our own output, not by porting the next filter.
+The `console.debug` in the call site is what makes that possible, and it is now
+the most valuable line in the seam.
+
+`rtk: boolean` remains inert, and nothing here changes that.

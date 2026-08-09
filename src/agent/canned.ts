@@ -53,6 +53,34 @@ function lastToolText(context: Context): string | undefined {
 	return undefined;
 }
 
+/**
+ * The profile the delegating script delegates to.
+ *
+ * Installed through `installProfiles` like any other definition rather than
+ * pushed into the list — same reason browser mode uses the real harness and the
+ * real read tool. A fixture that skipped the installer would not prove the
+ * installer works, and `delegable()` refusing a description-less profile is
+ * exactly the behaviour worth exercising.
+ *
+ * It exists because **no built-in is delegable and none should be** (see
+ * `builtinProfiles`), so without it browser mode would report "no profiles are
+ * currently delegable" and the tool could never fire.
+ */
+export const FIXTURE_PROFILES: readonly unknown[] = [
+	{
+		name: 'researcher',
+		description: 'Reads files and reports what is in them, without changing anything.',
+		subagent: true,
+		tools: { write: false, edit: false, bash: false },
+		instructions: 'Answer from what you read. Do not modify anything.',
+	},
+];
+
+/** Whether this prompt is asking for the delegation demo rather than the read one. */
+function asksToDelegate(prompt: string): boolean {
+	return /\b(subagent|delegate|delegation|task tool)\b/i.test(prompt);
+}
+
 export interface CannedAgent {
 	readonly models: MutableModels;
 	readonly model: Model<Api>;
@@ -61,8 +89,12 @@ export interface CannedAgent {
 	 * then runs dry, so without this the second prompt of a session would get
 	 * no answer at all — a browser mode that works once is worse than one that
 	 * obviously loops.
+	 *
+	 * Takes the prompt because there are two scripts now and the prompt is what
+	 * chooses between them. The steps themselves still read the *context* rather
+	 * than this string — the prompt picks the script, the context fills it in.
 	 */
-	rearm(): void;
+	rearm(prompt: string): void;
 }
 
 export function cannedProvider(): CannedAgent {
@@ -93,12 +125,64 @@ export function cannedProvider(): CannedAgent {
 		},
 	];
 
+	/**
+	 * The delegation script: four steps across **two** agents.
+	 *
+	 * `fauxProvider` hands its responses out in one ordered queue, and the parent
+	 * and the child both draw from it. That works — and only works — because a
+	 * delegation is strictly sequential: `task.execute` awaits `host.run`, so the
+	 * child cannot be asked anything until the parent's call is out, and the
+	 * parent cannot continue until the child is done. The order below is that
+	 * sequence written down:
+	 *
+	 *   1. parent calls `task`
+	 *   2. child reads a file
+	 *   3. child answers from what it read
+	 *   4. parent answers from the child's report
+	 *
+	 * A script that delegated twice, or a model that ran two children in
+	 * parallel, would interleave and this would fall apart. That is a real limit
+	 * of the fixture rather than of `MAX_CONCURRENT`, and it is why the
+	 * concurrency behaviour is checked against a fake host in `subagent.check.ts`
+	 * instead of here.
+	 */
+	const delegation = (): FauxResponseStep[] => [
+		(context) =>
+			fauxAssistantMessage([
+				fauxText('That is self-contained, so I will hand it to a subagent.\n\n'),
+				fauxToolCall('task', {
+					profile: 'researcher',
+					label: 'read the fixture file',
+					prompt: `Read ${requestedPath(lastUserText(context))} and say what is in it.`,
+				}),
+			]),
+		(context) =>
+			fauxAssistantMessage([
+				fauxText('Reading it now.\n\n'),
+				fauxToolCall('read', { path: requestedPath(lastUserText(context)) }),
+			]),
+		(context) => {
+			const read = lastToolText(context);
+			return fauxAssistantMessage(
+				read
+					? `The file contains:\n\n${read}`
+					: 'I could not read that file — browser mode only has the fixture workspace.'
+			);
+		},
+		(context) =>
+			fauxAssistantMessage(
+				`The subagent reported back:\n\n${lastToolText(context) ?? '(nothing)'}\n\n` +
+					'Its own steps stayed in its own transcript — only the one progress line and ' +
+					'this report crossed back. That is the whole point of delegating.'
+			),
+	];
+
 	const models = createModels();
 	models.setProvider(faux.provider);
 
 	return {
 		models,
 		model: faux.getModel(),
-		rearm: () => faux.setResponses(script()),
+		rearm: (prompt) => faux.setResponses(asksToDelegate(prompt) ? delegation() : script()),
 	};
 }

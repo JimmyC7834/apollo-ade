@@ -3705,3 +3705,73 @@ fixes that: the next rule is a number now, not an argument.
 `createMemoryEnv` has no shell — its `exec` returns `shell_unavailable`. So this
 is check-covered only, and proving it live needs a native run with a real model
 calling `bash npm run build`. It joins subagents in that bucket.
+
+## Slice 38 — What the crop was actually worth, and the first subagent to run
+
+**User outcome.** A shell command's output reaches the model without the bytes
+that were only ever telling a terminal what colour to be — 38.4% of a real
+`npm run build` on this repo. And browser mode can now demonstrate delegation,
+so subagents stopped being a feature nobody had ever seen work.
+
+**Added.** `stripControl` in `crop.ts`, applied to every command's output
+whether a rule matched or not; a second wording in `cropNote` for the case where
+bytes fell but no line was dropped; `FIXTURE_PROFILES` in `canned.ts` with a
+delegating four-step script; `installProfiles(FIXTURE_PROFILES)` on the canned
+branch of `createAgentProvider`.
+
+**Slice 37 shipped a crop that saved 0.3%.** Running it — which slice 37 never
+did — is what found that. Real `npm run build` stdout is 13,323 bytes; the npm
+rule transcribed from rtk removed 37 of them. Three reasons, and only the first
+is a mistake: rtk's `npm WARN` pattern does not match npm 10's lowercase
+`npm warn`, and those warnings go to **stderr** anyway, which `env.ts` does not
+crop; the 102-line vite asset table is 8,040 bytes of output the rule correctly
+keeps; and **5,083 bytes — 38.2% — were ANSI escapes nothing was looking at**.
+
+**The escape strip is ours, not rtk's.** `RESEARCH-rtk-crop-logic.md` mentions
+ANSI nowhere across 1,042 lines, and rtk does not need it: it re-runs most tools
+itself and formats the result. We hand the tool's own bytes to a model that pays
+for every one, and `exec.rs` pipes stdout with no `NO_COLOR` while vite colours
+regardless. So the one stage that is not transcribed from upstream is the one
+that beat the transcribed rule by two orders of magnitude. It is written as the
+CSI grammar rather than an SGR pattern, because the tools that colour also move
+the cursor. Bare `\r` is deliberately kept: rejoining overdrawn progress frames
+needs a decision about which frame wins, and that is a rule, not a strip.
+
+**Rule 1 got weaker on purpose, and the comment says so.** "A command with no
+rule is untouched" is now "loses no line". The strip removes no content, only
+instructions to a terminal that does not exist here — but it is a real change to
+the guarantee and hiding it in a diff would be the kind of silent shortening this
+file's rule 3 exists to prevent.
+
+**Subagents could not fire at all, and the reason was not a bug.** No built-in
+profile is delegable — deliberately, per `builtinProfiles` — and there is no
+`profiles.json` on this machine, so `delegable()` returned `[]` and the tool's
+own description read "No profiles are currently delegable". The canned script
+had two steps and neither delegated, and `provider.ts` uses extensionless
+imports so `runSubagent` is not reachable from `node`. Three independent blocks;
+the first is the one that would have met a user.
+
+**The fixture profile goes through `installProfiles`.** Pushing it into the list
+directly would have been shorter and would have proved nothing about the
+installer. Same argument as browser mode using the real harness and the real read
+tool.
+
+**The faux queue is shared between parent and child, and that is fine here for
+one reason.** `fauxProvider` hands responses out in one order, and both agents
+draw from it; delegation is strictly sequential — `task.execute` awaits
+`host.run` — so a four-step script maps onto parent, child, child, parent. A
+second delegation or two parallel children would interleave and break it. That
+is a limit of the fixture, not of `MAX_CONCURRENT`, which is why concurrency
+stays checked against a fake host in `subagent.check.ts`.
+
+**Ran, both of them.** The crop measured against real captured `npm run build`
+and `npm run check` output, before and after. The subagent driven end to end in
+browser mode: the parent called `task`, a real child harness ran a real `read`
+against the memory environment, and its report crossed back while its steps did
+not. The read-a-file demo still answers unchanged. First time either feature has
+executed outside a check.
+
+**Still never run natively.** The crop's live path is `createTauriEnv().exec`,
+and nothing in browser mode reaches it — the measurements above went through
+`crop()` directly on captured bytes, which is the function but not the seam. A
+native run with a real model calling `bash npm run build` is still owed.
