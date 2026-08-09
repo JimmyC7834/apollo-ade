@@ -561,6 +561,84 @@ reporting them:
   unbuilt rather than rewritten, and whoever builds the completion list should build it
   over pi's loader rather than over the `startsWith` chain.
 
+### Queued by the dev after Slice 38
+
+Nine items, accepted as a batch. They are **not** "deferred, not now" — that group means
+decided and waiting, and these are decided and *next*. No tickets yet: this repo writes a
+ticket when work starts on one (ticket 18 fell out of building ticket 13), and nine
+speculative tickets would be nine documents to keep true about work nobody has begun.
+
+The grouping that matters here is not the three above but **what the workbench already
+has**. Three of these are wiring existing parts together and three are new subsystems, and
+sequencing them by that rather than by appeal is the whole value of writing them down.
+
+**Nearly free — the machinery exists and is being discarded**
+
+- **Cost.** pi already computes it. `usage.cost` is `{input, output, cacheRead, cacheWrite,
+  total}` on every `message_end`, and `Model.cost` carries the rates plus request-wide
+  pricing tiers. `events.ts:113` reads `usage.input` and `usage.output` and drops `cost`
+  on the floor one line away from where it is needed. Ticket 19 closed with *"cost stays
+  absent while nothing displays it"* — that is now the only thing missing, and the meter
+  that would display it already renders beside the token counts.
+- **File mention / `@ref`.** Both halves are built and have never been introduced:
+  `commands/fuzzy.ts` is the fuzzy file filter the command palette uses, and
+  `agent/completion.ts` is the inline completion the slash commands use. The work is a
+  trigger character and a decision about what an `@` expands to in the prompt sent to the
+  model — a path, or the file's contents inlined. **That decision is the whole ticket**;
+  the mechanism is a join.
+- **Session undo.** `git_checkpoint` already runs once per turn and nothing in the UI has
+  ever exposed it. The open question is not how to rewind the tree but what happens to the
+  *transcript* when you do — pi's session is append-only JSONL, so a tree rewind that
+  leaves the conversation intact desynchronises the two, and truncating the session is a
+  different operation from `git reset`.
+
+**Small, self-contained, no new subsystem**
+
+- **Explorer file operations** — create, rename, delete. Note the asymmetry this closes:
+  Rust already exposes `agent_write_file`, `agent_create_dir` and `agent_append_file`, so
+  **the agent can create files the human cannot**. Rename and delete have no Rust command
+  at all and both must land under `contained()` like everything else.
+- **Replace across files.** `search_workspace` finds; nothing writes back. The
+  interesting half is preview-and-confirm, not the substitution, and it wants the same
+  diff surface as the gate below.
+- **Multi-workspace switching.** Recent roots, and a switcher.
+
+  **A correction to what this map's author told the dev.** He was cautioned against this
+  on the grounds that `workspace.rs` treats one root as the confinement boundary and
+  multi-root reopens that decision. **That caution was about multi-root and he asked for
+  switching**, which is a different feature: one root is still the boundary, it is merely
+  a different root than a minute ago. Nothing about containment is reopened. He called it
+  a must-have and he is right — `set_workspace` already exists, and the missing parts are
+  a persisted recent list and deciding what a switch does to open editors, the terminal's
+  cwd, and a running agent turn.
+
+**New subsystems — sequence these apart from each other**
+
+- **Diagnostics.** Listed by the dev alongside LSP and **deliberately kept separate from
+  it here**, because for TypeScript it is not an LSP feature at all: `ts.worker` is
+  already in the bundle at 6 MB and already computing exactly these markers for the open
+  file. Surfacing them costs a listener and a panel. That buys diagnostics for the
+  language this repo is written in without a protocol, and it is the honest first slice.
+- **LSP adaptor.** What diagnostics-via-`ts.worker` cannot buy: Rust, Python, anything
+  else, and everything beyond markers — definitions, references, rename, hover. This map
+  previously argued against it as *"a subsystem, not a feature"*. That argument was about
+  cost, not value, and the dev has weighed it. It stands as the larger of the two and
+  should not be the thing blocking diagnostics from shipping.
+- **ACP adaptor.** **Recorded as an open question at the dev's direction, not scheduled.**
+  Nothing is built until the fork below is settled, and the fork is genuine:
+
+  - *We host other agents (client).* The workbench speaks ACP outward, and pi becomes one
+    implementation behind an interface rather than the only one. The codebase is unusually
+    ready for this — `src/agent/**` is 5,326 lines with zero React imports and
+    `AgentProvider` is already the seam. What it would cost is that the gate, profiles and
+    skills have to mean something for an agent that has no such concepts.
+  - *Others drive our agent (server).* A transport over the harness we already have.
+    Much smaller, and it makes our front end optional — which cuts directly against the
+    destination this map exists to reach.
+
+  Neither is started. ACP appears nowhere in pi — `@earendil-works/*` mentions it not at
+  all — so either direction is entirely ours to write.
+
 ## Out of scope
 
 <!-- ruled beyond the destination; never graduates -->
