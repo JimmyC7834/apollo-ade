@@ -15,6 +15,7 @@ import { ChangesView } from '../features/changes/ChangesView';
 import { CommandCenter } from '../features/commandCenter/CommandCenter';
 import { ExplorerTree } from '../features/explorer/ExplorerTree';
 import { SearchView } from '../features/search/SearchView';
+import { refuseReason, type Replacement } from '../features/search/replace';
 import { TerminalPanel } from '../features/terminal/TerminalPanel';
 import { createPersistenceAdapter, type PersistedState, type PrimaryView } from '../persistence';
 import { createTerminalAdapter } from '../terminal';
@@ -211,6 +212,17 @@ export function WorkbenchController() {
 
 	const dirty = inputs.some(isDirty);
 
+	/*
+	 * The paths `@` completes over — ticket 27. The tree the explorer already
+	 * draws, filtered to files, so a mention can only name something that exists
+	 * and the chat never needs a workspace provider of its own. It reloads with
+	 * the root, which is what makes the list right after a folder switch.
+	 */
+	const fileIds = useMemo(
+		() => entries.filter((entry) => entry.kind === 'file').map((entry) => entry.id),
+		[entries]
+	);
+
 	// Closing the last tab leaves the dialog with nothing to show, so it is
 	// dismissed rather than left sitting empty over the agent.
 	useEffect(() => {
@@ -332,6 +344,96 @@ export function WorkbenchController() {
 			setEditorOpen(true);
 		},
 		[announce, changesProvider]
+	);
+
+	/*
+	 * Ticket 30's preview: a planned replacement, as a diff, in the editor that
+	 * already renders diffs.
+	 *
+	 * Its own id space — `replace:` beside `diff:` — so a file, its git diff and
+	 * its proposed replacement can all be open at once without one replacing
+	 * another. Nothing is written by opening it; the tab is a picture.
+	 */
+	const openReplacePreview = useCallback((plan: Replacement) => {
+		const input: EditorInput = {
+			kind: 'diff',
+			id: `replace:${plan.id}`,
+			name: plan.name,
+			original: plan.original,
+			modified: plan.modified,
+		};
+		setInputs((current) =>
+			current.some((existing) => existing.id === input.id)
+				? current.map((existing) => (existing.id === input.id ? input : existing))
+				: [...current, input]
+		);
+		setActiveEditorId(input.id);
+		setEditorOpen(true);
+	}, []);
+
+	/**
+	 * Write the planned replacements, and report what was refused.
+	 *
+	 * Here rather than in `SearchView` because this is the only thing that knows
+	 * which files are open and which are dirty, and both halves of the safety
+	 * rule are about that. Sequential rather than parallel: a report that says
+	 * which files were skipped is worth more than a faster write, and the writes
+	 * are a handful.
+	 *
+	 * **A refusal is never a partial write.** Each file is re-read, checked and
+	 * written on its own, so a file that fails leaves the others correct and is
+	 * named in the report rather than rolling anything back — there is nothing
+	 * to roll back to that the git checkpoint does not already hold.
+	 */
+	const applyReplacements = useCallback(
+		async (plans: readonly Replacement[]): Promise<string> => {
+			const refused: string[] = [];
+			const written: string[] = [];
+			for (const plan of plans) {
+				const open = inputs.find((input) => input.id === plan.id);
+				let current: string | undefined;
+				try {
+					current = (await provider.readFile(plan.id)).content;
+				} catch {
+					current = undefined;
+				}
+				const refusal = refuseReason(plan, current, open !== undefined && isDirty(open));
+				if (refusal) {
+					refused.push(refusal);
+					continue;
+				}
+				try {
+					await provider.writeFile(plan.id, plan.modified);
+				} catch (error) {
+					refused.push(`${plan.id}: ${reason(error)}`);
+					continue;
+				}
+				written.push(plan.id);
+				// An open editor showing the old text would be a second copy of the
+				// file that disagrees with disk — and saving it would undo the
+				// replacement. It is clean, so both sides move together and it stays
+				// clean.
+				setInputs((currentInputs) =>
+					currentInputs.map((input) =>
+						input.id === plan.id && input.kind === 'source'
+							? { ...input, content: plan.modified, saved: plan.modified }
+							: input
+					)
+				);
+			}
+			if (written.length > 0) {
+				changesProvider.refresh();
+			}
+			const report = [
+				written.length === 0
+					? 'Nothing was written.'
+					: `Replaced in ${written.length} file${written.length === 1 ? '' : 's'}.`,
+				...refused,
+			].join(' ');
+			announce(report);
+			return report;
+		},
+		[announce, changesProvider, inputs, provider]
 	);
 
 	const editFile = useCallback((id: string, content: string) => {
@@ -598,6 +700,8 @@ export function WorkbenchController() {
 						<SearchView
 							provider={provider}
 							onOpenResult={(id, line) => void openFile(id, line)}
+							onPreviewReplace={openReplacePreview}
+							onApplyReplace={applyReplacements}
 						/>
 					) : (
 						<ExplorerTree
@@ -613,7 +717,7 @@ export function WorkbenchController() {
 					)}
 				</Pane>
 			}
-			main={<AgentChat provider={agentProvider} onAnnounce={announce} />}
+			main={<AgentChat provider={agentProvider} files={fileIds} onAnnounce={announce} />}
 			announcement={<span key={announcement.seq}>{announcement.message}</span>}
 			secondarySidebar={
 				<Pane title="Changes">

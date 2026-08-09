@@ -14,6 +14,7 @@
 import assert from 'node:assert/strict';
 import {
 	contextWindowFor,
+	costFor,
 	isKnownModel,
 	MODELS,
 	reasoningFor,
@@ -106,6 +107,41 @@ import {
 	// Telling someone to set the variable they just set would be worse than
 	// silence, so the unknown wording is conditional on there being no override.
 	assert.doesNotMatch(thinkingUnavailable('deepseek-chat', 'high'), /VITE_AGENT_REASONING/);
+}
+
+/*
+ * Cost — ticket 26. Rates are entries like every other field here, so what is
+ * asserted is the same thing: that they are reachable, and that missing means
+ * missing. `deepseek-chat` is the case with teeth — it is what this repo
+ * actually runs, it is absent from pi's catalog, and a table that answered
+ * `{0,0,0,0}` for it would report every real turn as free.
+ */
+{
+	assert.deepEqual(costFor('claude-opus-5'), {
+		input: 5,
+		output: 25,
+		cacheRead: 0.5,
+		cacheWrite: 6.25,
+	});
+	assert.equal(costFor('deepseek-chat'), undefined, 'no rate in the catalog to copy');
+	assert.equal(costFor('deepseek-v9-imaginary'), undefined);
+
+	// Gemini's zero cache-write rate is a real zero — Google bills cache storage
+	// by time, not per written token — so it must not read as unknown.
+	assert.equal(costFor('gemini-2.5-pro')?.cacheWrite, 0);
+	assert.ok(costFor('gemini-2.5-pro') !== undefined);
+
+	// Every rate is positive except that one, and output always costs more than
+	// input. Both hold across every provider's real pricing, and both would
+	// catch a transposed pair — the failure mode of a table copied by hand.
+	for (const [id, entry] of Object.entries(MODELS)) {
+		if (!entry.cost) {
+			continue;
+		}
+		assert.ok(entry.cost.input > 0, `${id} input`);
+		assert.ok(entry.cost.output > entry.cost.input, `${id} output above input`);
+		assert.ok(entry.cost.cacheRead > 0 && entry.cost.cacheRead < entry.cost.input, `${id} cache`);
+	}
 }
 
 console.log('agent/models.check.ts: ok');

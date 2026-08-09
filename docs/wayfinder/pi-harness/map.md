@@ -567,6 +567,10 @@ Nine items, accepted as a batch, now written up as **tickets 25–36**. They are
 "deferred, not now" — that group means decided and waiting, and these are decided and
 *next*.
 
+**26, 27 and 30 landed in Slice 39** — the three that were unblocked, needed no new
+subsystem, and turned out to be joins between parts that already existed. Six remain, of
+which 29 is the only one still gated (on 25) and 36 is still a question rather than work.
+
 Twelve tickets for nine items, because three things came out of slicing them:
 
 - **[25](tickets/25-confirm-primitive.md) is a prefactor nobody asked for.** The
@@ -588,13 +592,13 @@ sequencing them by that rather than by appeal is the whole value of writing them
 
 **Nearly free — the machinery exists and is being discarded**
 
-- **Cost** — [ticket 26](tickets/26-cost.md). pi already computes it. `usage.cost` is `{input, output, cacheRead, cacheWrite,
+- **Cost** — [ticket 26](tickets/26-cost.md). **Landed, Slice 39.** pi already computes it. `usage.cost` is `{input, output, cacheRead, cacheWrite,
   total}` on every `message_end`, and `Model.cost` carries the rates plus request-wide
   pricing tiers. `events.ts:113` reads `usage.input` and `usage.output` and drops `cost`
   on the floor one line away from where it is needed. Ticket 19 closed with *"cost stays
   absent while nothing displays it"* — that is now the only thing missing, and the meter
   that would display it already renders beside the token counts.
-- **File mention / `@ref`** — [ticket 27](tickets/27-file-mention.md). Both halves are built and have never been introduced:
+- **File mention / `@ref`** — [ticket 27](tickets/27-file-mention.md). **Landed, Slice 39, and the decision went to a path.** Both halves are built and have never been introduced:
   `commands/fuzzy.ts` is the fuzzy file filter the command palette uses, and
   `agent/completion.ts` is the inline completion the slash commands use. The work is a
   trigger character and a decision about what an `@` expands to in the prompt sent to the
@@ -612,7 +616,7 @@ sequencing them by that rather than by appeal is the whole value of writing them
   Rust already exposes `agent_write_file`, `agent_create_dir` and `agent_append_file`, so
   **the agent can create files the human cannot**. Rename and delete have no Rust command
   at all and both must land under `contained()` like everything else.
-- **Replace across files** — [ticket 30](tickets/30-replace-across-files.md). `search_workspace` finds; nothing writes back. The
+- **Replace across files** — [ticket 30](tickets/30-replace-across-files.md). **Landed, Slice 39** — literal, case-insensitive, per file, previewed as a `replace:` diff tab. `search_workspace` finds; nothing writes back. The
   interesting half is preview-and-confirm, not the substitution, and it wants the same
   diff surface as the gate below.
 - **Multi-workspace switching** — [ticket 31](tickets/31-workspace-switching.md). Recent roots, and a switcher.

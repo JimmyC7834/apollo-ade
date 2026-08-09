@@ -221,6 +221,25 @@ const call = (
 		inputTokens: 10,
 		outputTokens: 3,
 	});
+	// No `cost` key at all, because this child's model had no known rates. A
+	// `cost: 0` here would tell a reader the delegation was free — ticket 26's
+	// distinction, carried through to the one place a child's spend is reported.
+	assert.ok(!('cost' in (result.details as object)));
+}
+
+// And a priced child carries its spend back on the same terms as its tokens:
+// on the result, never into the parent's meter.
+{
+	const tool = createTaskTool(
+		fakeHost([RESEARCHER], async () => ({
+			answer: 'done',
+			inputTokens: 10,
+			outputTokens: 3,
+			cost: 0.0042,
+		}))
+	);
+	const result = await call(tool, { profile: 'researcher', label: 'dig', prompt: 'find it' });
+	assert.equal((result.details as { cost?: number }).cost, 0.0042);
 }
 
 // A child that says nothing is reported as such rather than as an empty tool

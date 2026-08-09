@@ -3,7 +3,7 @@
 Living document — **edit it**, unlike `DEVLOG.md`, which is append-only history.
 Close an item by deleting it and recording the fix in the dev log.
 
-Last updated after **Slice 38**. What is left is the unverified surface, which is
+Last updated after **Slice 39**. What is left is the unverified surface, which is
 the larger half of this file and always was.
 
 **This file had been stale since Slice 12e** — nineteen slices, the whole of the
@@ -244,6 +244,18 @@ absence made the file misleading.
   strictly sequential; two parallel children would interleave it. Concurrency
   stays covered by `subagent.check.ts` against a fake host, and that is the only
   cover it has.
+- **The cost line, against a real model** (Slice 39). pi's `fauxProvider` never
+  calls `calculateCost`, so browser mode reports `$0.0000` when `VITE_AGENT_COST`
+  is set and nothing at all without it — the plumbing is proven, the number is
+  not. Every real API implementation in `pi-ai/dist/api/` does call it, which is
+  a reading of their source rather than a run of ours. And the two models this
+  repo actually runs have no rates in pi's catalog, so the *first* native run
+  will need `VITE_AGENT_COST` set or it will show nothing and look broken.
+- **The dirty-editor refusal in replace** (Slice 39). `refuseReason` is covered
+  by `replace.check.ts`, and the changed-on-disk and unreadable branches with it,
+  but none of the three has been reached by hand — making an editor dirty needs
+  typing into Monaco, which is the EditContext limit recorded below. The path
+  that *was* exercised is the one that writes.
 - **No `profiles.json` exists on this machine.** Every native run so far has used
   the three built-ins. Nothing that only a profile file can turn on — a delegable
   profile, a second model, a user tool, `careful` — has met the native window.

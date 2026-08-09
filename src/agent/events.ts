@@ -71,8 +71,20 @@ function queuedText(messages: readonly AgentMessage[]): string[] {
  * is optional because *not knowing the window is a supported state*, and both
  * things it feeds — the meter's percentage and overflow detection — degrade to
  * what they were before rather than to something invented.
+ *
+ * `priced` is passed for the same reason and answers a question the event
+ * cannot: pi always fills `usage.cost`, computing it from whatever rates the
+ * `Model` carried, so an unpriced model produces a complete set of zeroes that
+ * is indistinguishable from a free turn. Only the caller that built the `Model`
+ * knows whether those rates were real, so only the caller can say. Default
+ * `false`, which is the answer that shows nothing rather than the answer that
+ * shows nothing *happened*.
  */
-export function mapEvent(event: AgentHarnessEvent, contextWindow?: number): AgentEvent[] {
+export function mapEvent(
+	event: AgentHarnessEvent,
+	contextWindow?: number,
+	priced = false
+): AgentEvent[] {
 	switch (event.type) {
 		case 'message_update': {
 			const inner = event.assistantMessageEvent;
@@ -122,6 +134,20 @@ export function mapEvent(event: AgentHarnessEvent, contextWindow?: number): Agen
 					// Carried alongside so the meter can render a share rather
 					// than a bare count. Absent when nobody has configured one.
 					contextWindow,
+					// Copied field by field rather than passed through: pi's
+					// `usage.cost` also carries `total`, and carrying a total
+					// beside its own parts is two places for the same fact to
+					// disagree. The UI adds them.
+					...(priced
+						? {
+								cost: {
+									input: usage.cost.input,
+									output: usage.cost.output,
+									cacheRead: usage.cost.cacheRead,
+									cacheWrite: usage.cost.cacheWrite,
+								},
+							}
+						: {}),
 				},
 			];
 			// A failed turn still ends with a message — the failure is a field on

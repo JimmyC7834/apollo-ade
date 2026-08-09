@@ -126,6 +126,55 @@ assert.deepEqual(
 	assert.equal((unknown as { contextWindow?: number }).contextWindow, undefined);
 }
 
+/*
+ * Cost — ticket 26. The case that matters is the *unpriced* one, because pi
+ * always fills `usage.cost` and fills it with zeroes when the `Model` carried no
+ * rates. A mapping that passed the field straight through would report every
+ * turn on an unlisted model as costing nothing, which is a measurement rather
+ * than a gap and is the failure this flag exists to prevent.
+ */
+{
+	const priced = mapEvent(
+		{
+			type: 'message_end',
+			message: assistant({
+				usage: {
+					...usage,
+					cost: { input: 0.03, output: 0.075, cacheRead: 0.001, cacheWrite: 0.002, total: 0.108 },
+				},
+			}),
+		} as never,
+		128_000,
+		true
+	);
+	assert.deepEqual((priced[0] as { cost?: object }).cost, {
+		input: 0.03,
+		output: 0.075,
+		cacheRead: 0.001,
+		cacheWrite: 0.002,
+	});
+	// `total` is deliberately not carried: a total beside its own parts is two
+	// places for one fact to disagree, and the UI adds four numbers for free.
+	assert.ok(!('total' in ((priced[0] as { cost: object }).cost as object)));
+
+	// Unknown rates. Same event, same zeroed `usage.cost` pi would produce, and
+	// nothing reaches the contract.
+	const unpriced = mapEvent({ type: 'message_end', message: assistant() } as never, 128_000);
+	assert.equal((unpriced[0] as { cost?: object }).cost, undefined);
+	// Not merely falsy — absent, so `'cost' in usage` is a usable test.
+	assert.ok(!('cost' in (unpriced[0] as object)));
+
+	// A priced model that genuinely spent nothing still reports, and reports zero.
+	// This is the case the absent/zero distinction exists to keep distinguishable.
+	const free = mapEvent({ type: 'message_end', message: assistant() } as never, 128_000, true);
+	assert.deepEqual((free[0] as { cost?: object }).cost, {
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+	});
+}
+
 // A user message ending is not the assistant's usage.
 assert.deepEqual(mapEvent({ type: 'message_end', message: { role: 'user' } } as never), []);
 

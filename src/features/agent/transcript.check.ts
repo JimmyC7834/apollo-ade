@@ -15,8 +15,11 @@ import {
 	canAnswer,
 	questionLabel,
 	queuedLabel,
+	formatCost,
 	resolveApproval,
+	sessionCost,
 	toolLabel,
+	turnCost,
 	type QuestionPart,
 	type Turn,
 } from './transcript.ts';
@@ -336,6 +339,55 @@ const started = (): Turn => ({ id: 1, prompt: 'go', parts: [], status: 'running'
 	const stopped = applyEvent(live, { kind: 'cancelled' });
 	assert.match(queuedLabel(stopped)!, /^Not sent: "use utf-8", "then commit"$/);
 	assert.match(asPlainText([stopped]), /\[queued\] Not sent: "use utf-8"/);
+}
+
+/*
+ * Cost — ticket 26. All three helpers turn on the same distinction: an unpriced
+ * turn contributes *nothing*, not zero. Counting it as zero would make a session
+ * that switched to an unlisted model halfway report a total that quietly stopped
+ * growing, which reads as "it got cheaper".
+ */
+{
+	const cost = { input: 0.03, output: 0.075, cacheRead: 0.001, cacheWrite: 0.002 };
+	const priced = applyEvent(started(), {
+		kind: 'usage',
+		inputTokens: 10,
+		outputTokens: 5,
+		contextTokens: 15,
+		cost,
+	});
+	assert.deepEqual(priced.usage?.cost, cost);
+	// All four summed, cache included — the parts are what pi reports and the
+	// total is ours, so the sum is the one thing worth checking.
+	assert.equal(turnCost(priced.usage), 0.108);
+
+	const unpriced = applyEvent(started(), {
+		kind: 'usage',
+		inputTokens: 10,
+		outputTokens: 5,
+		contextTokens: 15,
+	});
+	assert.equal(turnCost(unpriced.usage), undefined);
+	assert.ok(!('cost' in (unpriced.usage as object)), 'absent, not undefined');
+	assert.equal(turnCost(undefined), undefined);
+
+	// A session with nothing priced has no total at all, rather than $0.00.
+	assert.equal(sessionCost([unpriced, unpriced]), undefined);
+	// A mixed session reports the part it knows, and says so in the UI label
+	// rather than here.
+	assert.equal(sessionCost([priced, unpriced, priced]), 0.216);
+	assert.equal(sessionCost([]), undefined);
+
+	// Below a cent goes to four places. Two would render a Haiku turn as $0.00,
+	// which looks like a measurement rather than a rounding.
+	assert.equal(formatCost(0.108), '$0.11');
+	assert.equal(formatCost(0.0004), '$0.0004');
+	assert.equal(formatCost(0), '$0.0000');
+	assert.equal(formatCost(12.5), '$12.50');
+
+	// And it reaches the plain-text record, where an unpriced turn stays silent.
+	assert.match(asPlainText([priced]), /\[usage\] 10 in, 5 out, 15 context, \$0\.11/);
+	assert.ok(asPlainText([unpriced]).endsWith('[usage] 10 in, 5 out, 15 context'));
 }
 
 console.log('transcript.check.ts: thirteen kinds ok');

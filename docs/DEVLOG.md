@@ -3775,3 +3775,84 @@ executed outside a check.
 and nothing in browser mode reaches it — the measurements above went through
 `crop()` directly on captured bytes, which is the function but not the seam. A
 native run with a real model calling `bash npm run build` is still owed.
+
+## Slice 39 — What a turn cost, `@` a file, and replace across files
+
+**User outcome.** Three of the nine queued features, the three with no blockers
+and no new subsystems: a turn's cost beside its tokens, `@` completion over the
+workspace in the prompt box, and replace-across-files with a diff before
+anything is written. Tickets 26, 27 and 30.
+
+**Added.** `cost` on `ModelEntry` and on the `usage` event; `costFor`,
+`readCost`; a third argument to `mapEvent`; `turnCost`, `sessionCost` and
+`formatCost` in `transcript.ts`; a `@` branch and a `file` source in
+`completion.ts`; `src/features/search/replace.ts` and its check;
+`openReplacePreview` and `applyReplacements` in `WorkbenchController`.
+
+**The cost ticket was one discarded field and turned into a table.** `mapEvent`
+was already reading `usage` and dropping `usage.cost` one line from where it was
+needed — but the field is computed from `Model.cost`, and `modelFor` had been
+zeroing that since ticket 19 rather than guessing. So the missing half was not
+the plumbing, it was eight sets of rates, copied out of `anthropic.json` and
+`google.json` exactly the way the context windows were.
+
+**`priced` is a third argument to `mapEvent` because the event cannot answer.**
+pi's `calculateCost` multiplies whatever rates it is handed and writes the result
+into `usage.cost` unconditionally, so an unpriced model produces four zeroes that
+are indistinguishable from a free turn. Only the caller that built the `Model`
+knows whether the zeroes mean anything, so only the caller can say. It is read
+per call rather than captured: `/profile` can switch to a model this table has
+never heard of.
+
+**The two models this repo actually runs are the two with no rates.**
+`deepseek-chat` and `deepseek-reasoner` are absent from pi's `deepseek.json`, and
+prices from memory would have been the guess wearing a citation `models.ts` is
+written against. `VITE_AGENT_COST` is the escape hatch, on the same terms as the
+window and reasoning overrides — which means the unknown path is not a corner
+case here, it is the default.
+
+**`@` expands to a path, and the reason is reversibility.** Inlining the contents
+would save a round trip and cost a rule: 40 KB of file becomes 40 KB of context
+nobody visibly asked for, and `crop.ts` exists precisely because this repo does
+not spend bytes invisibly. Inlining later costs the expansion and nothing else,
+because the completion UI is identical either way. A dead path stays a normal
+`read` error the model can correct — free, because nothing resolves the path.
+
+**It is the palette's scorer over the explorer's tree.** Both halves were built
+and had never met: `fuzzy.ts` and the file list the explorer already draws. The
+join is twenty lines, and the only new rule is that this menu opens mid-sentence
+where the slash menu cannot — `(^|\s)@` is what keeps `me@example.com` from
+opening a file list over the sentence being written.
+
+**Replace is literal and case-insensitive, to agree with the search above it.**
+Regex is what people ask for and it is also how a replace eats a codebase, but
+the deciding argument was smaller: `search_workspace` matches a lowercased
+substring, so a regex replace would change a set of matches the visible result
+list disagreed with. A correct preview over a lying list is worse than no
+replace.
+
+**The preview is the feature, and it is not a new surface.** A planned file opens
+as a diff tab under a `replace:` id beside `diff:`, so `MonacoDiffEditor` got its
+second consumer without a second diff editor being written — which is the shape
+[ticket 35](wayfinder/pi-harness/tickets/35-lsp-rename.md) will want when an LSP
+rename needs the same thing.
+
+**The apply is in the controller because that is where the danger is.** It is the
+only thing that knows which files are open and which are dirty. Each file is
+re-read immediately before it is written and compared whole against the bytes the
+preview was built from — a compare, not a timestamp, because a file edited and
+edited back is not stale and a clock is not evidence about bytes. A dirty editor
+is refused and named rather than confirmed: the two answers to that dialog are
+"lose your edit" and "lose the replacement", and refusing is the one the user can
+undo.
+
+**Ran.** `@ma` completed to `@src/main.ts` and the turn read the fixture file.
+Replace planned two files, previewed one as a diff, applied both, and a re-search
+showed the written text. 22 checks pass.
+
+**Not run.** The cost line has never been seen against a real model: pi's
+`fauxProvider` never calls `calculateCost`, so browser mode shows `$0.0000` with
+a rate override and nothing without one. Every real API implementation in
+`pi-ai/dist/api/` does call it, which is a reading rather than a run. The
+dirty-editor refusal is covered by `replace.check.ts` and has not been exercised
+by hand.

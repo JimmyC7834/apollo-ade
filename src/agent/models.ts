@@ -20,7 +20,7 @@
 // number. Read the file for the provider this app actually talks to — the three
 // in `SHAPES` — and nothing else.
 
-import type { ThinkingLevelMap } from '@earendil-works/pi-ai';
+import type { ModelCostRates, ThinkingLevelMap } from '@earendil-works/pi-ai';
 
 /**
  * The window handed to pi when none is configured.
@@ -58,6 +58,20 @@ export interface ModelEntry {
 	 * exists to avoid.
 	 */
 	readonly thinkingLevelMap?: ThinkingLevelMap;
+	/**
+	 * Dollars per million tokens, or **absent when nobody has said**.
+	 *
+	 * Absent is a supported state and the reason `costFor` answers `undefined`
+	 * rather than a zeroed table: pi's `calculateCost` multiplies whatever rates
+	 * it is handed, so zeroed rates produce `$0.00` — a confident wrong number
+	 * where nothing was known. `reasoningFor` and `contextWindowFor` already
+	 * answer this way, for the same reason.
+	 *
+	 * `tiers` is deliberately not carried. None of the models below has one in
+	 * pi's catalog, and an empty field that has never been exercised is a field
+	 * that will be wrong the first time it is filled.
+	 */
+	readonly cost?: ModelCostRates;
 }
 
 /**
@@ -79,33 +93,70 @@ export const MODELS: Readonly<Record<string, ModelEntry>> = {
 	 * entries as `{minimal: null, low: null, medium: null, high: "high", max:
 	 * "max"}`, and copying that across to a different model would be a guess
 	 * wearing a citation.
+	 *
+	 * **And no `cost`, for exactly that reason** — these two are absent from
+	 * `deepseek.json`, so there is no rate here to copy. The windows above came
+	 * from DeepSeek's published figures; prices recalled from memory would be the
+	 * guess wearing a citation this file exists to refuse. `VITE_AGENT_COST` is
+	 * the escape hatch, and it is the one the models this repo actually runs will
+	 * be reached by.
 	 */
 	'deepseek-chat': { contextWindow: 128_000, reasoning: false },
 	'deepseek-reasoner': { contextWindow: 128_000, reasoning: true },
 
 	// anthropic.json. The 4-5 line splits: Sonnet carries 1M, Haiku and Opus 200K.
-	'claude-haiku-4-5': { contextWindow: 200_000, reasoning: true },
-	'claude-opus-4-5': { contextWindow: 200_000, reasoning: true },
-	'claude-sonnet-4-5': { contextWindow: 1_000_000, reasoning: true },
+	'claude-haiku-4-5': {
+		contextWindow: 200_000,
+		reasoning: true,
+		cost: { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 },
+	},
+	'claude-opus-4-5': {
+		contextWindow: 200_000,
+		reasoning: true,
+		cost: { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
+	},
+	'claude-sonnet-4-5': {
+		contextWindow: 1_000_000,
+		reasoning: true,
+		cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
+	},
 	'claude-opus-5': {
 		contextWindow: 1_000_000,
 		reasoning: true,
 		// The 5 line is the only one that reaches above `high`.
 		thinkingLevelMap: { xhigh: 'xhigh', max: 'max' },
+		cost: { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
 	},
 	'claude-sonnet-5': {
 		contextWindow: 1_000_000,
 		reasoning: true,
 		thinkingLevelMap: { xhigh: 'xhigh', max: 'max' },
+		// Cheaper than 4-5, which is the sort of thing a remembered table gets
+		// backwards: 2/10 against Sonnet 4-5's 3/15.
+		cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
 	},
 
 	// google.json — 1,048,576, not 1,000,000. The difference is only 5% but it is
 	// the difference between a copied number and a rounded one.
-	'gemini-2.5-flash': { contextWindow: 1_048_576, reasoning: true },
-	'gemini-2.5-pro': { contextWindow: 1_048_576, reasoning: true },
+	//
+	// `cacheWrite: 0` throughout is Google's own entry, not a stand-in for
+	// unknown: Gemini charges cache storage by time rather than per written
+	// token, so there is no per-token write rate to carry. This is the one place
+	// a zero means zero.
+	'gemini-2.5-flash': {
+		contextWindow: 1_048_576,
+		reasoning: true,
+		cost: { input: 0.3, output: 2.5, cacheRead: 0.03, cacheWrite: 0 },
+	},
+	'gemini-2.5-pro': {
+		contextWindow: 1_048_576,
+		reasoning: true,
+		cost: { input: 1.25, output: 10, cacheRead: 0.125, cacheWrite: 0 },
+	},
 	'gemini-3-pro-preview': {
 		contextWindow: 1_048_576,
 		reasoning: true,
+		cost: { input: 2, output: 12, cacheRead: 0.2, cacheWrite: 0 },
 		// `off: null` is the model refusing to stop thinking, and the two live
 		// levels are upper-case because Google's API takes them that way. Without
 		// this map we would offer `medium` and send a string Google never defined.
@@ -143,6 +194,46 @@ export function readContextWindow(): number | undefined {
 export function readReasoning(): boolean | undefined {
 	const raw = import.meta.env?.VITE_AGENT_REASONING;
 	return raw === 'on' ? true : raw === 'off' ? false : undefined;
+}
+
+/**
+ * The user's rate override — `VITE_AGENT_COST="input,output,cacheRead,cacheWrite"`,
+ * dollars per million tokens.
+ *
+ * The same escape hatch the other two are, and the one that matters most: the
+ * two models this repo actually runs are absent from pi's catalog, so without
+ * this the cost line would be permanently absent for its only real user. Four
+ * numbers rather than one, because a single price would have to pretend cache
+ * reads cost what fresh input does — and cache reads are usually the majority
+ * of a long conversation's tokens and a tenth of its price.
+ *
+ * Anything malformed answers `undefined`, which is the same "nobody has said"
+ * every other unknown here produces. A partly-parsed override would be worse
+ * than none: three good numbers and one `NaN` renders as a total of `NaN`.
+ */
+export function readCost(): ModelCostRates | undefined {
+	const raw = import.meta.env?.VITE_AGENT_COST;
+	if (!raw) {
+		return undefined;
+	}
+	const parts = String(raw).split(',').map(Number);
+	if (parts.length !== 4 || parts.some((part) => !Number.isFinite(part) || part < 0)) {
+		return undefined;
+	}
+	const [input, output, cacheRead, cacheWrite] = parts as [number, number, number, number];
+	return { input, output, cacheRead, cacheWrite };
+}
+
+/**
+ * What a million tokens cost on this model, or **undefined when nobody knows**.
+ *
+ * Undefined is the whole point. Everything downstream — the event, the turn
+ * footer, the session total — treats it as "no cost shown" rather than as zero,
+ * because a model missing from the table would otherwise report every turn as
+ * free, and free is a number a person would act on.
+ */
+export function costFor(modelId: string): ModelCostRates | undefined {
+	return readCost() ?? MODELS[modelId]?.cost;
 }
 
 /** What this model's window is, as far as anyone here knows. */

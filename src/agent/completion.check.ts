@@ -4,7 +4,11 @@
 import assert from 'node:assert/strict';
 import { complete } from './completion.ts';
 
-const sources = { skill: ['grilling', 'implement'], profile: ['auto', 'careful'] };
+const sources = {
+	skill: ['grilling', 'implement'],
+	profile: ['auto', 'careful'],
+	file: ['README.md', 'src/main.ts', 'src/util.ts', 'src/agent/env.ts'],
+};
 const values = (text: string, running = false) =>
 	complete(text, sources, running).map((entry) => entry.value);
 
@@ -43,5 +47,43 @@ assert.deepEqual(values('/steer', false), []);
 // line that is then refused.
 assert.deepEqual(values('/skill gr', true), []);
 assert.deepEqual(values('/profile ', true), []);
+
+/*
+ * `@` — ticket 27. The mirror image of the slash rules above: this menu is the
+ * one that *must* open mid-sentence, because a file mention belongs inside a
+ * request rather than instead of one. Everything else stays the same, including
+ * that a fully typed entry closes the menu.
+ */
+{
+	// Mid-sentence, and the rest of the line survives untouched — the entry
+	// replaces the token, not the prompt.
+	assert.deepEqual(values('read @src/ma'), ['read @src/main.ts']);
+	assert.deepEqual(values('@READ'), ['@README.md']);
+	// A bare `@` offers everything, so the menu is discoverable rather than
+	// something you have to already know the shape of.
+	assert.equal(values('@').length, 4);
+	// The palette's scorer, not a second matcher: `env` finds a nested path by
+	// subsequence, which a `startsWith` would miss.
+	assert.deepEqual(values('look at @env'), ['look at @src/agent/env.ts']);
+
+	// Shut. An `@` must start a word, or every email address in a prompt opens a
+	// file menu over the sentence being written.
+	assert.deepEqual(values('write to me@example.com'), []);
+	assert.deepEqual(values('read src/main.ts'), []);
+	// Past the mention: a space ends it, and the words after it are for the model.
+	assert.deepEqual(values('@src/main.ts and explain it'), []);
+	// Finished typing closes it, same as a command — the menu owns Enter.
+	assert.deepEqual(values('@src/main.ts'), []);
+	// Nothing matches, so nothing is offered rather than the whole list.
+	assert.deepEqual(values('@zzzz'), []);
+
+	// A mention inside a command line still completes. `/steer` takes free text,
+	// and free text is exactly where a path belongs.
+	assert.deepEqual(values('/steer look at @src/ut', true), ['/steer look at @src/util.ts']);
+
+	// An empty workspace offers nothing and throws nothing — browser mode before
+	// a folder is chosen, and every mention typed before the tree has loaded.
+	assert.deepEqual(complete('@src', { ...sources, file: [] }), []);
+}
 
 console.log('agent/completion.check.ts: ok');

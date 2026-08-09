@@ -29,7 +29,10 @@ import {
 	questionLabel,
 	queuedLabel,
 	resolveApproval,
+	formatCost,
+	sessionCost,
 	toolLabel,
+	turnCost,
 	type Part,
 	type QuestionPart,
 	type Turn,
@@ -38,6 +41,15 @@ import {
 
 export interface AgentChatProps {
 	readonly provider: AgentProvider;
+	/**
+	 * Every file in the workspace, root-relative, for `@` — ticket 27.
+	 *
+	 * Passed in rather than read from a workspace provider, because this
+	 * component has never held one and giving it one to complete a filename
+	 * would put the filesystem seam inside the chat. The controller already has
+	 * the tree; this is the list it drew the explorer from.
+	 */
+	readonly files?: readonly string[];
 	/** Routed to the workbench live region for state changes worth hearing. */
 	readonly onAnnounce?: (message: string) => void;
 }
@@ -268,21 +280,42 @@ function PartView({
  * little to a reader; `86% context` means something — but only if the
  * denominator is true, so an unknown window keeps the bare count rather than
  * inventing a percentage from a guess.
+ *
+ * Cost follows the same rule and for the same reason: a model whose rates
+ * nobody has shows no cost at all, rather than `$0.00`. The breakdown is on the
+ * title, not in the line — four figures on every turn is what the token counts
+ * already prove nobody reads, and cache reads are the only one worth splitting
+ * out when they matter.
  */
 function UsageView({ usage }: { readonly usage: Usage }) {
 	const meter = pressure(usage.contextTokens, usage.contextWindow);
+	const spent = turnCost(usage);
+	const cost = usage.cost;
 	return (
 		<p className={meter?.warn ? 'ide-agent-usage ide-agent-usage-warn' : 'ide-agent-usage'}>
 			{usage.inputTokens.toLocaleString()} in · {usage.outputTokens.toLocaleString()} out ·{' '}
 			{meter
 				? `${meter.percent}% context`
 				: `${usage.contextTokens.toLocaleString()} context`}
+			{spent !== undefined && cost ? (
+				<>
+					{' · '}
+					<span
+						title={
+							`input ${formatCost(cost.input)} · output ${formatCost(cost.output)} · ` +
+							`cache read ${formatCost(cost.cacheRead)} · cache write ${formatCost(cost.cacheWrite)}`
+						}
+					>
+						{formatCost(spent)}
+					</span>
+				</>
+			) : null}
 			{meter?.warn ? ' · run /compact' : null}
 		</p>
 	);
 }
 
-export function AgentChat({ provider, onAnnounce }: AgentChatProps) {
+export function AgentChat({ provider, files = [], onAnnounce }: AgentChatProps) {
 	const [turns, setTurns] = useState<readonly Turn[]>([]);
 	const [prompt, setPrompt] = useState('');
 	const [running, setRunning] = useState(false);
@@ -305,6 +338,9 @@ export function AgentChat({ provider, onAnnounce }: AgentChatProps) {
 	/** Which completion is selected, and whether Escape has closed the menu. */
 	const [picked, setPicked] = useState(0);
 	const [menuOpen, setMenuOpen] = useState(true);
+
+	/** What the conversation has cost, over the turns that reported a price. */
+	const spent = useMemo(() => sessionCost(turns), [turns]);
 
 	const runRef = useRef<AgentRun>(null);
 	const promptRef = useRef<HTMLTextAreaElement>(null);
@@ -399,12 +435,13 @@ export function AgentChat({ provider, onAnnounce }: AgentChatProps) {
 						{
 							skill: permittedSkills(allSkills(), activeProfile()).map((skill) => skill.name),
 							profile: listProfiles().map((profile) => profile.name),
+							file: files,
 						},
 						running,
 						commands
 					)
 				: [],
-		[commands, menuOpen, prompt, running]
+		[commands, files, menuOpen, prompt, running]
 	);
 
 	/** Take an entry: it replaces the whole line, and may open the next menu. */
@@ -842,6 +879,15 @@ export function AgentChat({ provider, onAnnounce }: AgentChatProps) {
 					>
 						Plain text transcript
 					</button>
+					{/* The session total, which is a floor rather than a bill: a turn on
+					    a model with no known rates contributes nothing rather than zero,
+					    and the label says "so far" rather than naming a total the app
+					    cannot stand behind. Absent entirely until something is priced. */}
+					{spent !== undefined ? (
+						<span className="ide-agent-usage" title="Turns on models with no known rates are not counted.">
+							{formatCost(spent)} so far
+						</span>
+					) : null}
 					{running && compacting ? (
 						// Not a Stop button that quietly does nothing: pi's compaction
 						// takes no abort signal, so there is nothing to offer.

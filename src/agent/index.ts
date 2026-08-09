@@ -73,6 +73,26 @@ export type AgentEvent =
 			 * to fill with a plausible number.
 			 */
 			readonly contextWindow?: number;
+			/**
+			 * What the turn cost, in dollars, or absent when the rates are unknown.
+			 *
+			 * **All four, not a total.** pi computes the breakdown and it is the
+			 * interesting part: a long conversation is mostly cache reads, which
+			 * cost a tenth of what fresh input does, so a single figure hides the
+			 * one number a person would act on. Summing is cheap and cannot be
+			 * undone at the event boundary.
+			 *
+			 * Absent rather than zero when the model has no known rates. pi's
+			 * `calculateCost` multiplies whatever rates it is given, so an unpriced
+			 * model reports `$0.00` — indistinguishable from a turn that really
+			 * was free.
+			 */
+			readonly cost?: {
+				readonly input: number;
+				readonly output: number;
+				readonly cacheRead: number;
+				readonly cacheWrite: number;
+			};
 	  }
 	/** History was summarised. Without this the transcript silently loses detail. */
 	| { readonly kind: 'compacted'; readonly tokensBefore: number; readonly summary: string }

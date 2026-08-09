@@ -35,6 +35,7 @@ import type { AgentEvent, AgentProvider } from './index';
 import { compactionMessage, needsCompaction, readAutoCompact } from './compaction';
 import {
 	contextWindowFor,
+	costFor,
 	FALLBACK_CONTEXT_WINDOW,
 	reasoningFor,
 	thinkingLevelMapFor,
@@ -267,10 +268,16 @@ function modelFor(choice: ProfileModel): Model<Api> {
 		// what we were doing for every model before.
 		thinkingLevelMap: thinkingLevelMapFor(choice.id),
 		input: ['text'],
-		// Zeroed rather than guessed. A wrong cost table produces confident
-		// wrong numbers in the UI, which is worse than none — and the real
-		// figures belong with the catalog work, not here.
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		/*
+		 * Real rates where `models.ts` has them, zeroes where it does not — and
+		 * the zeroes are never shown. pi's `calculateCost` multiplies whatever
+		 * it is handed and `Model.cost` has nowhere to put "unknown", so the
+		 * zeroed table stays for the type's sake and `costFor` answering
+		 * `undefined` is what actually decides whether a cost reaches the UI.
+		 * The same arrangement `contextWindow` below is under, for the same
+		 * reason: a confident wrong number is worse than none.
+		 */
+		cost: costFor(choice.id) ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		// pi needs a number here — it clamps `maxTokens` against it — so the
 		// fallback survives where the type demands one, but it is now the last
 		// resort rather than the only answer. Nothing that decides *when to
@@ -526,6 +533,10 @@ function createRunner(
 	 * that keeps auto-compaction from firing against a fabricated denominator.
 	 */
 	const contextWindow = () => contextWindowFor(current.id);
+	// Read per call, not per session: `/profile` can switch to a model whose
+	// rates we do not have, and a flag captured at construction would keep
+	// reporting the old model's prices against the new model's tokens.
+	const priced = () => costFor(current.id) !== undefined;
 	const autoCompact = readAutoCompact();
 
 	/**
@@ -600,12 +611,22 @@ function createRunner(
 		const activity = createActivity();
 		let inputTokens = 0;
 		let outputTokens = 0;
+		// Undefined until a priced `usage` arrives, and it stays undefined for a
+		// child on an unpriced model — the same distinction between "nothing" and
+		// "nothing known" the parent's footer makes. A child whose model differs
+		// from the parent's is exactly why this is accumulated here rather than
+		// derived from the parent's rates later.
+		let cost: number | undefined;
 		let said = '';
 		const off = harness.subscribe((event: AgentHarnessEvent) => {
-			for (const mapped of mapEvent(event, contextWindowFor(childModel.id))) {
+			for (const mapped of mapEvent(event, contextWindowFor(childModel.id), costFor(childModel.id) !== undefined)) {
 				if (mapped.kind === 'usage') {
 					inputTokens += mapped.inputTokens;
 					outputTokens += mapped.outputTokens;
+					if (mapped.cost) {
+						const { input, output, cacheRead, cacheWrite } = mapped.cost;
+						cost = (cost ?? 0) + input + output + cacheRead + cacheWrite;
+					}
 					continue;
 				}
 				if (mapped.kind === 'text') {
@@ -626,14 +647,14 @@ function createRunner(
 
 		try {
 			const answer = await harness.prompt(prompt);
-			return { answer: contentText(answer.content), inputTokens, outputTokens };
+			return { answer: contentText(answer.content), inputTokens, outputTokens, cost };
 		} catch (cause: unknown) {
 			// An aborted run unwinds through a rejection, and what it had reached is
 			// still worth reporting — a subagent stopped at fifteen minutes usually
 			// found most of the answer. Any other failure is a *harness* failure and
 			// travels on as one, which the tool turns into an error `tool_result`.
 			if (signal.aborted) {
-				return { answer: said, inputTokens, outputTokens };
+				return { answer: said, inputTokens, outputTokens, cost };
 			}
 			throw cause;
 		} finally {
@@ -843,7 +864,7 @@ function createRunner(
 				return composed === event.systemPrompt ? undefined : { systemPrompt: composed };
 			});
 			const offEvents = harness.subscribe((event: AgentHarnessEvent) => {
-				for (const mapped of mapEvent(event, contextWindow())) {
+				for (const mapped of mapEvent(event, contextWindow(), priced())) {
 					if (mapped.kind === 'usage') {
 						contextTokens = mapped.contextTokens;
 					}
@@ -1050,7 +1071,7 @@ function createRunner(
 			.then((harness) =>
 				enqueue(async () => {
 					const off = harness.subscribe((event: AgentHarnessEvent) => {
-						for (const mapped of mapEvent(event, contextWindow())) {
+						for (const mapped of mapEvent(event, contextWindow(), priced())) {
 							onEvent(mapped);
 						}
 					});

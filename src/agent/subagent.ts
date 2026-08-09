@@ -77,6 +77,15 @@ export interface Delegation {
 	 */
 	readonly inputTokens: number;
 	readonly outputTokens: number;
+	/**
+	 * What the child spent, in dollars, on the same terms as its tokens: its
+	 * own, and never added to the parent's.
+	 *
+	 * Undefined when the child's model has no known rates — which is not the
+	 * same as zero, and is a distinction the child can make independently of its
+	 * parent because a delegation may well run on a different model.
+	 */
+	readonly cost?: number;
 }
 
 export interface SubagentHost {
@@ -358,6 +367,9 @@ export function createTaskTool(host: SubagentHost): AgentHarnessTool<{ depth: nu
 						// Kept, not shown. See `Delegation`.
 						inputTokens: done.inputTokens,
 						outputTokens: done.outputTokens,
+						// Absent rather than zero on an unpriced model, so a reader of
+						// these details cannot read "we do not know" as "it was free".
+						...(done.cost === undefined ? {} : { cost: done.cost }),
 					},
 				};
 			} finally {

@@ -69,6 +69,62 @@ export interface Usage {
 	readonly contextTokens: number;
 	/** What `contextTokens` is a share of, when anyone has said. */
 	readonly contextWindow?: number;
+	/**
+	 * The four parts of what the turn cost, in dollars, or absent when the
+	 * model's rates are unknown. Kept whole rather than summed here so the
+	 * breakdown survives to wherever it is eventually shown — the sum is one
+	 * line and the parts cannot be recovered from it.
+	 */
+	readonly cost?: {
+		readonly input: number;
+		readonly output: number;
+		readonly cacheRead: number;
+		readonly cacheWrite: number;
+	};
+}
+
+/**
+ * What a turn cost, as one number, or undefined when nothing is known.
+ *
+ * Undefined rather than 0 the whole way down. `sessionCost` sums these, and a
+ * missing turn has to be able to contribute nothing without turning the total
+ * into a claim about a price nobody has.
+ */
+export function turnCost(usage: Usage | undefined): number | undefined {
+	const cost = usage?.cost;
+	return cost && cost.input + cost.output + cost.cacheRead + cost.cacheWrite;
+}
+
+/**
+ * What the conversation has cost so far, or undefined when no turn was priced.
+ *
+ * Unpriced turns are skipped rather than counted as zero, so a session that
+ * switched models halfway reports the part it knows. That makes the total a
+ * floor rather than a fact — which is why `AgentChat` labels it as a session
+ * total beside per-turn figures the reader can add up themselves, rather than
+ * as a bill.
+ */
+export function sessionCost(turns: readonly Turn[]): number | undefined {
+	let total: number | undefined;
+	for (const turn of turns) {
+		const cost = turnCost(turn.usage);
+		if (cost !== undefined) {
+			total = (total ?? 0) + cost;
+		}
+	}
+	return total;
+}
+
+/**
+ * A dollar amount, at a precision that does not round it away.
+ *
+ * Two decimals is the obvious choice and it is wrong here: a cheap turn costs
+ * a tenth of a cent, and `$0.00` on every turn is the same failure as showing
+ * nothing — worse, because it looks like a measurement. Below a cent it goes to
+ * four places, which is where a Haiku turn stops being invisible.
+ */
+export function formatCost(dollars: number): string {
+	return dollars >= 0.01 ? `$${dollars.toFixed(2)}` : `$${dollars.toFixed(4)}`;
 }
 
 export interface Turn {
@@ -237,6 +293,11 @@ export function applyEvent(turn: Turn, event: AgentEvent): Turn {
 					outputTokens: event.outputTokens,
 					contextTokens: event.contextTokens,
 					contextWindow: event.contextWindow,
+					// Spread rather than assigned, so an unpriced turn has no `cost`
+					// key at all. `cost: undefined` reads the same to every consumer
+					// and differently to `deepEqual`, and the second is what a check
+					// is for.
+					...(event.cost ? { cost: event.cost } : {}),
 				},
 			};
 		case 'compacted':
@@ -417,8 +478,10 @@ export function asPlainText(turns: readonly Turn[]): string {
 						).toLowerCase()}\n`;
 				}
 			});
+			const spent = turnCost(turn.usage);
 			const usage = turn.usage
-				? `\n[usage] ${turn.usage.inputTokens} in, ${turn.usage.outputTokens} out, ${turn.usage.contextTokens} context`
+				? `\n[usage] ${turn.usage.inputTokens} in, ${turn.usage.outputTokens} out, ${turn.usage.contextTokens} context` +
+					(spent === undefined ? '' : `, ${formatCost(spent)}`)
 				: '';
 			const queued = queuedLabel(turn);
 			return (

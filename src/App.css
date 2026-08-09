@@ -1153,3 +1153,37 @@ body {
 	top: var(--ide-space-2);
 	right: var(--ide-space-3);
 }
+
+/* Replace, ticket 30. The plan is a list of files, not a tree: every row is an
+   action rather than a place to navigate to, so it stays a list of buttons and
+   the results tree above keeps its own keyboard model. */
+
+.ide-search-actions {
+	display: flex;
+	gap: var(--ide-space-2);
+	margin-top: var(--ide-space-2);
+}
+
+.ide-search-plan {
+	flex: none;
+	max-height: 40%;
+	margin: 0;
+	padding: 0 var(--ide-space-3);
+	overflow: auto;
+	list-style: none;
+}
+
+.ide-search-plan-row {
+	display: flex;
+	align-items: center;
+	gap: var(--ide-space-2);
+	min-height: var(--ide-row-height);
+}
+
+/* The name takes the slack, so the two buttons stay put as paths get longer. */
+.ide-search-plan-name {
+	flex: 1;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}

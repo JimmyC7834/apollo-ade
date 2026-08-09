@@ -32,11 +32,44 @@ Three things to decide, and they are the ticket:
   hand may have no rates. Unknown must render as absent, not as `$0.00`. Ticket 19 made
   the same call for `thinkingLevelMap` and it was right.
 
+## Landed
+
+`models.ts` grew a `cost` field, filled from the same catalog files every other
+entry came from — `anthropic.json` and `google.json`, read out rather than
+recalled. `costFor` answers `undefined` for a model that has none, which is what
+decides whether a cost ever reaches the UI; `Model.cost` still carries zeroes,
+because pi's type has nowhere to put "unknown" and `calculateCost` multiplies
+whatever it is handed.
+
+**The two models this repo actually runs are the unpriced ones.** `deepseek-chat`
+and `deepseek-reasoner` are absent from pi's `deepseek.json`, so there was no
+rate to copy and prices from memory would have been the guess wearing a citation
+this table exists to refuse. `VITE_AGENT_COST="input,output,cacheRead,cacheWrite"`
+is the escape hatch, on the same terms as `VITE_AGENT_CONTEXT_WINDOW` — and it is
+the path the dev will actually reach this feature by.
+
+`mapEvent` takes a third argument, `priced`, because the event cannot answer the
+question: pi fills `usage.cost` for every model and fills it with zeroes for an
+unpriced one, so only the caller that built the `Model` knows whether the zeroes
+mean anything.
+
+Not done, and it is the one thing worth knowing: **the cost line has never been
+seen against a real model.** pi's `fauxProvider` never calls `calculateCost`, so
+browser mode reports `$0.0000` when a rate override is set and nothing at all
+without one. Every real API implementation in `pi-ai/dist/api/` does call it, so
+the native path should work; "should" is doing the work in that sentence.
+
 ## Acceptance criteria
 
-- [ ] `AgentEvent`'s `usage` carries input, output, cacheRead and cacheWrite cost, not a
-      single total.
-- [ ] A turn shows its cost; the session shows a running total.
-- [ ] A model with no known rates shows no cost rather than zero.
-- [ ] A subagent's spend is attributed to the subagent and does not move the parent meter.
-- [ ] `events.check.ts` covers the mapping, including the unknown-rate case.
+- [x] `AgentEvent`'s `usage` carries input, output, cacheRead and cacheWrite cost,
+      not a single total.
+- [~] A turn shows its cost; the session shows a running total. **Built and
+      wired, and the number itself is unverified** — see above. The rendering is
+      exercised; what it renders has only been seen as `$0.0000` from a fixture
+      that never prices anything.
+- [x] A model with no known rates shows no cost rather than zero.
+- [x] A subagent's spend is attributed to the subagent and does not move the
+      parent meter. `Delegation.cost` and the task tool's `details`.
+- [x] `events.check.ts` covers the mapping, including the unknown-rate case —
+      and `models.check.ts`, `transcript.check.ts` and `subagent.check.ts` cover
+      the ends of it, the last for a delegation's own spend.
