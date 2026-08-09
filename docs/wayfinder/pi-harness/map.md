@@ -563,10 +563,24 @@ reporting them:
 
 ### Queued by the dev after Slice 38
 
-Nine items, accepted as a batch. They are **not** "deferred, not now" — that group means
-decided and waiting, and these are decided and *next*. No tickets yet: this repo writes a
-ticket when work starts on one (ticket 18 fell out of building ticket 13), and nine
-speculative tickets would be nine documents to keep true about work nobody has begun.
+Nine items, accepted as a batch, now written up as **tickets 25–36**. They are **not**
+"deferred, not now" — that group means decided and waiting, and these are decided and
+*next*.
+
+Twelve tickets for nine items, because three things came out of slicing them:
+
+- **[25](tickets/25-confirm-primitive.md) is a prefactor nobody asked for.** The
+  two-consumer rule for extracting a UI primitive is already satisfied — `ConfirmDiscard`
+  and the revert confirm in `ChangesView` — and ticket 29 makes a third. Doing it first is
+  cheaper than writing a third hand-rolled overlay. Drop it if the dev disagrees; nothing
+  else depends on it but 29.
+- **LSP is three tickets, not one.**
+  [33](tickets/33-lsp-adaptor.md) is a tracer bullet — one server, one capability, all the
+  way through — then [34](tickets/34-lsp-navigation.md) and
+  [35](tickets/35-lsp-rename.md). Rename is last because it is the first LSP capability
+  that *writes*.
+- **[36](tickets/36-acp-direction.md) has no acceptance criteria**, deliberately. Closing
+  it means writing down a direction, not building anything.
 
 The grouping that matters here is not the three above but **what the workbench already
 has**. Three of these are wiring existing parts together and three are new subsystems, and
@@ -574,19 +588,19 @@ sequencing them by that rather than by appeal is the whole value of writing them
 
 **Nearly free — the machinery exists and is being discarded**
 
-- **Cost.** pi already computes it. `usage.cost` is `{input, output, cacheRead, cacheWrite,
+- **Cost** — [ticket 26](tickets/26-cost.md). pi already computes it. `usage.cost` is `{input, output, cacheRead, cacheWrite,
   total}` on every `message_end`, and `Model.cost` carries the rates plus request-wide
   pricing tiers. `events.ts:113` reads `usage.input` and `usage.output` and drops `cost`
   on the floor one line away from where it is needed. Ticket 19 closed with *"cost stays
   absent while nothing displays it"* — that is now the only thing missing, and the meter
   that would display it already renders beside the token counts.
-- **File mention / `@ref`.** Both halves are built and have never been introduced:
+- **File mention / `@ref`** — [ticket 27](tickets/27-file-mention.md). Both halves are built and have never been introduced:
   `commands/fuzzy.ts` is the fuzzy file filter the command palette uses, and
   `agent/completion.ts` is the inline completion the slash commands use. The work is a
   trigger character and a decision about what an `@` expands to in the prompt sent to the
   model — a path, or the file's contents inlined. **That decision is the whole ticket**;
   the mechanism is a join.
-- **Session undo.** `git_checkpoint` already runs once per turn and nothing in the UI has
+- **Session undo** — [ticket 28](tickets/28-session-undo.md). `git_checkpoint` already runs once per turn and nothing in the UI has
   ever exposed it. The open question is not how to rewind the tree but what happens to the
   *transcript* when you do — pi's session is append-only JSONL, so a tree rewind that
   leaves the conversation intact desynchronises the two, and truncating the session is a
@@ -594,14 +608,14 @@ sequencing them by that rather than by appeal is the whole value of writing them
 
 **Small, self-contained, no new subsystem**
 
-- **Explorer file operations** — create, rename, delete. Note the asymmetry this closes:
+- **Explorer file operations** — [ticket 29](tickets/29-explorer-file-operations.md). Create, rename, delete. Note the asymmetry this closes:
   Rust already exposes `agent_write_file`, `agent_create_dir` and `agent_append_file`, so
   **the agent can create files the human cannot**. Rename and delete have no Rust command
   at all and both must land under `contained()` like everything else.
-- **Replace across files.** `search_workspace` finds; nothing writes back. The
+- **Replace across files** — [ticket 30](tickets/30-replace-across-files.md). `search_workspace` finds; nothing writes back. The
   interesting half is preview-and-confirm, not the substitution, and it wants the same
   diff surface as the gate below.
-- **Multi-workspace switching.** Recent roots, and a switcher.
+- **Multi-workspace switching** — [ticket 31](tickets/31-workspace-switching.md). Recent roots, and a switcher.
 
   **A correction to what this map's author told the dev.** He was cautioned against this
   on the grounds that `workspace.rs` treats one root as the confinement boundary and
@@ -614,17 +628,17 @@ sequencing them by that rather than by appeal is the whole value of writing them
 
 **New subsystems — sequence these apart from each other**
 
-- **Diagnostics.** Listed by the dev alongside LSP and **deliberately kept separate from
+- **Diagnostics** — [ticket 32](tickets/32-diagnostics.md). Listed by the dev alongside LSP and **deliberately kept separate from
   it here**, because for TypeScript it is not an LSP feature at all: `ts.worker` is
   already in the bundle at 6 MB and already computing exactly these markers for the open
   file. Surfacing them costs a listener and a panel. That buys diagnostics for the
   language this repo is written in without a protocol, and it is the honest first slice.
-- **LSP adaptor.** What diagnostics-via-`ts.worker` cannot buy: Rust, Python, anything
+- **LSP adaptor** — tickets [33](tickets/33-lsp-adaptor.md), [34](tickets/34-lsp-navigation.md), [35](tickets/35-lsp-rename.md). What diagnostics-via-`ts.worker` cannot buy: Rust, Python, anything
   else, and everything beyond markers — definitions, references, rename, hover. This map
   previously argued against it as *"a subsystem, not a feature"*. That argument was about
   cost, not value, and the dev has weighed it. It stands as the larger of the two and
   should not be the thing blocking diagnostics from shipping.
-- **ACP adaptor.** **Recorded as an open question at the dev's direction, not scheduled.**
+- **ACP adaptor** — [ticket 36](tickets/36-acp-direction.md). **Recorded as an open question at the dev's direction, not scheduled.**
   Nothing is built until the fork below is settled, and the fork is genuine:
 
   - *We host other agents (client).* The workbench speaks ACP outward, and pi becomes one
