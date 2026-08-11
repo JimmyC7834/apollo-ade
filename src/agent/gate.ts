@@ -29,6 +29,21 @@ import type { AgentEvent } from './index';
 export type GatePolicy = 'ask' | 'auto' | 'bypass';
 
 /**
+ * The same three as values, for the one place that has to *validate* a string.
+ *
+ * `profile.ts` reads a policy out of a hand-written JSON file, and checking it
+ * against three literals typed out again is how a fourth policy ships accepted
+ * by the type and rejected by the parser. Declared here because this file owns
+ * what a policy is.
+ */
+export const GATE_POLICIES: readonly GatePolicy[] = ['ask', 'auto', 'bypass'];
+
+/** Is this a policy? Narrows, so callers do not re-assert what they just tested. */
+export function isGatePolicy(value: unknown): value is GatePolicy {
+	return GATE_POLICIES.includes(value as GatePolicy);
+}
+
+/**
  * Which tools change something.
  *
  * The gate examines what a tool *does*, not what it is called — the amendment

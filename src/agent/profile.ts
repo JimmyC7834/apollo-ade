@@ -10,7 +10,9 @@
 // exist"; they now seed the built-in profiles and nothing else reads them.
 
 import type { ThinkingLevel } from '@earendil-works/pi-agent-core';
-import type { GatePolicy } from './gate';
+// Explicit extension for the same reason `subagent.ts` has one below: this is a
+// *value* import now, and `profile.check.ts` runs this file under plain node.
+import { isGatePolicy, type GatePolicy } from './gate.ts';
 // Explicit extension: `profile.check.ts` runs this file under plain node. The
 // import is one way — `subagent.ts` takes only the *type* of a profile back —
 // so declaring the delegable rule beside the tool that uses it costs no cycle.
@@ -188,8 +190,8 @@ function envGatePolicy(): GatePolicy {
 	// `careful` is still accepted, and means `ask`. It was the name for four
 	// slices and it is in people's `.env` files; silently falling back to `auto`
 	// would turn a stated preference for being asked into never being asked.
-	const raw = ENV.VITE_AGENT_GATE;
-	return raw === 'ask' || raw === 'careful' ? 'ask' : raw === 'bypass' ? 'bypass' : 'auto';
+	const raw = ENV.VITE_AGENT_GATE === 'careful' ? 'ask' : ENV.VITE_AGENT_GATE;
+	return isGatePolicy(raw) ? raw : 'auto';
 }
 
 function envInstructions(): string | undefined {
@@ -375,7 +377,7 @@ function applyDefinition(base: Profile, raw: Record<string, unknown>, problems: 
 		// would leave that profile on `auto`, which is the opposite of what it says.
 		if (raw.gatePolicy === 'careful') {
 			next.gatePolicy = 'ask';
-		} else if (raw.gatePolicy === 'auto' || raw.gatePolicy === 'ask' || raw.gatePolicy === 'bypass') {
+		} else if (isGatePolicy(raw.gatePolicy)) {
 			next.gatePolicy = raw.gatePolicy;
 		} else {
 			reject('gatePolicy', raw.gatePolicy);

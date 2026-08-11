@@ -116,7 +116,13 @@ let sources: ProfileSources = { projectFile: PROJECT_FILE };
  * Writing the global file from a project's UI would let one repository change
  * what every other one runs under.
  */
-let project: { profiles: unknown[]; tools: unknown[] } = { profiles: [], tools: [] };
+/** What `ade.profiles.json` holds. Unparsed on purpose — see `definitionsIn`. */
+interface ProjectFile {
+	profiles: unknown[];
+	tools: unknown[];
+}
+
+let project: ProjectFile = { profiles: [], tools: [] };
 
 export interface ProfileSources {
 	readonly globalPath?: string;
