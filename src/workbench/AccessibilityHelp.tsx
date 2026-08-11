@@ -40,6 +40,17 @@ export function AccessibilityHelp({ open, onClose }: AccessibilityHelpProps) {
 					How full the model’s context is. It has no visible label; the button announces the
 					percentage, and opening it lists the token counts and what the session has cost.
 				</dd>
+				<dt>The profile menu</dt>
+				<dd>
+					Each row switches profile. The edit icon on a row appears on hover, so it needs a
+					pointer — the menu also carries “Edit …” for the profile you are on, and “New
+					profile…”, both reachable by keyboard.
+				</dd>
+				<dt>Tool and skill rows in the profile modal</dt>
+				<dd>
+					Space toggles one. A checkmark means enabled and nothing means disabled — the row
+					announces its own state, which the mark alone would not.
+				</dd>
 				<dt>Ctrl+S</dt>
 				<dd>Save the active editor. Unsaved tabs show a dot instead of a close button.</dd>
 				<dt>Tab / Shift+Tab</dt>

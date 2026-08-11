@@ -82,8 +82,8 @@ const plan = builtinProfiles().find((profile) => profile.name === 'plan') as Pro
 // profiles are all the same is a setting.
 {
 	const names = listProfiles().map((profile) => profile.name);
-	assert.deepEqual(names, ['auto', 'careful', 'plan']);
-	assert.equal(listProfiles()[1].gatePolicy, 'careful');
+	assert.deepEqual(names, ['auto', 'ask', 'plan']);
+	assert.equal(listProfiles()[1].gatePolicy, 'ask');
 	assert.equal(listProfiles()[0].gatePolicy, 'auto');
 }
 
@@ -96,13 +96,16 @@ const plan = builtinProfiles().find((profile) => profile.name === 'plan') as Pro
 		{ name: 'plan', thinkingLevel: 'max' },
 		{ name: 'cheap', model: { provider: 'deepseek', id: 'deepseek-chat' }, rtk: true },
 		// Project: same name again, so this one wins — but only where it speaks.
+		// `careful` is the pre-rename spelling of `ask`, deliberately left here:
+		// hand-written profile files predate ticket 43 and must not silently land
+		// on `auto`, which is the opposite of what the field says.
 		{ name: 'cheap', gatePolicy: 'careful' },
 	]);
 
 	assert.deepEqual(problems, [], 'a well-formed file reports nothing');
 	assert.deepEqual(listProfiles().map((profile) => profile.name), [
 		'auto',
-		'careful',
+		'ask',
 		'plan',
 		'cheap',
 	]);
@@ -112,7 +115,7 @@ const plan = builtinProfiles().find((profile) => profile.name === 'plan') as Pro
 	assert.deepEqual(plan.tools, { write: false, edit: false }, 'and left the rest of the built-in');
 
 	const cheap = listProfiles().find((profile) => profile.name === 'cheap') as Profile;
-	assert.equal(cheap.gatePolicy, 'careful', 'the project file wins');
+	assert.equal(cheap.gatePolicy, 'ask', 'the project file wins, and `careful` still means ask');
 	assert.equal(cheap.rtk, true, 'and does not erase what it did not mention');
 	assert.equal(cheap.model.id, 'deepseek-chat');
 }
@@ -121,12 +124,12 @@ const plan = builtinProfiles().find((profile) => profile.name === 'plan') as Pro
 // costing seven good fields would be a worse answer than the typo.
 {
 	const problems = installProfiles([
-		{ name: 'odd', thinkingLevel: 'ludicrous', rtk: 'yes', gatePolicy: 'careful' },
+		{ name: 'odd', thinkingLevel: 'ludicrous', rtk: 'yes', gatePolicy: 'bypass' },
 		{ model: { id: 'nameless' } },
 	]);
 
 	const odd = listProfiles().find((profile) => profile.name === 'odd') as Profile;
-	assert.equal(odd.gatePolicy, 'careful', 'the good field applied');
+	assert.equal(odd.gatePolicy, 'bypass', 'the good field applied');
 	assert.equal(odd.thinkingLevel, 'medium', 'the bad one fell back to the base');
 	assert.equal(odd.rtk, false);
 	assert.equal(problems.length, 3, `named every drop: ${problems.join(' | ')}`);
@@ -174,9 +177,9 @@ const plan = builtinProfiles().find((profile) => profile.name === 'plan') as Pro
 	const seen: string[] = [];
 	const off = onProfileChange((profile) => seen.push(profile.name));
 
-	installProfiles([{ name: 'plan', gatePolicy: 'careful' }]);
+	installProfiles([{ name: 'plan', gatePolicy: 'ask' }]);
 	assert.equal(activeProfile().name, 'plan', 'still on it');
-	assert.equal(activeProfile().gatePolicy, 'careful', 'and it is the new definition');
+	assert.equal(activeProfile().gatePolicy, 'ask', 'and it is the new definition');
 	assert.deepEqual(seen, ['plan'], 'the harness is told');
 
 	// A file that drops the profile you are on leaves you somewhere real

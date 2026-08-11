@@ -1545,6 +1545,209 @@ body {
 	color: var(--status-waiting);
 }
 
+/*
+ * The profile menu's edit affordance: overlaid, hover-only, and **absolutely
+ * positioned so appearing cannot change the row's width**. The row reserves the
+ * space permanently in its padding, which is the half of the non-shifting rule
+ * that is easy to forget — an absolutely positioned icon over text that reaches
+ * the same pixel does not shift the row, it covers it.
+ */
+.ide-profile-row {
+	position: relative;
+	padding-right: var(--space-6);
+}
+
+.ide-profile-edit {
+	position: absolute;
+	top: 0;
+	right: var(--space-2);
+	display: flex;
+	align-items: center;
+	height: 100%;
+	color: var(--muted-foreground);
+	opacity: 0;
+	cursor: pointer;
+}
+
+.ide-profile-row:hover .ide-profile-edit,
+.ide-profile-row[data-highlighted] .ide-profile-edit {
+	opacity: 1;
+}
+
+.ide-context-menu-separator {
+	height: 1px;
+	margin: var(--space-1) 0;
+	background: var(--border);
+}
+
+/* The profile modal — wider than a confirmation, and scrollable, because a
+   subpage can hold every tool the harness has. */
+.ide-overlay-profile {
+	width: min(520px, 92vw);
+	max-width: none;
+	max-height: 80vh;
+	overflow-y: auto;
+}
+
+.ide-field {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+	margin-bottom: var(--space-4);
+}
+
+.ide-field > span {
+	color: var(--muted-foreground);
+	font-size: var(--text-small);
+}
+
+.ide-input {
+	width: 100%;
+	padding: var(--space-2) var(--space-3);
+	border: 1px solid var(--input-border);
+	border-radius: var(--radius);
+	background: var(--input);
+	color: var(--input-foreground);
+	font: inherit;
+}
+
+.ide-input::placeholder {
+	color: var(--input-placeholder);
+}
+
+/* A read-only field that looks editable is a field people type into. The name
+   is read-only while editing — renaming would leave the old profile behind. */
+.ide-input[readonly] {
+	background: var(--muted);
+	color: var(--muted-foreground);
+}
+
+.ide-fieldset {
+	margin: 0 0 var(--space-4);
+	padding: var(--space-3);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+}
+
+.ide-fieldset legend {
+	padding: 0 var(--space-2);
+	color: var(--muted-foreground);
+	font-size: var(--text-small);
+}
+
+/* The one place a native form control's own colour shows through. `accent-color`
+   is the platform's hook for it, and it is the whole fix — the alternative is
+   rebuilding a radio group to change one dot. */
+.ide-radio input,
+.ide-agent-question-options input {
+	accent-color: var(--primary);
+}
+
+.ide-radio {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--space-3);
+	padding: var(--space-2) 0;
+}
+
+/* A navigation row: what it is on the left, how many are on plus a chevron on
+   the right. The count is the reason the page is worth opening. */
+.ide-nav-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	width: 100%;
+	padding: var(--space-3);
+	margin-bottom: var(--space-2);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	cursor: pointer;
+}
+
+.ide-nav-row:hover {
+	background: var(--accent);
+}
+
+.ide-nav-row-value {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	color: var(--muted-foreground);
+}
+
+.ide-subpage-bar {
+	display: flex;
+	align-items: center;
+	gap: var(--space-3);
+	margin-bottom: var(--space-4);
+}
+
+.ide-subpage-title {
+	margin: 0;
+	font-size: var(--text-base);
+	font-weight: 600;
+}
+
+.ide-subpage-search {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	margin-bottom: var(--space-3);
+}
+
+.ide-subpage-count {
+	margin: 0 0 var(--space-3);
+	color: var(--muted-foreground);
+	font-size: var(--text-small);
+}
+
+.ide-subpage-actions {
+	display: flex;
+	gap: var(--space-3);
+	margin-bottom: var(--space-4);
+}
+
+.ide-select-list {
+	display: flex;
+	flex-direction: column;
+}
+
+/* No native checkbox: a Codicon check when on, nothing when off. The semantics
+   are Radix's — `role="checkbox"`, `aria-checked`, Space to toggle. */
+.ide-select-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--space-3);
+	width: 100%;
+	padding: var(--space-2) var(--space-3);
+	border: none;
+	border-radius: var(--radius);
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.ide-select-row:hover {
+	background: var(--accent);
+}
+
+.ide-select-label {
+	display: flex;
+	flex-direction: column;
+}
+
+.ide-select-note {
+	display: block;
+	color: var(--muted-foreground);
+	font-size: var(--text-small);
+}
+
 .ide-context-menu-mark {
 	display: inline-flex;
 	justify-content: center;

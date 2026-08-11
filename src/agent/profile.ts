@@ -117,6 +117,17 @@ export function setCapabilities(next: Capabilities): void {
 }
 
 /**
+ * What exists, for a UI that has to list it.
+ *
+ * The profile modal (ticket 43) shows every tool and every skill with a mark
+ * against the enabled ones, and this store is already the answer to "every" —
+ * asking the provider a second time would be a second answer that could differ.
+ */
+export function knownCapabilities(): Capabilities {
+	return capabilities;
+}
+
+/**
  * Everything this profile names that does not exist.
  *
  * Complementary to pi's own check rather than a duplicate of it:
@@ -174,7 +185,11 @@ function envModel(): ProfileModel {
 }
 
 function envGatePolicy(): GatePolicy {
-	return ENV.VITE_AGENT_GATE === 'careful' ? 'careful' : 'auto';
+	// `careful` is still accepted, and means `ask`. It was the name for four
+	// slices and it is in people's `.env` files; silently falling back to `auto`
+	// would turn a stated preference for being asked into never being asked.
+	const raw = ENV.VITE_AGENT_GATE;
+	return raw === 'ask' || raw === 'careful' ? 'ask' : raw === 'bypass' ? 'bypass' : 'auto';
 }
 
 function envInstructions(): string | undefined {
@@ -186,7 +201,7 @@ function envInstructions(): string | undefined {
  *
  * Built-ins rather than a blank slate, which is decision 5 and the thing that
  * makes the feature usable on first run — Zed does the same. `auto` is the gate
- * default from ticket 03; `careful` and `plan` are the two switches worth having
+ * default from ticket 03; `ask` and `plan` are the two switches worth having
  * before there is a profile editor, and `plan` is the one that exercises the
  * tool map rather than merely carrying it.
  *
@@ -213,7 +228,7 @@ export function builtinProfiles(): Profile[] {
 	};
 	return [
 		base,
-		{ ...base, name: 'careful', gatePolicy: 'careful' },
+		{ ...base, name: 'ask', gatePolicy: 'ask' },
 		{
 			...base,
 			name: 'plan',
@@ -355,7 +370,12 @@ function applyDefinition(base: Profile, raw: Record<string, unknown>, problems: 
 	}
 
 	if (raw.gatePolicy !== undefined) {
-		if (raw.gatePolicy === 'auto' || raw.gatePolicy === 'careful') {
+		// `careful` is the old name for `ask`, translated rather than rejected —
+		// a hand-written profile file predates the rename, and rejecting the field
+		// would leave that profile on `auto`, which is the opposite of what it says.
+		if (raw.gatePolicy === 'careful') {
+			next.gatePolicy = 'ask';
+		} else if (raw.gatePolicy === 'auto' || raw.gatePolicy === 'ask' || raw.gatePolicy === 'bypass') {
 			next.gatePolicy = raw.gatePolicy;
 		} else {
 			reject('gatePolicy', raw.gatePolicy);

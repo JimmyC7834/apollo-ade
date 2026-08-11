@@ -9,14 +9,24 @@
 import type { AgentEvent } from './index';
 
 /**
- * How much the gate asks.
+ * How much the gate asks. A profile field, read at the start of every turn.
  *
- * A profile field, read at the start of every turn — see `activeProfile()`.
- * `auto` is the default and never prompts — **auto mode is the policy dial set
- * to permissive, not the absence of a gate**, which is why the mechanism below
- * is identical in both modes and supporting `auto` costs nothing structural.
+ * Three, because the Shell Guide names three and the dev chose three — ticket
+ * 43. Their edges, written down because a third policy is only safe if they are:
+ *
+ * - **`ask`** — prompts before every mutating tool call. Was `careful`.
+ * - **`auto`** — the default, and the one actually used. Never prompts, but
+ *   still asks on the deny list below: **auto mode is the policy dial set to
+ *   permissive, not the absence of a gate.**
+ * - **`bypass`** — skips this file entirely, deny list included.
+ *
+ * **What `bypass` does not bypass, and cannot:** Rust's root confinement.
+ * `agent_write_file` refuses writes outside the canonical root whatever is
+ * decided here, and the per-turn `git_checkpoint` is not part of the gate
+ * either. So `bypass` removes the deny list — which `context.md` records as a
+ * foot-gun guard and explicitly not a security boundary — and nothing else.
  */
-export type GatePolicy = 'auto' | 'careful';
+export type GatePolicy = 'ask' | 'auto' | 'bypass';
 
 /**
  * Which tools change something.
@@ -26,10 +36,10 @@ export type GatePolicy = 'auto' | 'careful';
  * the built-ins are all there is.
  *
  * **`bash` is here in full**, not only when its command matches the deny list.
- * A shell can always change something, so under `careful` every command is a
+ * A shell can always change something, so under `ask` every command is a
  * question; the deny list is the narrower thing that fires even under `auto`.
- * Asking only about pattern matches would make `careful` quietly weaker than
- * its name.
+ * Asking only about pattern matches would make `ask` quietly weaker than its
+ * name.
  */
 const MUTATING = new Set(['write', 'edit', 'bash']);
 
@@ -179,6 +189,16 @@ export function createGate(): Gate {
 		},
 
 		async onToolCall(event, policy = turnPolicy) {
+			/*
+			 * Bypass, first and unconditionally — the deny list included, which is
+			 * the only thing it actually removes. Everything that is a boundary
+			 * rather than a guard is enforced where this cannot reach it: writes
+			 * outside the root in `agent_write_file`, and the per-turn checkpoint
+			 * outside the gate altogether.
+			 */
+			if (policy === 'bypass') {
+				return undefined;
+			}
 			/*
 			 * What the tool *does*, not what it is called. `bash` is examined by
 			 * its command, which is why the deny list lives here rather than in

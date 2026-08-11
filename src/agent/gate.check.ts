@@ -89,11 +89,11 @@ function openGate(policy: GatePolicy, emit: (event: AgentEvent) => void) {
 	assert.equal(log.events.length, 0, 'auto mode emits no approval');
 }
 
-// Careful asks only about tools that change something. Prompting on a read
+// Ask asks only about tools that change something. Prompting on a read
 // would train the user to dismiss prompts, which is how a gate stops working.
 {
 	const log = recorder();
-	const gate = openGate('careful', log.emit);
+	const gate = openGate('ask', log.emit);
 	assert.equal(await gate.onToolCall(call('read')), undefined);
 	assert.equal(log.events.length, 0, 'reading is not a question');
 }
@@ -101,7 +101,7 @@ function openGate(policy: GatePolicy, emit: (event: AgentEvent) => void) {
 // Approving lets the call through, and the question reached the UI first.
 {
 	const log = recorder();
-	const gate = openGate('careful', log.emit);
+	const gate = openGate('ask', log.emit);
 	const decision = gate.onToolCall(call('write'));
 	assert.equal(log.events.length, 1);
 	assert.deepEqual(log.events[0], {
@@ -121,7 +121,7 @@ function openGate(policy: GatePolicy, emit: (event: AgentEvent) => void) {
 // rather than the tool being refused — the single easiest mistake to make here.
 {
 	const log = recorder();
-	const gate = openGate('careful', log.emit);
+	const gate = openGate('ask', log.emit);
 	const decision = gate.onToolCall(call('write'));
 	gate.resolve(false);
 	const result = await decision;
@@ -133,7 +133,7 @@ function openGate(policy: GatePolicy, emit: (event: AgentEvent) => void) {
 // worse than wrongly allowing or wrongly blocking, because nothing recovers.
 {
 	const log = recorder();
-	const gate = openGate('careful', log.emit);
+	const gate = openGate('ask', log.emit);
 	const decision = gate.onToolCall(call('write'));
 	gate.abandon();
 	assert.equal((await decision)?.block, true, 'abandoning declines rather than hanging');
@@ -146,7 +146,7 @@ function openGate(policy: GatePolicy, emit: (event: AgentEvent) => void) {
 // for.
 {
 	const log = recorder();
-	const gate = openGate('careful', log.emit);
+	const gate = openGate('ask', log.emit);
 	const first = gate.onToolCall(call('write', 'c1'));
 	const second = gate.onToolCall(call('edit', 'c2'));
 
@@ -166,7 +166,7 @@ function openGate(policy: GatePolicy, emit: (event: AgentEvent) => void) {
 // finishes and a turn that never settles.
 {
 	const log = recorder();
-	const gate = openGate('careful', log.emit);
+	const gate = openGate('ask', log.emit);
 	const first = gate.onToolCall(call('write', 'c1'));
 	const second = gate.onToolCall(call('edit', 'c2'));
 	gate.abandon();
@@ -179,12 +179,12 @@ function openGate(policy: GatePolicy, emit: (event: AgentEvent) => void) {
 // silently meaningless for children — ticket 24's gate decision.
 {
 	const log = recorder();
-	const gate = openGate('careful', log.emit);
+	const gate = openGate('ask', log.emit);
 	assert.equal(await gate.onToolCall(call('write', 'c1'), 'auto'), undefined, 'the child is auto');
 	assert.equal(log.events.length, 0);
 
-	void gate.onToolCall(call('write', 'c2'), 'careful');
-	assert.equal(log.events.length, 1, 'a careful child asks, on the parent turn’s sink');
+	void gate.onToolCall(call('write', 'c2'), 'ask');
+	assert.equal(log.events.length, 1, 'an asking child asks, on the parent turn’s sink');
 	gate.abandon();
 }
 
@@ -221,20 +221,20 @@ function openGate(policy: GatePolicy, emit: (event: AgentEvent) => void) {
 // always change something.
 {
 	const log = recorder();
-	const gate = openGate('careful', log.emit);
+	const gate = openGate('ask', log.emit);
 	void gate.onToolCall({
 		toolCallId: 'c11',
 		toolName: 'bash',
 		input: { command: 'npm test' },
 	});
-	assert.equal(log.events.length, 1, 'careful asks before any command');
+	assert.equal(log.events.length, 1, 'ask asks before any command');
 	gate.abandon();
 }
 
 // Answering when nothing was asked is harmless — the UI can fire this from a
 // stale click after a run has ended.
 {
-	const gate = openGate('careful', recorder().emit);
+	const gate = openGate('ask', recorder().emit);
 	gate.resolve(true);
 	gate.abandon();
 }
@@ -295,7 +295,7 @@ function openGate(policy: GatePolicy, emit: (event: AgentEvent) => void) {
 // answer, not in whether they are entitled to ask.
 {
 	const log = recorder();
-	const gate = openGate('careful', log.emit);
+	const gate = openGate('ask', log.emit);
 	const first = gate.onToolCall(call('write'));
 	const second = gate.confirm('c2', 'clean_build', ['rm', '-rf', 'x'], 'why');
 	assert.equal(log.events.length, 1, 'the second question waits its turn');
@@ -326,17 +326,73 @@ function openGate(policy: GatePolicy, emit: (event: AgentEvent) => void) {
 }
 
 // The policy is re-read per turn, which is what `begin` is for: switching to
-// `careful` applies to the next turn rather than the next window.
+// `ask` applies to the next turn rather than the next window.
 {
 	const log = recorder();
 	const gate = createGate();
 	gate.begin('auto', log.emit);
 	assert.equal(await gate.onToolCall(call('write')), undefined, 'auto does not ask');
 
-	gate.begin('careful', log.emit);
+	gate.begin('ask', log.emit);
 	void gate.onToolCall(call('write', 'c2'));
 	assert.equal(log.events.length, 1, 'the switch reached the next turn');
 	gate.abandon();
+}
+
+/*
+ * Bypass — ticket 43's third policy, and the one that needs its edges asserted
+ * rather than described.
+ *
+ * It skips the deny list, which is the whole of what it removes. `context.md`
+ * records the deny list as a foot-gun guard and **explicitly not a security
+ * boundary**, so removing it does not move a boundary — it removes a prompt in
+ * front of a bad afternoon.
+ */
+{
+	const log = recorder();
+	const gate = openGate('bypass', log.emit);
+	assert.equal(await gate.onToolCall(call('write')), undefined, 'bypass does not ask about a write');
+	assert.equal(
+		await gate.onToolCall({
+			toolCallId: 'c20',
+			toolName: 'bash',
+			input: { command: 'git reset --hard HEAD~1' },
+		}),
+		undefined,
+		'bypass skips the deny list — this is the one thing it actually does'
+	);
+	assert.equal(log.events.length, 0, 'and it asks nothing at all');
+}
+
+/*
+ * **What bypass cannot bypass.** A write outside the root is refused by
+ * `agent_write_file` in `src-tauri/src/workspace.rs`, whose doc comment says so
+ * in the same words: *"enforced regardless of what the gate in TypeScript
+ * decided"*. There is nothing to assert against here because there is nothing
+ * here to assert — the gate's answer for such a call is the same `undefined` it
+ * gives any other, and the refusal happens a layer down, in a process this file
+ * cannot reach. That is the point, and it is why the boundary was put there.
+ */
+{
+	const gate = openGate('bypass', recorder().emit);
+	assert.equal(
+		await gate.onToolCall({
+			toolCallId: 'c21',
+			toolName: 'write',
+			input: { path: '../../outside.txt' },
+		}),
+		undefined,
+		'the gate does not refuse it, and never was the thing that refused it'
+	);
+}
+
+// A subagent's own policy still overrides the turn's, bypass included — a child
+// on bypass under an asking parent is a profile the user wrote, not an accident.
+{
+	const log = recorder();
+	const gate = openGate('ask', log.emit);
+	assert.equal(await gate.onToolCall(call('write', 'c22'), 'bypass'), undefined);
+	assert.equal(log.events.length, 0, 'the child’s policy won');
 }
 
 console.log('agent/gate.check.ts: ok');

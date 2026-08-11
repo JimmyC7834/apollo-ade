@@ -12,7 +12,7 @@ import { parseCommand, SLASH_COMMANDS } from '../../agent/commands';
 import { complete } from '../../agent/completion';
 import { allTemplates, onTemplatesChange, templateCommands } from '../../agent/promptTemplates';
 import { pressure } from '../../agent/compaction';
-import { activateProfile, activeProfile, listProfiles } from '../../agent/profile';
+import { activateProfile, activeProfile, listProfiles, type Profile } from '../../agent/profile';
 import { loadProfileFiles, profileSources } from '../../agent/profileFiles';
 import { delegable } from '../../agent/subagent';
 import { allSkills, permittedSkills, skillList } from '../../agent/skills';
@@ -26,6 +26,7 @@ import { ContextExplorer } from './ContextExplorer';
 import { withAttachments } from './composer';
 import { EventChip } from './EventChip';
 import { Markdown } from './Markdown';
+import { ProfileModal } from './ProfileModal';
 import { compactResult, referencesMarkdown, toolReferences } from './references';
 import {
 	answerQuestion,
@@ -412,6 +413,12 @@ export function AgentChat({
 	const [explorerOpen, setExplorerOpen] = useState(false);
 	/** A file is over the composer right now — the border and surface say so. */
 	const [dragging, setDragging] = useState(false);
+	/**
+	 * The profile modal — ticket 43. A wrapper object rather than a bare
+	 * `Profile | undefined`, because *undefined* is a meaningful value here: it
+	 * is Create. The wrapper's presence is "open" and its field is "which".
+	 */
+	const [editing, setEditing] = useState<{ readonly profile?: Profile }>();
 
 	/** What the conversation has cost, over the turns that reported a price. */
 	const spent = useMemo(() => sessionCost(turns), [turns]);
@@ -1133,6 +1140,7 @@ export function AgentChat({
 					onTranscript={() => setTranscriptOpen(true)}
 					transcriptDisabled={turns.length === 0}
 					onAnnounce={onAnnounce}
+					onEditProfile={(picked) => setEditing({ profile: picked })}
 				/>
 				{awaiting ? (
 					// Covers both, because from the composer they are the same thing:
@@ -1141,6 +1149,13 @@ export function AgentChat({
 				) : null}
 				{notice ? <p className="ide-agent-status">{notice}</p> : null}
 			</form>
+
+			<ProfileModal
+				open={editing !== undefined}
+				profile={editing?.profile}
+				onClose={() => setEditing(undefined)}
+				onAnnounce={onAnnounce}
+			/>
 
 			<Overlay
 				open={transcriptOpen}

@@ -590,7 +590,7 @@ function createRunner(
 		 * **The child's own profile decides how much it asks**, and the question
 		 * still reaches the user. This is the case that tests the premise: a
 		 * read-only `research` child can sit on `auto` while an `editor` child runs
-		 * `careful`, because the profile author decided that. Taking the parent's
+		 * `ask`, because the profile author decided that. Taking the parent's
 		 * policy instead would leave `gatePolicy` silently meaningless for
 		 * subagents.
 		 *
@@ -817,7 +817,7 @@ function createRunner(
 		run: (harness: AgentHarness<ToolContext>) => Promise<unknown>,
 		onEvent: (event: AgentEvent) => void
 	) {
-		// Read at turn start, not at construction: switching to `careful` has to
+		// Read at turn start, not at construction: switching to `ask` has to
 		// apply to the next turn rather than to the next window.
 		gate.begin(activeProfile().gatePolicy, onEvent);
 		// Point both at this turn. Anything left outstanding by a previous turn is

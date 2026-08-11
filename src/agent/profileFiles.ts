@@ -21,7 +21,7 @@
 // to name it are authored side by side, which is what the opt-in rule makes
 // necessary.
 
-import { installProfiles } from './profile';
+import { installProfiles, listProfiles } from './profile';
 import { isTauri } from '../native';
 import { reloadTemplates, templateWarnings } from './promptTemplates';
 import { reloadSkills } from './skills';
@@ -43,6 +43,15 @@ export interface ProfileLoad {
 	readonly problems: readonly string[];
 	/** Where the global file goes, so the UI can say it. */
 	readonly globalPath?: string;
+	/**
+	 * Something true worth saying that is **not** a problem.
+	 *
+	 * Separate from `problems` because the two mean different things to a caller:
+	 * a problem means the thing did not work and the surface stays open on it, and
+	 * this means it worked and here is a caveat. Folding the browser-mode caveat
+	 * into `problems` left Save reporting failure every time it succeeded.
+	 */
+	readonly note?: string;
 }
 
 interface Declared {
@@ -96,6 +105,18 @@ function definitionsIn(text: string, source: string, problems: string[]): Declar
 }
 
 let sources: ProfileSources = { projectFile: PROJECT_FILE };
+
+/**
+ * The project file's contents as last read — the half of the two files this app
+ * is allowed to write.
+ *
+ * The global file stays hand-authored. Editing a global profile from the modal
+ * writes a *project* entry of the same name instead, which is not a workaround
+ * but the merge rule the data model already has: project wins, field by field.
+ * Writing the global file from a project's UI would let one repository change
+ * what every other one runs under.
+ */
+let project: { profiles: unknown[]; tools: unknown[] } = { profiles: [], tools: [] };
 
 export interface ProfileSources {
 	readonly globalPath?: string;
@@ -162,7 +183,14 @@ export async function loadProfileFiles(): Promise<ProfileLoad> {
 		const present = await invoke<unknown>('stat_path', { id: PROJECT_FILE });
 		if (present !== null) {
 			const text = await invoke<string>('read_file', { id: PROJECT_FILE });
-			collect(text, PROJECT_FILE);
+			const declared = definitionsIn(text, PROJECT_FILE, problems);
+			// Held so `saveProfile` can rewrite this file without losing the tool
+			// manifests beside the profiles, or the profiles it is not touching.
+			project = { profiles: [...declared.profiles], tools: [...declared.tools] };
+			profiles.push(...declared.profiles);
+			tools.push(...declared.tools);
+		} else {
+			project = { profiles: [], tools: [] };
 		}
 	} catch (cause) {
 		problems.push(`could not read ${PROJECT_FILE}: ${reason(cause)}`);
@@ -209,6 +237,60 @@ export async function loadProfileFiles(): Promise<ProfileLoad> {
 	installProfiles(profiles, problems);
 	sources = { globalPath, projectFile: PROJECT_FILE };
 	return { problems, globalPath };
+}
+
+/**
+ * Write one profile into the project file, and reload everything.
+ *
+ * The modal's whole persistence story, and it deliberately has no store of its
+ * own: the file that a user hand-authors is the file the modal edits, so there
+ * is one place a profile lives and `/reload` and the modal cannot disagree.
+ * Reloading afterwards rather than patching the in-memory list means a saved
+ * profile goes through exactly the parse and merge a cold start would give it —
+ * a profile that would not survive a restart fails here, visibly, instead.
+ *
+ * In browser mode there is no root and no file. The profile is installed for
+ * the session and the caller is told, because a Save that silently does nothing
+ * across restarts is worse than one that says it did not.
+ */
+export async function saveProfile(definition: Record<string, unknown>): Promise<ProfileLoad> {
+	const name = definition.name;
+	const kept = project.profiles.filter(
+		(entry) => !(isRecord(entry) && entry.name === name)
+	);
+	const profiles = [...kept, definition];
+
+	if (!isTauri()) {
+		/*
+		 * No root and no file, so the session's own list is the base — not
+		 * `project.profiles`, which is empty here because nothing was ever read.
+		 * Browser mode installs fixture profiles of its own (`canned.ts`), and
+		 * saving over an empty base silently deleted them. A resolved profile is a
+		 * valid definition, so re-installing the list is idempotent.
+		 */
+		const survivors = listProfiles().filter((existing) => existing.name !== name);
+		return {
+			problems: installProfiles([...survivors, definition]),
+			note: 'Browser mode has no workspace file, so this profile lasts until the page reloads.',
+		};
+	}
+
+	const { invoke } = await import('@tauri-apps/api/core');
+	try {
+		await invoke('write_file', {
+			id: PROJECT_FILE,
+			// Two spaces and a trailing newline, because this file is meant to be
+			// opened and edited by hand — it is the documented way to write one.
+			content: `${JSON.stringify({ profiles, tools: project.tools }, null, 2)}\n`,
+		});
+	} catch (cause) {
+		return { problems: [`could not write ${PROJECT_FILE}: ${reason(cause)}`] };
+	}
+	return await loadProfileFiles();
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /** Rust rejections arrive as strings, not Errors. */

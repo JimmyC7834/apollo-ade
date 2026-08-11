@@ -8,13 +8,19 @@
 // segmented container: two of them do something and one is a label, and a
 // segment around all three would say they are alternatives.
 
-import { useSyncExternalStore } from 'react';
+import { useRef, useSyncExternalStore } from 'react';
 
 import * as Menu from '@radix-ui/react-dropdown-menu';
 import * as Popover from '@radix-ui/react-popover';
 
 import { pressure } from '../../agent/compaction';
-import { activateProfile, activeProfile, listProfiles, onProfileChange } from '../../agent/profile';
+import {
+	activateProfile,
+	activeProfile,
+	listProfiles,
+	onProfileChange,
+	type Profile,
+} from '../../agent/profile';
 import { Icon } from '../../ui';
 import { profileSummary, ringDash } from './composer';
 import { formatCost, turnCost, type Usage } from './transcript';
@@ -32,6 +38,8 @@ export interface ComposerBarProps {
 	readonly onTranscript: () => void;
 	readonly transcriptDisabled: boolean;
 	readonly onAnnounce?: (message: string) => void;
+	/** Open the configuration modal — on a profile to edit it, on nothing to create. */
+	readonly onEditProfile: (profile?: Profile) => void;
 }
 
 /**
@@ -127,6 +135,7 @@ export function ComposerBar({
 	onTranscript,
 	transcriptDisabled,
 	onAnnounce,
+	onEditProfile,
 }: ComposerBarProps) {
 	/*
 	 * The active profile, subscribed rather than read: `/profile <name>` and
@@ -137,6 +146,15 @@ export function ComposerBar({
 	 */
 	const profile = useSyncExternalStore(onProfileChange, activeProfile);
 	const profiles = listProfiles();
+	/**
+	 * Whether the press that is about to select a row landed on its edit icon.
+	 *
+	 * A ref rather than state: it is read inside the same gesture that sets it and
+	 * nothing renders differently for it, so a re-render would be work for nobody.
+	 * Cleared when the menu closes as well as when it is used, so an abandoned
+	 * press cannot make the *next* row open the modal.
+	 */
+	const editIntent = useRef(false);
 
 	return (
 		<div className="ide-composer-bar">
@@ -175,7 +193,11 @@ export function ComposerBar({
 				Transcript
 			</button>
 
-			<Menu.Root>
+			<Menu.Root
+				onOpenChange={() => {
+					editIntent.current = false;
+				}}
+			>
 				{/* No leading icon, per the Guide — the profile's name is the label. */}
 				<Menu.Trigger className="ide-bar-button ide-bar-button-text" aria-label={`Profile: ${profile.name}`}>
 					{profile.name}
@@ -186,8 +208,24 @@ export function ComposerBar({
 						{profiles.map((candidate) => (
 							<Menu.Item
 								key={candidate.name}
-								className="ide-context-menu-item"
+								className="ide-context-menu-item ide-profile-row"
 								onSelect={() => {
+									/*
+									 * Which of the row's two actions this was.
+									 *
+									 * Radix's menu item **synthesises a click on itself** from
+									 * `onPointerUp` whenever the pointer-down did not land on
+									 * it — so stopping the event on the icon does not stop the
+									 * selection, it only hides where the press came from. The
+									 * icon therefore records the intent and the item acts on
+									 * it, which leaves exactly one thing deciding what a press
+									 * on this row means.
+									 */
+									if (editIntent.current) {
+										editIntent.current = false;
+										onEditProfile(candidate);
+										return;
+									}
 									const result = activateProfile(candidate.name);
 									onAnnounce?.(
 										result.ok
@@ -200,8 +238,49 @@ export function ComposerBar({
 									{candidate.name === profile.name ? <Icon name="check" /> : null}
 								</span>
 								{candidate.name}
+								{/*
+								 * Overlaid, hover-only, and **absolutely positioned so its
+								 * appearance cannot change the row's width** — the fifth
+								 * appearance of the non-shifting rule.
+								 *
+								 * Not a button. It records which action the press meant and
+								 * the menu item performs it; a nested control would be a
+								 * second thing to press inside something already pressable,
+								 * and a tab stop Radix's roving focus does not know about.
+								 * `title` rather than `aria-label`, since it names the
+								 * region of a row rather than a control of its own — the
+								 * keyboard route is the item below.
+								 */}
+								<span
+									className="ide-profile-edit"
+									aria-hidden={true}
+									title={`Edit ${candidate.name}`}
+									onPointerDown={() => {
+										editIntent.current = true;
+									}}
+								>
+									<Icon name="edit" />
+								</span>
 							</Menu.Item>
 						))}
+						<Menu.Separator className="ide-context-menu-separator" />
+						{/*
+						 * The keyboard's way to the same modal. The overlaid edit icon is a
+						 * hover affordance and hover is a pointer, so without this a
+						 * keyboard user could create a profile and never edit one. It acts
+						 * on the active profile, which is the one just above with the mark.
+						 */}
+						<Menu.Item
+							className="ide-context-menu-item"
+							onSelect={() => onEditProfile(activeProfile())}
+						>
+							<span className="ide-context-menu-mark" />
+							Edit “{profile.name}”…
+						</Menu.Item>
+						<Menu.Item className="ide-context-menu-item" onSelect={() => onEditProfile()}>
+							<span className="ide-context-menu-mark" />
+							New profile…
+						</Menu.Item>
 					</Menu.Content>
 				</Menu.Portal>
 			</Menu.Root>
