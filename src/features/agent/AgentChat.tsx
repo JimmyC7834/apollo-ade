@@ -21,6 +21,9 @@ import { Icon, Overlay } from '../../ui';
 import { OTHER } from '../../agent/ask';
 import { thinkingUnavailable } from '../../agent/models';
 import { liveStatus, type SessionStatus } from '../../sessions';
+import { EventChip } from './EventChip';
+import { Markdown } from './Markdown';
+import { compactResult, referencesMarkdown, toolReferences } from './references';
 import {
 	answerQuestion,
 	applyEvent,
@@ -66,6 +69,14 @@ export interface AgentChatProps {
 		readonly status: SessionStatus;
 		readonly name: string | undefined;
 	}) => void;
+	/**
+	 * Open or activate an artifact, by id — an artifact reference was clicked.
+	 *
+	 * The chat resolves the reference (it has the file list); the controller
+	 * decides where the thing is shown, which is the split every other opening in
+	 * this app already follows.
+	 */
+	readonly onOpenArtifact?: (id: string) => void;
 }
 
 /**
@@ -179,51 +190,79 @@ function QuestionView({
 function PartView({
 	part,
 	turn,
+	files,
 	onResolve,
 	onAnswer,
+	onOpenArtifact,
 }: {
 	readonly part: Part;
 	readonly turn: Turn;
+	readonly files: readonly string[];
 	readonly onResolve: (approved: boolean) => void;
 	readonly onAnswer: (chosen: readonly string[]) => void;
+	readonly onOpenArtifact?: (id: string) => void;
 }) {
+	// The agent's prose: unboxed Markdown, no heading and no avatar. Who said it
+	// is carried by the turn's visually-hidden speaker label — see the log below.
 	if (part.kind === 'text') {
-		return <p className="ide-agent-text">{part.text}</p>;
+		return (
+			<Markdown files={files} onOpenArtifact={onOpenArtifact}>
+				{part.text}
+			</Markdown>
+		);
 	}
 
 	if (part.kind === 'thinking') {
-		// A disclosure rather than prose: reasoning is usually noise, and it is
-		// long. Collapsed by default so the answer stays the thing you read.
+		// A chip like every other event, and collapsed for the same reason it
+		// always was: reasoning is long and usually noise, so the answer stays the
+		// thing you read.
 		return (
-			<details className="ide-agent-thinking">
-				<summary>Thinking</summary>
-				<p>{part.text}</p>
-			</details>
+			<EventChip icon="lightbulb" label="Thinking">
+				<p className="ide-chip-text">{part.text}</p>
+			</EventChip>
 		);
 	}
 
 	if (part.kind === 'tool') {
 		const status = toolLabel(part, turn.status);
+		/*
+		 * The references this call earned, built from event data — the harness
+		 * writes them, the model never does. Rendered through the same Markdown
+		 * path an agent's prose goes through, so there is one implementation of
+		 * what an artifact link is and one place it can break.
+		 */
+		const references = referencesMarkdown(toolReferences(part));
 		return (
-			<div
-				className="ide-agent-tool"
-				data-state={part.state}
-				// Carries its own outcome, so navigating group to group does not
-				// require reading into each one to find out how it ended.
-				aria-label={`Tool: ${part.name} — ${status}`}
-				role="group"
+			<EventChip
+				icon="tools"
+				label={part.name}
+				result={compactResult(part.output) ?? status}
+				state={part.state}
+				// Carries its own outcome, so moving chip to chip does not require
+				// reading into each one to find out how it ended.
+				ariaLabel={`Tool: ${part.name} — ${status}`}
 			>
-				<p className="ide-agent-tool-head">
-					<Icon name="tools" />
-					<span className="ide-agent-tool-name">{part.name}</span>
-					<span className="ide-agent-tool-input">{JSON.stringify(part.input)}</span>
-					<span className="ide-agent-tool-state">{status}</span>
-				</p>
-				{part.output ? <pre className="ide-agent-tool-output">{part.output}</pre> : null}
-			</div>
+				<p className="ide-chip-input">{JSON.stringify(part.input)}</p>
+				{part.output ? <pre className="ide-chip-output">{part.output}</pre> : null}
+				{references ? (
+					<Markdown files={files} onOpenArtifact={onOpenArtifact}>
+						{references}
+					</Markdown>
+				) : null}
+			</EventChip>
 		);
 	}
 
+	/*
+	 * Three kinds are deliberately not chips, and the rule is what they are for
+	 * rather than what they are.
+	 *
+	 * A chip is a record of something that happened, which is why it can be
+	 * collapsed to one row: nothing is owed. An approval and a question are the
+	 * opposite — the run is stopped until you answer, and an answer behind a
+	 * disclosure is an answer nobody gives. An error is the same shape: it is
+	 * something to act on, so it is not muted like activity is.
+	 */
 	if (part.kind === 'error') {
 		// `role="alert"` would interrupt whatever the live region is already
 		// reading. The log is `aria-live="polite"` and announces this anyway.
@@ -248,13 +287,13 @@ function PartView({
 	 */
 	if (part.kind === 'compacted') {
 		return (
-			<details className="ide-agent-compacted">
-				<summary>
-					Earlier messages were summarised. Context was {part.tokensBefore.toLocaleString()}{' '}
-					tokens.
-				</summary>
-				<p className="ide-agent-compacted-summary">{part.summary}</p>
-			</details>
+			<EventChip
+				icon="archive"
+				label="Summarised earlier messages"
+				result={`${part.tokensBefore.toLocaleString()} tokens before`}
+			>
+				<p className="ide-chip-text">{part.summary}</p>
+			</EventChip>
 		);
 	}
 
@@ -329,7 +368,13 @@ function UsageView({ usage }: { readonly usage: Usage }) {
 	);
 }
 
-export function AgentChat({ provider, files = [], onAnnounce, onSession }: AgentChatProps) {
+export function AgentChat({
+	provider,
+	files = [],
+	onAnnounce,
+	onSession,
+	onOpenArtifact,
+}: AgentChatProps) {
 	const [turns, setTurns] = useState<readonly Turn[]>([]);
 	const [prompt, setPrompt] = useState('');
 	const [running, setRunning] = useState(false);
@@ -781,18 +826,56 @@ export function AgentChat({ provider, files = [], onAnnounce, onSession }: Agent
 
 				{turns.map((turn) => (
 					<article className="ide-agent-turn" key={turn.id}>
-						<p className="ide-agent-prompt">{turn.prompt}</p>
+						{/*
+						 * The Guide removes the ADE heading and the avatar, which is right
+						 * visually and removes the only thing distinguishing speaker. A
+						 * card surface and a right-hand alignment are invisible to a
+						 * screen reader, so the distinction is kept in the DOM and taken
+						 * out in CSS: visually absent, structurally present.
+						 */}
+						<div className="ide-agent-prompt">
+							<span className="ide-visually-hidden">You said: </span>
+							<Markdown files={files} onOpenArtifact={onOpenArtifact}>
+								{turn.prompt}
+							</Markdown>
+						</div>
+						<span className="ide-visually-hidden">ADE replied:</span>
 						{turn.parts.map((part, index) => (
 							<PartView
 								key={index}
 								part={part}
 								turn={turn}
+								files={files}
 								onResolve={resolve}
 								onAnswer={answer}
+								onOpenArtifact={onOpenArtifact}
 							/>
 						))}
 						{turn.status === 'cancelled' ? (
 							<p className="ide-agent-status">Stopped.</p>
+						) : null}
+						{/*
+						 * Turn undo — the affordance only, per ticket 41.
+						 *
+						 * The Guide says activating Undo "removes the corresponding change
+						 * event from the transcript", and that sentence describes what the
+						 * mock did rather than what this app can do: pi's session is
+						 * append-only JSONL. Ticket 28 owns the behaviour and it is
+						 * deferred, so this button says so rather than pretending.
+						 */}
+						{turn.status === 'complete' ? (
+							<div className="ide-agent-turn-actions">
+								<button
+									type="button"
+									className="ide-agent-undo"
+									onClick={() =>
+										say('Undoing a turn is not decided yet — the session is append-only.')
+									}
+								>
+									<Icon name="discard" />
+									Undo
+								</button>
+							</div>
 						) : null}
 						{queuedLabel(turn) ? (
 							<p className="ide-agent-status">{queuedLabel(turn)}</p>

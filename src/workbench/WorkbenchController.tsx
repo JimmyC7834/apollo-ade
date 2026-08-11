@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 
 import { createAgentProvider, loadProfileFiles } from '../agent';
-import { clampDock, dockSide } from '../artifacts';
+import { clampDock, dockSide, isToolArtifact } from '../artifacts';
 import { createChangesProvider } from '../changes';
 import { buildCommands } from '../commands/commandRegistry';
 import { EditorDialog } from '../editor/EditorDialog';
@@ -589,6 +589,25 @@ export function WorkbenchController() {
 		setDockCollapsed(false);
 	}, []);
 
+	/**
+	 * Where an artifact reference goes when it is clicked — ticket 41.
+	 *
+	 * The two halves of the workbench model, and the reference does not choose
+	 * between them: a tool artifact is a dock thing and lands in the dock, and a
+	 * file is a Modal Workbench tab, which is what `openFile` already opens. The
+	 * chat resolved which it is; this only knows where each one lives.
+	 */
+	const openArtifact = useCallback(
+		(id: string) => {
+			if (isToolArtifact(id)) {
+				showArtifact(id);
+				return;
+			}
+			void openFile(id);
+		},
+		[openFile, showArtifact]
+	);
+
 	const unpin = useCallback((id: string) => {
 		setPinned((current) => {
 			const next = current.filter((pinnedId) => pinnedId !== id);
@@ -841,6 +860,7 @@ export function WorkbenchController() {
 						files={fileIds}
 						onAnnounce={announce}
 						onSession={setSession}
+						onOpenArtifact={openArtifact}
 					/>
 				</>
 			}

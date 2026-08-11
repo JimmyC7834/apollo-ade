@@ -19,6 +19,16 @@ export function AccessibilityHelp({ open, onClose }: AccessibilityHelpProps) {
 				<dd>Answer an approval request. The agent waits and does nothing until you do.</dd>
 				<dt>Plain text transcript</dt>
 				<dd>Open the whole conversation as plain text, including tool activity.</dd>
+				<dt>Who said what</dt>
+				<dd>
+					Turns carry a spoken speaker label. Nothing is shown on screen — the card and the
+					alignment do that job for a sighted reader, and neither is announced.
+				</dd>
+				<dt>Enter or Space on an event chip</dt>
+				<dd>
+					Expand a tool call or a state change in place, beneath the chip. Its details may
+					include command output and a link to the artifact it produced.
+				</dd>
 				<dt>Ctrl+S</dt>
 				<dd>Save the active editor. Unsaved tabs show a dot instead of a close button.</dd>
 				<dt>Tab / Shift+Tab</dt>
