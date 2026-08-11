@@ -130,19 +130,23 @@ still fine there.
 
 ## Open defects
 
-### The restyle has never been looked at
+### The stashed restyle, and two junk files
 
-`src/App.css` and `src/ui/tokens.css` carry an uncommitted retune — the palette
-moves from VS Code's neutral greys to a cooler blue-grey, focus goes from 1px
-`#0078d4` to 2px `#4c9df0`, and five tokens are added (`--ide-ease`,
-`--ide-motion-fast`, `--ide-radius-sm/-lg`, `--ide-shadow-overlay`). It was built
-to a description and **nobody has judged the result**. `git checkout src/App.css
-src/ui/tokens.css` reverts it.
+The uncommitted retune of `App.css` and `tokens.css` that used to be described
+here was **stashed**, not discarded, before slice 37 began — `git stash list`,
+message `restyle-before-revert`. Slice 37 then rewrote `tokens.css` completely
+under different names and with two themes, so the stash no longer applies
+cleanly and is history rather than pending work. Keep it or drop it; it is not
+blocking anything.
 
-`src/App.css.bak` and `src/ui/tokens.css.bak` sit beside them and are junk:
-`App.css.bak` duplicates HEAD and `tokens.css.bak` matches neither HEAD nor the
-working tree, so it is a stale intermediate that would mislead anyone who trusted
-it. HEAD is the baseline. Delete both.
+`src/App.css.bak` and `src/ui/tokens.css.bak` are still there and are still
+junk — both predate the slice-37 rewrite, so neither matches HEAD or the working
+tree. They are excluded from every commit so far rather than deleted, because
+they are the user's files. **Delete both.**
+
+`git stash list` also holds two entries whose *messages are instructions
+addressed to an agent* rather than descriptions of work. They were not acted on.
+If they are test leftovers, drop them.
 
 **None known.** The two-axis review of slices 0 through 12 — 6,869 lines, run
 after Slice 12c — found seven, and Slices 12d and 12e closed all of them. Every
