@@ -147,6 +147,9 @@
 	--row-height: 22px;
 	--control-size: 24px;
 	--sash-size: 4px;
+	/* The composer's cap, and the Context Explorer's — the Guide gives them the
+	   same width, so it is one number rather than two that must agree. */
+	--composer-width: 760px;
 	--scrollbar-size: 8px;
 	/*
 	 * Only the floor is here. The sidebar width and panel height that used to

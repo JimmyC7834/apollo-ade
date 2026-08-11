@@ -1303,24 +1303,340 @@ body {
 	font: inherit;
 }
 
-/* The composer is an elevated outer-tier surface, not part of the transcript. */
+/*
+ * The composer: centred, capped at 760px, and no longer a full-width bar with a
+ * border across the window. The cap is the Shell Guide's, and it is what makes a
+ * maximised window still read as one column rather than a page-wide input.
+ */
 .ide-agent-composer {
 	flex: none;
-	padding: var(--space-4) var(--space-5);
-	border-top: 1px solid var(--border);
-	background: var(--card);
+	width: 100%;
+	max-width: var(--composer-width);
+	margin: 0 auto;
+	padding: 0 var(--space-5) var(--space-4);
+	background: transparent;
+}
+
+/* `[prompt input][send]`, one row. The send button is a fixed square, so the
+   row's geometry does not move when Send becomes Stop. */
+.ide-composer-row {
+	display: flex;
+	align-items: flex-end;
+	gap: var(--space-2);
+	padding: var(--space-2);
+	border: 1px solid var(--input-border);
+	border-radius: var(--radius-lg);
+	background: var(--input);
+}
+
+/* Dragging a file over the composer highlights the border *and* the surface —
+   the border alone is a 1px signal for a gesture aimed at the whole box. */
+.ide-agent-composer-drag .ide-composer-row {
+	border-color: var(--ring);
+	background: var(--selected);
 }
 
 .ide-agent-input {
-	display: block;
-	width: 100%;
-	padding: var(--space-3);
-	border: 1px solid var(--input-border);
-	border-radius: var(--radius);
-	background: var(--input);
+	flex: 1;
+	min-width: 0;
+	padding: var(--space-2);
+	border: none;
+	background: transparent;
 	color: var(--input-foreground);
 	font: inherit;
 	resize: none;
+}
+
+.ide-agent-input:focus {
+	/* The row is the visible field; a ring around the bare textarea would draw a
+	   box inside a box. Focus is shown on the row instead. */
+	outline: none;
+}
+
+.ide-composer-row:focus-within {
+	border-color: var(--ring);
+}
+
+.ide-composer-send {
+	display: flex;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	width: var(--control-size);
+	height: var(--control-size);
+	border: none;
+	border-radius: var(--radius);
+	background: var(--primary);
+	color: var(--primary-foreground);
+	cursor: pointer;
+}
+
+.ide-composer-send:disabled {
+	background: var(--muted);
+	color: var(--muted-foreground);
+	cursor: default;
+}
+
+.ide-composer-send-stop {
+	background: var(--destructive);
+	color: var(--destructive-foreground);
+}
+
+/* Draft attachments, above the input. Removable, because an attachment belongs
+   to the message being written and nothing has been sent yet. */
+.ide-attachments {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-2);
+	margin: 0 0 var(--space-2);
+	padding: 0;
+	list-style: none;
+}
+
+.ide-attachment {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	max-width: 100%;
+	height: var(--row-height);
+	padding: 0 var(--space-1) 0 var(--space-3);
+	border-radius: var(--radius-full);
+	background: var(--accent);
+	font-size: var(--text-small);
+}
+
+.ide-attachment-name {
+	overflow: hidden;
+	max-width: 24ch;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	direction: rtl;
+	text-align: left;
+}
+
+.ide-attachment-remove {
+	display: flex;
+	align-items: center;
+	padding: 0;
+	border: none;
+	background: transparent;
+	color: var(--muted-foreground);
+	cursor: pointer;
+}
+
+.ide-attachment-remove:hover {
+	color: var(--foreground);
+}
+
+/*
+ * The bottom bar: exactly 32px, outside the input surface, so growing the input
+ * never moves it. Its controls are independent transparent buttons — not a
+ * segmented container, which would say they are alternatives to one another.
+ */
+.ide-composer-bar {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	height: 32px;
+	padding: 0 var(--space-1);
+}
+
+.ide-bar-spacer {
+	flex: 1;
+}
+
+.ide-bar-button {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	height: var(--control-size);
+	padding: 0 var(--space-2);
+	border: none;
+	border-radius: var(--radius);
+	background: transparent;
+	color: var(--muted-foreground);
+	font: inherit;
+	font-size: var(--text-small);
+	cursor: pointer;
+}
+
+.ide-bar-button:hover:not(:disabled) {
+	background: var(--accent);
+	color: var(--foreground);
+}
+
+.ide-bar-button:disabled {
+	color: var(--foreground-subtle);
+	cursor: default;
+}
+
+.ide-bar-button-on {
+	background: var(--accent);
+	color: var(--foreground);
+}
+
+.ide-bar-button-warn {
+	color: var(--status-waiting);
+}
+
+/* Read-only: model, effort and maximum context are each set somewhere else. */
+.ide-bar-summary {
+	overflow: hidden;
+	max-width: 40%;
+	color: var(--foreground-subtle);
+	font-size: var(--text-small);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* The context ring. Unlabelled by design; the button carries the percentage as
+   its accessible name, because a circle is not a shape a screen reader reads. */
+.ide-ring {
+	transform: rotate(-90deg);
+}
+
+.ide-ring-track {
+	fill: none;
+	stroke: var(--border-strong);
+	stroke-width: 2;
+}
+
+.ide-ring-fill {
+	fill: none;
+	stroke: var(--primary);
+	stroke-width: 2;
+	stroke-linecap: round;
+}
+
+.ide-bar-button-warn .ide-ring-fill {
+	stroke: var(--status-waiting);
+}
+
+/* Radix portals and positions this; only its surface is described here. */
+.ide-popover {
+	z-index: 10;
+	max-width: 340px;
+	padding: var(--space-4);
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius);
+	background: var(--popover);
+	box-shadow: var(--shadow-overlay);
+	font-size: var(--text-small);
+}
+
+.ide-usage-list {
+	display: grid;
+	grid-template-columns: auto 1fr;
+	gap: var(--space-2) var(--space-4);
+	margin: 0;
+}
+
+.ide-usage-list dt {
+	color: var(--muted-foreground);
+	white-space: nowrap;
+}
+
+.ide-usage-list dd {
+	margin: 0;
+}
+
+.ide-usage-warn {
+	margin: var(--space-3) 0 0;
+	color: var(--status-waiting);
+}
+
+.ide-context-menu-mark {
+	display: inline-flex;
+	justify-content: center;
+	width: 1.2em;
+}
+
+/*
+ * The Context Explorer: modeless, above the composer, same width, 8px gap.
+ * In flow rather than positioned, which is what makes "never covers the input"
+ * true by construction. Below the Session Navigator in z-order because it takes
+ * no z-index at all — nothing to get wrong later.
+ */
+.ide-context-explorer {
+	flex: none;
+	display: flex;
+	flex-direction: column;
+	width: 100%;
+	max-width: var(--composer-width);
+	max-height: min(280px, 36vh);
+	margin: 0 auto var(--space-3);
+	overflow: hidden;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-lg);
+	background: var(--card);
+}
+
+/* Previous, path and Close share one compact bar. */
+.ide-context-explorer-bar {
+	display: flex;
+	flex: none;
+	align-items: center;
+	gap: var(--space-2);
+	height: 28px;
+	padding: 0 var(--space-2);
+	border-bottom: 1px solid var(--border);
+}
+
+.ide-context-explorer-path {
+	flex: 1;
+	overflow: hidden;
+	color: var(--muted-foreground);
+	font-size: var(--text-small);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.ide-context-explorer-list {
+	flex: 1;
+	min-height: 0;
+	margin: 0;
+	padding: var(--space-1);
+	overflow-y: auto;
+	list-style: none;
+}
+
+.ide-context-explorer-empty {
+	margin: 0;
+	padding: var(--space-3);
+	color: var(--muted-foreground);
+}
+
+.ide-context-explorer-row {
+	display: flex;
+	align-items: center;
+	height: var(--row-height);
+}
+
+.ide-context-explorer-open {
+	display: flex;
+	flex: 1;
+	min-width: 0;
+	align-items: center;
+	gap: var(--space-2);
+	height: 100%;
+	padding: 0 var(--space-2);
+	border: none;
+	border-radius: var(--radius);
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.ide-context-explorer-open:hover {
+	background: var(--accent);
+}
+
+.ide-context-explorer-name {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 
 .ide-agent-input::placeholder {
@@ -1366,13 +1682,6 @@ body {
 	color: var(--muted-foreground);
 	font-size: var(--text-small);
 	text-align: right;
-}
-
-.ide-agent-composer-actions {
-	display: flex;
-	justify-content: flex-end;
-	gap: var(--space-3);
-	margin-top: var(--space-3);
 }
 
 .ide-agent-plain {

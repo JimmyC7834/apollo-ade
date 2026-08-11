@@ -33,6 +33,12 @@ circular ring; clicking it opens a usage popover. The profile selector has no le
 The ring and the popover replace the meter that renders beside the token counts today,
 including the session cost line [ticket 26](26-cost.md) landed. Do not lose it in the move.
 
+**One control the Guide does not name sits on the right, beside the profile selector:**
+the plain-text transcript. It is the documented way out for anyone who cannot read a
+transcript of nested disclosures — it is in the keyboard help by name — so deleting it to
+match a mock's silence would remove an accessibility affordance to gain a pixel. The
+Guide constrains the *left* group to three; the right is the profile selector and this.
+
 ## The Context Explorer
 
 Attach opens a **modeless** file explorer in the empty chat area directly above the

@@ -21,6 +21,9 @@ import { Icon, Overlay } from '../../ui';
 import { OTHER } from '../../agent/ask';
 import { thinkingUnavailable } from '../../agent/models';
 import { liveStatus, type SessionStatus } from '../../sessions';
+import { ComposerBar } from './ComposerBar';
+import { ContextExplorer } from './ContextExplorer';
+import { withAttachments } from './composer';
 import { EventChip } from './EventChip';
 import { Markdown } from './Markdown';
 import { compactResult, referencesMarkdown, toolReferences } from './references';
@@ -397,6 +400,18 @@ export function AgentChat({
 	/** Which completion is selected, and whether Escape has closed the menu. */
 	const [picked, setPicked] = useState(0);
 	const [menuOpen, setMenuOpen] = useState(true);
+	/**
+	 * Draft attachments — ticket 42. Root-relative paths, in the order added.
+	 *
+	 * Draft, and that is the whole model: they belong to the message being
+	 * written, not to the conversation, so they clear when it is sent and a chip
+	 * can be taken off before it goes anywhere. What they become on the way out is
+	 * `withAttachments`' business.
+	 */
+	const [attachments, setAttachments] = useState<readonly string[]>([]);
+	const [explorerOpen, setExplorerOpen] = useState(false);
+	/** A file is over the composer right now — the border and surface say so. */
+	const [dragging, setDragging] = useState(false);
 
 	/** What the conversation has cost, over the turns that reported a price. */
 	const spent = useMemo(() => sessionCost(turns), [turns]);
@@ -528,8 +543,8 @@ export function AgentChat({
 	);
 
 	const send = useCallback(() => {
-		const text = prompt.trim();
-		if (!text) {
+		const raw = prompt.trim();
+		if (!raw) {
 			return;
 		}
 		/*
@@ -538,7 +553,14 @@ export function AgentChat({
 		 * will extend; what is *done* about each command stays here, because every
 		 * body closes over the provider and this component's state.
 		 */
-		const parsed = parseCommand(text, commands);
+		const parsed = parseCommand(raw, commands);
+		/*
+		 * Attachments join prose and never a command. `/compact` with a file
+		 * attached is still `/compact`, and prepending `@src/App.tsx` to it would
+		 * turn a command into a prompt — the same silent-becoming-prose failure the
+		 * running-turn branch below refuses for the same reason.
+		 */
+		const text = parsed ? raw : withAttachments(raw, attachments);
 		setNotice(undefined);
 
 		// The one command that only means something *inside* a turn, so the idle
@@ -591,12 +613,14 @@ export function AgentChat({
 				return;
 			}
 			setPrompt('');
+			setAttachments([]);
 			run.follow(text);
 			onAnnounce?.('Queued for after this turn');
 			return;
 		}
 
 		setPrompt('');
+		setAttachments([]);
 
 		if (parsed?.command.name === '/compact') {
 			setCompacting(true);
@@ -778,7 +802,7 @@ export function AgentChat({
 		}
 
 		runRef.current = provider.start(text, beginTurn(text));
-	}, [beginTurn, commands, onAnnounce, prompt, provider, running, say]);
+	}, [attachments, beginTurn, commands, onAnnounce, prompt, provider, running, say]);
 
 	const resolve = useCallback(
 		(approved: boolean) => {
@@ -806,6 +830,48 @@ export function AgentChat({
 			promptRef.current?.focus();
 		},
 		[onAnnounce]
+	);
+
+	/** What the context ring shows: the most recent turn that reported usage. */
+	const usage = useMemo(
+		() => [...turns].reverse().find((turn) => turn.usage)?.usage,
+		[turns]
+	);
+
+	const attach = useCallback(
+		(path: string) => {
+			setAttachments((current) => (current.includes(path) ? current : [...current, path]));
+			onAnnounce?.(`Attached ${path}`);
+		},
+		[onAnnounce]
+	);
+
+	/**
+	 * A file dropped on the composer.
+	 *
+	 * The payload is a root-relative path from a row inside this app, and it is
+	 * checked against the same file list the explorer drew from — a drop can only
+	 * ever attach something that exists. A file dragged from the operating system
+	 * carries no path this app is allowed to resolve (`workspace.rs` is
+	 * root-confined and the UI never sees an absolute path), so it is refused with
+	 * the reason rather than silently ignored.
+	 */
+	const drop = useCallback(
+		(event: React.DragEvent) => {
+			event.preventDefault();
+			setDragging(false);
+			const path = event.dataTransfer.getData('text/plain');
+			if (files.includes(path)) {
+				attach(path);
+				return;
+			}
+			say(
+				event.dataTransfer.files.length > 0
+					? 'Files from outside the workspace cannot be attached. Open the folder as your workspace first.'
+					: 'That is not a file in this workspace.'
+			);
+		},
+		[attach, files, say]
 	);
 
 	return (
@@ -885,13 +951,61 @@ export function AgentChat({
 				))}
 			</div>
 
+			{/*
+			 * The Context Explorer: modeless, above the composer, never over it.
+			 * In flow rather than absolutely positioned, which is what makes
+			 * "never covering the input or toolbar" true by construction instead
+			 * of true until someone resizes the window.
+			 */}
+			{explorerOpen ? (
+				<ContextExplorer
+					files={files}
+					onClose={() => setExplorerOpen(false)}
+					onAttach={attach}
+					// A file is a Modal Workbench tab, which is exactly what an
+					// artifact reference to a file already opens — same id, same
+					// destination, and the controller stays the only thing that
+					// decides where anything is shown.
+					onOpenFile={(path) => onOpenArtifact?.(path)}
+				/>
+			) : null}
+
 			<form
-				className="ide-agent-composer"
+				className={dragging ? 'ide-agent-composer ide-agent-composer-drag' : 'ide-agent-composer'}
 				onSubmit={(event) => {
 					event.preventDefault();
 					send();
 				}}
+				onDragOver={(event) => {
+					event.preventDefault();
+					setDragging(true);
+				}}
+				onDragLeave={() => setDragging(false)}
+				onDrop={drop}
 			>
+				{attachments.length > 0 ? (
+					<ul className="ide-attachments" aria-label="Attached files">
+						{attachments.map((path) => (
+							<li key={path} className="ide-attachment">
+								<Icon name="file" />
+								<span className="ide-attachment-name" title={path}>
+									{path}
+								</span>
+								<button
+									type="button"
+									className="ide-attachment-remove"
+									onClick={() =>
+										setAttachments((current) => current.filter((item) => item !== path))
+									}
+									aria-label={`Remove ${path}`}
+								>
+									<Icon name="close" />
+								</button>
+							</li>
+						))}
+					</ul>
+				) : null}
+				<div className="ide-composer-row">
 				<textarea
 					className="ide-agent-input"
 					ref={promptRef}
@@ -952,6 +1066,38 @@ export function AgentChat({
 						}
 					}}
 				/>
+				{/*
+				 * Send sits in the input row, per the Guide's `[prompt input][send]`.
+				 * While a turn runs it is Stop in the same slot rather than a second
+				 * button appearing beside it — the row never changes width, which is
+				 * the non-shifting rule again.
+				 */}
+				{running && compacting ? (
+					// Not a Stop button that quietly does nothing: pi's compaction
+					// takes no abort signal, so there is nothing to offer.
+					<button type="button" className="ide-composer-send" disabled aria-label="Summarising">
+						<Icon name="loading" />
+					</button>
+				) : running ? (
+					<button
+						type="button"
+						className="ide-composer-send ide-composer-send-stop"
+						onClick={() => runRef.current?.cancel()}
+						aria-label="Stop the agent"
+					>
+						<Icon name="primitive-square" />
+					</button>
+				) : (
+					<button
+						type="submit"
+						className="ide-composer-send"
+						disabled={!prompt.trim()}
+						aria-label="Send"
+					>
+						<Icon name="send" />
+					</button>
+				)}
+				</div>
 				{completions.length > 0 ? (
 					<ul className="ide-agent-completions" id="agent-completions" role="listbox">
 						{completions.map((entry, index) => (
@@ -979,44 +1125,15 @@ export function AgentChat({
 						))}
 					</ul>
 				) : null}
-				<div className="ide-agent-composer-actions">
-					<button
-						type="button"
-						className="ide-button"
-						onClick={() => setTranscriptOpen(true)}
-						disabled={turns.length === 0}
-					>
-						Plain text transcript
-					</button>
-					{/* The session total, which is a floor rather than a bill: a turn on
-					    a model with no known rates contributes nothing rather than zero,
-					    and the label says "so far" rather than naming a total the app
-					    cannot stand behind. Absent entirely until something is priced. */}
-					{spent !== undefined ? (
-						<span className="ide-agent-usage" title="Turns on models with no known rates are not counted.">
-							{formatCost(spent)} so far
-						</span>
-					) : null}
-					{running && compacting ? (
-						// Not a Stop button that quietly does nothing: pi's compaction
-						// takes no abort signal, so there is nothing to offer.
-						<button type="button" className="ide-button" disabled>
-							Summarising…
-						</button>
-					) : running ? (
-						<button
-							type="button"
-							className="ide-button ide-button-danger"
-							onClick={() => runRef.current?.cancel()}
-						>
-							Stop
-						</button>
-					) : (
-						<button type="submit" className="ide-button" disabled={!prompt.trim()}>
-							Send
-						</button>
-					)}
-				</div>
+				<ComposerBar
+					attachOpen={explorerOpen}
+					onAttach={() => setExplorerOpen((open) => !open)}
+					usage={usage}
+					spent={spent}
+					onTranscript={() => setTranscriptOpen(true)}
+					transcriptDisabled={turns.length === 0}
+					onAnnounce={onAnnounce}
+				/>
 				{awaiting ? (
 					// Covers both, because from the composer they are the same thing:
 					// the run is paused on something above that only you can settle.

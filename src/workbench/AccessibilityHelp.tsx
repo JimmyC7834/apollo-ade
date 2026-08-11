@@ -29,6 +29,17 @@ export function AccessibilityHelp({ open, onClose }: AccessibilityHelpProps) {
 					Expand a tool call or a state change in place, beneath the chip. Its details may
 					include command output and a link to the artifact it produced.
 				</dd>
+				<dt>Attach, on the composer bar</dt>
+				<dd>
+					Opens the workspace file browser above the prompt. It never covers the prompt, so
+					you can keep typing. Each file row has its own Attach button — dragging a file
+					into the prompt does the same thing and needs a pointer.
+				</dd>
+				<dt>The circle on the composer bar</dt>
+				<dd>
+					How full the model’s context is. It has no visible label; the button announces the
+					percentage, and opening it lists the token counts and what the session has cost.
+				</dd>
 				<dt>Ctrl+S</dt>
 				<dd>Save the active editor. Unsaved tabs show a dot instead of a close button.</dd>
 				<dt>Tab / Shift+Tab</dt>
