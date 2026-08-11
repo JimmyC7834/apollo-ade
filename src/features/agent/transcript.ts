@@ -491,3 +491,65 @@ export function asPlainText(turns: readonly Turn[]): string {
 		})
 		.join('\n\n———\n\n');
 }
+
+/** One line of a transcript that matched a search — ticket 44. */
+export interface TranscriptHit {
+	readonly turnId: number;
+	/** The matching line, trimmed and capped so a result row stays one row. */
+	readonly label: string;
+	/** Which turn it was in, named by its prompt — the only name a turn has. */
+	readonly detail: string;
+}
+
+const HIT_CHARS = 90;
+
+/**
+ * Find a term in what was *said* — the prompts, the agent's prose, and the
+ * summaries that stand in for prose that was compacted away.
+ *
+ * **Not tool output, and not reasoning.** A search over tool output is a search
+ * over the contents of files, which is what the Search artifact already does
+ * properly, with line numbers and a replace path; producing a second, worse
+ * answer to the same question from the palette would send people to the wrong
+ * one. Reasoning is excluded for the reason it is collapsed in the transcript:
+ * it is long, and matching it would bury the answer it led to.
+ *
+ * Case-insensitive substring, not fuzzy. A fuzzy match over prose matches
+ * everything — `fuzzyFilter` scores short labels like filenames and command
+ * names, and a paragraph is neither.
+ */
+export function searchTranscript(
+	turns: readonly Turn[],
+	term: string,
+	limit = 20
+): readonly TranscriptHit[] {
+	const needle = term.trim().toLowerCase();
+	if (!needle) {
+		return [];
+	}
+	const hits: TranscriptHit[] = [];
+	for (const turn of turns) {
+		const sources = [
+			turn.prompt,
+			...turn.parts.flatMap((part) =>
+				part.kind === 'text' ? [part.text] : part.kind === 'compacted' ? [part.summary] : []
+			),
+		];
+		for (const source of sources) {
+			for (const line of source.split('\n')) {
+				if (hits.length >= limit) {
+					return hits;
+				}
+				const text = line.trim();
+				if (text.toLowerCase().includes(needle)) {
+					hits.push({
+						turnId: turn.id,
+						label: text.length > HIT_CHARS ? `${text.slice(0, HIT_CHARS)}…` : text,
+						detail: turn.prompt.length > 40 ? `${turn.prompt.slice(0, 40)}…` : turn.prompt,
+					});
+				}
+			}
+		}
+	}
+	return hits;
+}

@@ -20,6 +20,15 @@ export interface WorkbenchLayoutSlots {
 	readonly dock?: ReactNode;
 	readonly overlays?: ReactNode;
 	readonly announcement?: ReactNode;
+	/**
+	 * Notifications, over everything and owned by nothing.
+	 *
+	 * Its own slot rather than part of `overlays`, because the two differ in the
+	 * one way that matters here: an overlay is modal and a toast must never be.
+	 * Putting it in `overlays` would put it behind the editor dialog's backdrop,
+	 * where the Guide asks for it to be above every workbench.
+	 */
+	readonly toasts?: ReactNode;
 }
 
 export interface WorkbenchLayoutProps extends WorkbenchLayoutSlots {
@@ -33,6 +42,7 @@ export function WorkbenchLayout({
 	dock,
 	overlays,
 	announcement,
+	toasts,
 	side,
 }: WorkbenchLayoutProps) {
 	const mainRef = useRef<HTMLDivElement>(null);
@@ -83,6 +93,7 @@ export function WorkbenchLayout({
 			</div>
 
 			{overlays}
+			{toasts}
 		</div>
 	);
 }

@@ -9,8 +9,17 @@ export function AccessibilityHelp({ open, onClose }: AccessibilityHelpProps) {
 	return (
 		<Overlay open={open} title="Keyboard help" onClose={onClose}>
 			<dl className="ide-help-list">
-				<dt>Ctrl+Shift+P</dt>
-				<dd>Open the command center. Delete the leading &gt; to search files.</dd>
+				<dt>Ctrl+Shift+P or Ctrl+K</dt>
+				<dd>
+					Open the command center. Delete the leading &gt; to search sessions, files,
+					artifacts and the transcript at once; each result says which of those it is.
+				</dd>
+				<dt>Notifications</dt>
+				<dd>
+					A turn that ends while the window is not focused raises a notice at the lower
+					right and marks the session unread. Notices never take focus and stay until
+					dismissed. ADE menu → Debug notification shows one on demand.
+				</dd>
 				<dt>Enter in the prompt</dt>
 				<dd>Send the prompt to the agent. Shift+Enter adds a newline instead.</dd>
 				<dt>Stop</dt>

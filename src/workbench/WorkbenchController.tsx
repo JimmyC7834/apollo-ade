@@ -2,7 +2,7 @@
 // commands do, what is persisted, and which feature renders into which slot.
 // Geometry lives in WorkbenchLayout — this file never sets a width.
 
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 
 import { createAgentProvider, loadProfileFiles } from '../agent';
 import { clampDock, dockSide, isToolArtifact } from '../artifacts';
@@ -12,11 +12,12 @@ import { EditorDialog } from '../editor/EditorDialog';
 import { isDirty, type EditorInput } from '../editor/EditorWorkbench';
 import { neighbourId } from '../ids';
 import { AgentChat } from '../features/agent/AgentChat';
+import type { TranscriptHit } from '../features/agent/transcript';
 import { CommandCenter } from '../features/commandCenter/CommandCenter';
 import { refuseReason, type Replacement } from '../features/search/replace';
 import { SessionNavigator } from '../features/sessions/SessionNavigator';
 import { createPersistenceAdapter, type PersistedState } from '../persistence';
-import { LIVE_SESSION_ID, breadcrumb, buildGroups, type SessionStatus } from '../sessions';
+import { LIVE_SESSION_ID, breadcrumb, buildGroups, type Session, type SessionStatus } from '../sessions';
 import { createTerminalAdapter } from '../terminal';
 import { applyTheme, type ThemeName } from '../ui/theme';
 import {
@@ -29,6 +30,7 @@ import { ArtifactView, artifactRef } from './ArtifactView';
 import { ConfirmDiscard } from './ConfirmDiscard';
 import { PinnedWorkbench } from './PinnedWorkbench';
 import { Titlebar, type AdeMenuAction } from './Titlebar';
+import { Toasts, type Toast } from './Toasts';
 import { WorkbenchLayout } from './WorkbenchLayout';
 import { useWindowControls } from './useWindowControls';
 
@@ -102,6 +104,24 @@ export function WorkbenchController() {
 	}>({ status: 'idle', name: undefined });
 	const [commandCenterOpen, setCommandCenterOpen] = useState(false);
 	/*
+	 * Notifications — ticket 44. Toasts are a list rather than one slot because
+	 * two things can finish while you are away, and the second replacing the first
+	 * would make the mechanism unreliable exactly when it is needed.
+	 */
+	const [toasts, setToasts] = useState<readonly Toast[]>([]);
+	/**
+	 * Whether the live session has something you have not seen.
+	 *
+	 * **Not a lifecycle status**, which is the whole point of `Session.unread`: a
+	 * session can be done and read, or done and unread, and folding the two loses
+	 * the second. Set when a turn ends while the window is not focused; cleared
+	 * when it comes back, because that is when you saw it.
+	 */
+	const [unread, setUnread] = useState(false);
+	/** Search the live transcript. Handed over by the chat; see `onTranscript`. */
+	const transcriptSearch = useRef<(term: string) => readonly TranscriptHit[]>(() => []);
+	const searchTranscript = useCallback((term: string) => transcriptSearch.current(term), []);
+	/*
 	 * The editor is a transient surface over the workbench, not a region and not
 	 * layout: it is never persisted, so a session always reopens on Agent Chat
 	 * with the editor closed. The tabs behind it are persisted as they always
@@ -119,6 +139,58 @@ export function WorkbenchController() {
 		(message: string) => setAnnouncement((current) => ({ seq: current.seq + 1, message })),
 		[]
 	);
+
+	/**
+	 * Raise a toast. Also announced, because a toast is visual and the live region
+	 * is the only channel that is not.
+	 */
+	const notify = useCallback(
+		(message: string, action?: Toast['action']) => {
+			setToasts((current) => [...current, { id: Date.now() + current.length, message, action }]);
+			announce(message);
+		},
+		[announce]
+	);
+
+	/*
+	 * A finished turn is worth a toast **only when you are not here to see it**.
+	 * With the window focused the transcript already said so, and a notice for
+	 * something on screen is the kind of noise that teaches people to ignore the
+	 * mechanism. The same condition sets unread.
+	 */
+	/*
+	 * The previous status, in a ref rather than read inside the `setSession`
+	 * updater. A state updater has to be pure — StrictMode calls it twice to prove
+	 * it — and raising a toast from inside one raised two.
+	 */
+	const lastStatus = useRef<SessionStatus>('idle');
+	const onSessionState = useCallback(
+		(next: { readonly status: SessionStatus; readonly name: string | undefined }) => {
+			setSession(next);
+			if (
+				lastStatus.current !== next.status &&
+				(next.status === 'done' || next.status === 'waiting') &&
+				!document.hasFocus()
+			) {
+				setUnread(true);
+				notify(
+					next.status === 'waiting'
+						? 'The agent is waiting for your answer.'
+						: 'The agent finished.'
+				);
+			}
+			lastStatus.current = next.status;
+		},
+		[notify]
+	);
+
+	// Coming back is when you saw it. Nothing else clears unread, because nothing
+	// else means you looked.
+	useEffect(() => {
+		const seen = () => setUnread(false);
+		window.addEventListener('focus', seen);
+		return () => window.removeEventListener('focus', seen);
+	}, []);
 
 	const provider = useMemo(() => createWorkspaceProvider(), []);
 	const agentProvider = useMemo(() => createAgentProvider(), []);
@@ -621,6 +693,24 @@ export function WorkbenchController() {
 		});
 	}, []);
 
+	/**
+	 * Selecting a session, from the navigator or from a search result.
+	 *
+	 * One function because it is one decision, and the decision is mostly a
+	 * refusal: a fixture has no harness and must not pretend to have one. The live
+	 * session is already what is on screen, so choosing it only clears unread.
+	 */
+	const selectSession = useCallback(
+		(picked: Session) => {
+			if (!picked.live) {
+				announce(`${picked.name} is a prototype fixture. Only one session runs in this build.`);
+				return;
+			}
+			setUnread(false);
+		},
+		[announce]
+	);
+
 	const closeHelp = useCallback(() => setHelpOpen(false), []);
 	const closeCommandCenter = useCallback(() => setCommandCenterOpen(false), []);
 
@@ -670,7 +760,12 @@ export function WorkbenchController() {
 	 */
 	useEffect(() => {
 		function onKeyDown(event: KeyboardEvent): void {
-			if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'p') {
+			// Ctrl+K as well as Ctrl+Shift+P: the Guide names Ctrl+K for Global
+			// Search, and it is the same palette rather than a second one.
+			if (
+				(event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'p') ||
+				(event.ctrlKey && !event.shiftKey && event.key.toLowerCase() === 'k')
+			) {
 				event.preventDefault();
 				event.stopPropagation();
 				setCommandCenterOpen(true);
@@ -785,8 +880,9 @@ export function WorkbenchController() {
 				recents,
 				liveName: session.name,
 				liveStatus: session.status,
+				liveUnread: unread,
 			}),
-		[branch, recents, selection, session]
+		[branch, recents, selection, session, unread]
 	);
 
 	/**
@@ -806,6 +902,14 @@ export function WorkbenchController() {
 				run: () => {},
 			},
 			{ id: 'palette', label: 'Command palette', run: () => setCommandCenterOpen(true) },
+			{
+				id: 'debug-notification',
+				label: 'Debug notification',
+				// A design affordance rather than a feature: with one live session
+				// there is little to notify about, so this is how the surface gets
+				// looked at without waiting for a long turn to end unwatched.
+				run: () => notify('This is what a notification looks like.'),
+			},
 			{ id: 'settings', label: 'Settings', disabled: 'not built yet', run: () => {} },
 			{
 				id: 'about',
@@ -819,7 +923,7 @@ export function WorkbenchController() {
 				run: controls.close,
 			},
 		],
-		[announce, controls.available, controls.close]
+		[announce, controls.available, controls.close, notify]
 	);
 
 	// A pinned id that is no longer pinned would render an empty dock body.
@@ -844,27 +948,28 @@ export function WorkbenchController() {
 					<SessionNavigator
 						groups={groups}
 						activeId={LIVE_SESSION_ID}
-						onSelect={(picked) => {
-							// A fixture session has no harness and must not pretend to
-							// have one. Saying so is the prototype marking doing its job.
-							if (!picked.live) {
-								announce(
-									`${picked.name} is a prototype fixture. Only one session runs in this build.`
-								);
-							}
-						}}
+						onSelect={selectSession}
 						onSwitchWorkspace={(index) => void switchWorkspace(index)}
 					/>
 					<AgentChat
 						provider={agentProvider}
 						files={fileIds}
 						onAnnounce={announce}
-						onSession={setSession}
+						onSession={onSessionState}
 						onOpenArtifact={openArtifact}
+						onTranscript={(search) => {
+							transcriptSearch.current = search;
+						}}
 					/>
 				</>
 			}
 			announcement={<span key={announcement.seq}>{announcement.message}</span>}
+			toasts={
+				<Toasts
+					toasts={toasts}
+					onDismiss={(id) => setToasts((current) => current.filter((toast) => toast.id !== id))}
+				/>
+			}
 			dock={
 				pinned.length === 0 ? null : (
 					<PinnedWorkbench
@@ -919,7 +1024,11 @@ export function WorkbenchController() {
 						open={commandCenterOpen}
 						commands={commands}
 						files={entries}
+						groups={groups}
 						onOpenFile={(entry) => void openFile(entry.id)}
+						onOpenArtifact={showArtifact}
+						onSelectSession={selectSession}
+						searchTranscript={searchTranscript}
 						onClose={closeCommandCenter}
 					/>
 					<ConfirmDiscard

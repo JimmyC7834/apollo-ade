@@ -37,12 +37,14 @@ import {
 	questionLabel,
 	queuedLabel,
 	resolveApproval,
+	searchTranscript,
 	formatCost,
 	sessionCost,
 	toolLabel,
 	turnCost,
 	type Part,
 	type QuestionPart,
+	type TranscriptHit,
 	type Turn,
 	type Usage,
 } from './transcript';
@@ -81,6 +83,15 @@ export interface AgentChatProps {
 	 * this app already follows.
 	 */
 	readonly onOpenArtifact?: (id: string) => void;
+	/**
+	 * Hand the palette a way to search this transcript — ticket 44.
+	 *
+	 * A **function**, handed over once, rather than the turns themselves. The
+	 * transcript changes on every streamed chunk, and lifting it into the
+	 * controller would re-render the whole workbench at that rate to serve a
+	 * surface that is closed almost all of the time.
+	 */
+	readonly onTranscript?: (search: (term: string) => readonly TranscriptHit[]) => void;
 }
 
 /**
@@ -378,6 +389,7 @@ export function AgentChat({
 	onAnnounce,
 	onSession,
 	onOpenArtifact,
+	onTranscript,
 }: AgentChatProps) {
 	const [turns, setTurns] = useState<readonly Turn[]>([]);
 	const [prompt, setPrompt] = useState('');
@@ -434,6 +446,19 @@ export function AgentChat({
 			name: turns[0]?.prompt,
 		});
 	}, [onSession, running, compacting, awaiting, turns]);
+
+	/*
+	 * The turns, for the palette to search without subscribing to them. A ref
+	 * because the search reads whatever is current at the moment it is called, and
+	 * a ref is the one thing whose identity does not change when it does.
+	 */
+	const turnsRef = useRef(turns);
+	turnsRef.current = turns;
+	const search = useCallback(
+		(term: string) => searchTranscript(turnsRef.current, term),
+		[]
+	);
+	useEffect(() => onTranscript?.(search), [onTranscript, search]);
 
 	const runRef = useRef<AgentRun>(null);
 	const promptRef = useRef<HTMLTextAreaElement>(null);
@@ -1012,6 +1037,41 @@ export function AgentChat({
 						))}
 					</ul>
 				) : null}
+				{/*
+				 * The completion menu, **above** the composer rather than below it —
+				 * ticket 44. Below the input it opened downwards over the bottom bar
+				 * and, at the foot of the window, over nothing at all. This is a
+				 * restyle: `completion.ts` and its check are untouched, and Enter
+				 * still inserts the selection because that is the landed behaviour
+				 * the hands already know.
+				 */}
+				{completions.length > 0 ? (
+					<ul className="ide-agent-completions" id="agent-completions" role="listbox">
+						{completions.map((entry, index) => (
+							<li
+								key={entry.value}
+								id={`agent-completion-${index}`}
+								role="option"
+								aria-selected={index === picked}
+								className={
+									index === picked
+										? 'ide-agent-completion ide-agent-completion-picked'
+										: 'ide-agent-completion'
+								}
+								// Pointer down rather than click: click fires after the
+								// textarea has already lost focus, and blur is what a
+								// user reaching for the mouse should not be punished by.
+								onMouseDown={(event) => {
+									event.preventDefault();
+									accept(index);
+								}}
+							>
+								<span className="ide-agent-completion-value">{entry.value.trim()}</span>
+								<span className="ide-agent-completion-summary">{entry.summary}</span>
+							</li>
+						))}
+					</ul>
+				) : null}
 				<div className="ide-composer-row">
 				<textarea
 					className="ide-agent-input"
@@ -1105,33 +1165,6 @@ export function AgentChat({
 					</button>
 				)}
 				</div>
-				{completions.length > 0 ? (
-					<ul className="ide-agent-completions" id="agent-completions" role="listbox">
-						{completions.map((entry, index) => (
-							<li
-								key={entry.value}
-								id={`agent-completion-${index}`}
-								role="option"
-								aria-selected={index === picked}
-								className={
-									index === picked
-										? 'ide-agent-completion ide-agent-completion-picked'
-										: 'ide-agent-completion'
-								}
-								// Pointer down rather than click: click fires after the
-								// textarea has already lost focus, and blur is what a
-								// user reaching for the mouse should not be punished by.
-								onMouseDown={(event) => {
-									event.preventDefault();
-									accept(index);
-								}}
-							>
-								<span className="ide-agent-completion-value">{entry.value.trim()}</span>
-								<span className="ide-agent-completion-summary">{entry.summary}</span>
-							</li>
-						))}
-					</ul>
-				) : null}
 				<ComposerBar
 					attachOpen={explorerOpen}
 					onAttach={() => setExplorerOpen((open) => !open)}

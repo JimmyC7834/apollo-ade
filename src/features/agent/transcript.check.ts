@@ -17,6 +17,7 @@ import {
 	queuedLabel,
 	formatCost,
 	resolveApproval,
+	searchTranscript,
 	sessionCost,
 	toolLabel,
 	turnCost,
@@ -388,6 +389,62 @@ const started = (): Turn => ({ id: 1, prompt: 'go', parts: [], status: 'running'
 	// And it reaches the plain-text record, where an unpriced turn stays silent.
 	assert.match(asPlainText([priced]), /\[usage\] 10 in, 5 out, 15 context, \$0\.11/);
 	assert.ok(asPlainText([unpriced]).endsWith('[usage] 10 in, 5 out, 15 context'));
+}
+
+/*
+ * Transcript search — ticket 44. What it must *not* find is the interesting
+ * half: tool output belongs to the Search artifact, which answers the same
+ * question with line numbers and a replace path, and reasoning is excluded for
+ * the same reason it is collapsed on screen.
+ */
+{
+	const turns: Turn[] = [
+		{
+			id: 1,
+			prompt: 'rename the gate policy',
+			status: 'complete',
+			parts: [
+				{ kind: 'text', text: 'Renamed it.\nThe deny list is untouched.' },
+				{ kind: 'thinking', text: 'the deny list might matter here' },
+				{
+					kind: 'tool',
+					id: 't1',
+					name: 'bash',
+					input: {},
+					state: 'done',
+					output: 'deny list grep output',
+				},
+			],
+		},
+		{
+			id: 2,
+			prompt: 'summarise',
+			status: 'complete',
+			parts: [{ kind: 'compacted', summary: 'Earlier: the deny list was discussed.', tokensBefore: 9 }],
+		},
+	];
+
+	assert.deepEqual(
+		searchTranscript(turns, 'deny list').map((hit) => `${hit.turnId}:${hit.label}`),
+		['1:The deny list is untouched.', '2:Earlier: the deny list was discussed.'],
+		'prose and summaries, never reasoning or tool output'
+	);
+
+	// The prompt is searched too — it is half of what was said.
+	assert.deepEqual(
+		searchTranscript(turns, 'RENAME').map((hit) => hit.label),
+		['rename the gate policy', 'Renamed it.'],
+		'case-insensitive, and the prompt counts'
+	);
+
+	// An empty term matches nothing rather than everything: a palette that lists
+	// the whole conversation the moment it opens is not a search.
+	assert.deepEqual(searchTranscript(turns, '   '), []);
+	assert.deepEqual(searchTranscript(turns, 'nowhere'), []);
+
+	// The limit is a limit, and the turn is named by its prompt.
+	assert.equal(searchTranscript(turns, 'e', 2).length, 2);
+	assert.equal(searchTranscript(turns, 'deny')[0]?.detail, 'rename the gate policy');
 }
 
 console.log('transcript.check.ts: thirteen kinds ok');

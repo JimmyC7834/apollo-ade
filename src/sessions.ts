@@ -123,6 +123,8 @@ export function buildGroups(options: {
 	readonly recents: readonly WorkspaceSelection[];
 	readonly liveName: string | undefined;
 	readonly liveStatus: SessionStatus;
+	/** Something happened while you were not looking. Not a status — see `Session`. */
+	readonly liveUnread?: boolean;
 }): readonly WorkspaceGroup[] {
 	const { workspace } = options;
 	if (!workspace) {
@@ -139,6 +141,7 @@ export function buildGroups(options: {
 					id: LIVE_SESSION_ID,
 					name: options.liveName ?? 'New session',
 					status: options.liveStatus,
+					unread: options.liveUnread,
 					live: true,
 				},
 				...FIXTURE_SESSIONS,
