@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import * as Menu from '@radix-ui/react-dropdown-menu';
 
 export interface ContextMenuItem {
 	readonly id: string;
@@ -19,101 +19,44 @@ export interface ContextMenuProps {
 /**
  * Anchored feature actions.
  *
- * Focus enters the menu on open and returns to whatever opened it on close —
- * a context menu is invoked from a tree row, and losing that row would strand
- * a keyboard user in the document.
+ * Radix owns the parts that were hand-rolled here until slice 37: roving
+ * focus, typeahead, outside-press dismissal, Escape, and focus return to the
+ * opener. A context menu is invoked from a tree row, and losing that row would
+ * strand a keyboard user in the document — Radix restores it, and it also
+ * restores it in the cases the hand-rolled version got wrong.
+ *
+ * The trigger is a zero-size element positioned at the pointer, because Radix
+ * positions against an element and this menu is anchored to a point. The props
+ * are unchanged from the hand-rolled version, so no consumer moved.
  */
 export function ContextMenu({ anchor, label, items, onClose }: ContextMenuProps) {
-	const menuRef = useRef<HTMLDivElement>(null);
-	const openerRef = useRef<HTMLElement | null>(null);
-
-	useEffect(() => {
-		if (!anchor) {
-			// Only reclaim focus if it is still inside the menu being removed;
-			// a click elsewhere has already put focus where the user wanted it.
-			const opener = openerRef.current;
-			openerRef.current = null;
-			if (opener?.isConnected && !document.activeElement?.closest('.ide-context-menu')) {
-				opener.focus();
-			}
-			return;
-		}
-		openerRef.current = document.activeElement as HTMLElement | null;
-		menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
-	}, [anchor]);
-
-	useEffect(() => {
-		if (!anchor) {
-			return;
-		}
-		// Any press outside dismisses. pointerdown rather than click, so the
-		// menu is gone before the press lands on whatever is underneath.
-		function onPointerDown(event: PointerEvent): void {
-			if (!menuRef.current?.contains(event.target as Node)) {
-				onClose();
-			}
-		}
-		window.addEventListener('pointerdown', onPointerDown);
-		return () => window.removeEventListener('pointerdown', onPointerDown);
-	}, [anchor, onClose]);
-
-	if (!anchor) {
-		return null;
-	}
-
-	function focusItem(index: number): void {
-		const buttons = menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]');
-		if (!buttons?.length) {
-			return;
-		}
-		buttons[(index + buttons.length) % buttons.length].focus();
-	}
-
-	function onKeyDown(event: React.KeyboardEvent, index: number): void {
-		if (event.key === 'Escape') {
-			event.preventDefault();
-			event.stopPropagation();
-			onClose();
-		} else if (event.key === 'ArrowDown') {
-			event.preventDefault();
-			focusItem(index + 1);
-		} else if (event.key === 'ArrowUp') {
-			event.preventDefault();
-			focusItem(index - 1);
-		} else if (event.key === 'Home') {
-			event.preventDefault();
-			focusItem(0);
-		} else if (event.key === 'End') {
-			event.preventDefault();
-			focusItem(items.length - 1);
-		}
-	}
-
 	return (
-		<div
-			className="ide-context-menu"
-			role="menu"
-			aria-label={label}
-			ref={menuRef}
-			style={{ left: anchor.x, top: anchor.y }}
-		>
-			{items.map((item, index) => (
-				<button
-					key={item.id}
-					type="button"
-					role="menuitem"
-					className={`ide-context-menu-item${item.danger ? ' ide-context-menu-item-danger' : ''}`}
-					onClick={() => {
-						// Close first, so focus restoration happens before the
-						// action moves focus somewhere of its own.
-						onClose();
-						item.run();
-					}}
-					onKeyDown={(event) => onKeyDown(event, index)}
-				>
-					{item.label}
-				</button>
-			))}
-		</div>
+		<Menu.Root open={anchor !== undefined} onOpenChange={(open) => !open && onClose()} modal={false}>
+			<Menu.Trigger
+				aria-hidden
+				tabIndex={-1}
+				style={{
+					position: 'fixed',
+					left: anchor?.x ?? 0,
+					top: anchor?.y ?? 0,
+					width: 0,
+					height: 0,
+					pointerEvents: 'none',
+				}}
+			/>
+			<Menu.Portal>
+				<Menu.Content className="ide-context-menu" aria-label={label} align="start" sideOffset={0}>
+					{items.map((item) => (
+						<Menu.Item
+							key={item.id}
+							className={`ide-context-menu-item${item.danger ? ' ide-context-menu-item-danger' : ''}`}
+							onSelect={item.run}
+						>
+							{item.label}
+						</Menu.Item>
+					))}
+				</Menu.Content>
+			</Menu.Portal>
+		</Menu.Root>
 	);
 }

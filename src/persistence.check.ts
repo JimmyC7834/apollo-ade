@@ -17,11 +17,11 @@ const { createPersistenceAdapter } = await import('./persistence.ts');
 const adapter = createPersistenceAdapter();
 
 const state = {
-	visible: { primarySidebar: true, secondarySidebar: false, panel: true },
-	primaryWidth: 300,
-	secondaryWidth: 260,
-	panelHeight: 200,
-	primaryView: 'search' as const,
+	dockFraction: 0.34,
+	dockCollapsed: false,
+	pinned: ['artifact:terminal', 'artifact:changes'],
+	activeArtifactId: 'artifact:terminal',
+	theme: 'light' as const,
 	workspace: { label: 'repo', path: '/tmp/repo' },
 	editors: [{ id: 'a.ts', name: 'a.ts', content: 'unsaved' }],
 	activeEditorId: 'a.ts',
@@ -38,6 +38,14 @@ const key = Object.keys(store)[0];
 
 // A newer (or older) schema is ignored, not partially read.
 store[key] = JSON.stringify({ version: 99, state });
+assert.equal(adapter.load(), undefined);
+
+// Slice 40's own case: a version-1 record describes three regions that no
+// longer exist. It is dropped whole rather than half-read into a dock.
+store[key] = JSON.stringify({
+	version: 1,
+	state: { visible: {}, primaryWidth: 300, primaryView: 'search', editors: [] },
+});
 assert.equal(adapter.load(), undefined);
 
 // A payload with no version at all is ignored.

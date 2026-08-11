@@ -20,6 +20,7 @@ import { userTools } from '../../agent/userTools';
 import { Icon, Overlay } from '../../ui';
 import { OTHER } from '../../agent/ask';
 import { thinkingUnavailable } from '../../agent/models';
+import { liveStatus, type SessionStatus } from '../../sessions';
 import {
 	answerQuestion,
 	applyEvent,
@@ -52,6 +53,19 @@ export interface AgentChatProps {
 	readonly files?: readonly string[];
 	/** Routed to the workbench live region for state changes worth hearing. */
 	readonly onAnnounce?: (message: string) => void;
+	/**
+	 * Report the live session's state upward, for the Session Navigator.
+	 *
+	 * A callback rather than lifting `running`/`awaiting` into the controller:
+	 * those are this component's own working state, and the navigator wants one
+	 * derived answer, not three raw flags it would have to combine correctly.
+	 * `name` is the first prompt, which is the only thing about a session that
+	 * is naturally a name.
+	 */
+	readonly onSession?: (state: {
+		readonly status: SessionStatus;
+		readonly name: string | undefined;
+	}) => void;
 }
 
 /**
@@ -315,7 +329,7 @@ function UsageView({ usage }: { readonly usage: Usage }) {
 	);
 }
 
-export function AgentChat({ provider, files = [], onAnnounce }: AgentChatProps) {
+export function AgentChat({ provider, files = [], onAnnounce, onSession }: AgentChatProps) {
 	const [turns, setTurns] = useState<readonly Turn[]>([]);
 	const [prompt, setPrompt] = useState('');
 	const [running, setRunning] = useState(false);
@@ -341,6 +355,18 @@ export function AgentChat({ provider, files = [], onAnnounce }: AgentChatProps) 
 
 	/** What the conversation has cost, over the turns that reported a price. */
 	const spent = useMemo(() => sessionCost(turns), [turns]);
+
+	/*
+	 * `awaiting` covers an approval and a question alike: both stop the run dead
+	 * until the user answers, which is what "waiting for input" means. Reporting
+	 * it separately from `running` is the whole point — see `liveStatus`.
+	 */
+	useEffect(() => {
+		onSession?.({
+			status: liveStatus({ running: running || compacting, blocked: awaiting, turns: turns.length }),
+			name: turns[0]?.prompt,
+		});
+	}, [onSession, running, compacting, awaiting, turns]);
 
 	const runRef = useRef<AgentRun>(null);
 	const promptRef = useRef<HTMLTextAreaElement>(null);

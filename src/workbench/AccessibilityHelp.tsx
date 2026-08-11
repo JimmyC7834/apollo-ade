@@ -22,23 +22,30 @@ export function AccessibilityHelp({ open, onClose }: AccessibilityHelpProps) {
 				<dt>Ctrl+S</dt>
 				<dd>Save the active editor. Unsaved tabs show a dot instead of a close button.</dd>
 				<dt>Tab / Shift+Tab</dt>
-				<dd>Move between the titlebar, regions, and separators.</dd>
-				<dt>Arrow keys on a separator</dt>
-				<dd>Resize the adjacent region in 20px steps.</dd>
-				<dt>Home / End on a separator</dt>
-				<dd>Resize to the smallest or largest allowed size.</dd>
+				<dd>Move between the titlebar, the session navigator, chat, and the artifact dock.</dd>
+				<dt>Tab into the session navigator</dt>
+				<dd>
+					Expands it, so session names are readable without a pointer. Leaving it collapses
+					it again. Rows marked “fixture” are prototype content with no agent behind them.
+				</dd>
+				<dt>Arrow keys on the dock edge</dt>
+				<dd>
+					Resize the artifact dock in 2% steps. The edge has no visible handle but is
+					focusable.
+				</dd>
 				<dt>Arrow keys in the file tree</dt>
 				<dd>Move between files; left and right collapse and expand folders.</dd>
 				<dt>Shift+Tab in the terminal</dt>
 				<dd>Leave the terminal. Tab itself is sent to the shell.</dd>
 				<dt>Escape</dt>
 				<dd>
-					Close this dialog. In the editor it dismisses the editor; open tabs and unsaved
-					edits are kept.
+					Close this dialog. In the editor it dismisses the editor; open tabs, splits and
+					unsaved edits are kept.
 				</dd>
 			</dl>
 			<p className="ide-help-note">
-				Hiding a region that contains the keyboard focus moves focus to the main region.
+				Collapsing the artifact dock while the keyboard focus is inside it moves focus back
+				to chat.
 			</p>
 			<button type="button" className="ide-button" onClick={onClose}>
 				Close

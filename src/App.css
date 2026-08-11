@@ -1,5 +1,13 @@
+@import 'tailwindcss';
 @import './ui/tokens.css';
 @import '@xterm/xterm/css/xterm.css';
+
+/*
+ * Tailwind's `dark:` variant follows the OS by default. The theme here is a
+ * user choice persisted through `persistence.ts`, so it follows the class the
+ * theme toggle writes onto <html> instead.
+ */
+@custom-variant dark (&:where(.dark, .dark *));
 
 * {
 	box-sizing: border-box;
@@ -9,14 +17,14 @@ body {
 	margin: 0;
 	height: 100vh;
 	overflow: hidden;
-	background: var(--ide-bg);
-	color: var(--ide-fg);
-	font-family: var(--ide-font-family);
-	font-size: var(--ide-font-size);
+	background: var(--background);
+	color: var(--foreground);
+	font-family: var(--font-sans);
+	font-size: var(--text-base);
 }
 
 :focus-visible {
-	outline: var(--ide-focus-width) solid var(--ide-focus);
+	outline: var(--ring-width) solid var(--ring);
 	outline-offset: -1px;
 }
 
@@ -28,8 +36,8 @@ body {
  */
 
 ::-webkit-scrollbar {
-	width: var(--ide-scrollbar-size);
-	height: var(--ide-scrollbar-size);
+	width: var(--scrollbar-size);
+	height: var(--scrollbar-size);
 }
 
 ::-webkit-scrollbar-track,
@@ -38,17 +46,17 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-	background: var(--ide-scrollbar-slider);
+	background: var(--scrollbar-slider);
 	/* No radius, like VS Code's slider. */
 	border-radius: 0;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-	background: var(--ide-scrollbar-slider-hover);
+	background: var(--scrollbar-slider-hover);
 }
 
 ::-webkit-scrollbar-thumb:active {
-	background: var(--ide-scrollbar-slider-active);
+	background: var(--scrollbar-slider-active);
 }
 
 /* Workbench topology */
@@ -87,7 +95,7 @@ body {
  *
  * Clamping in CSS rather than in the drag handler keeps the stored preference
  * intact: shrink the window and the region gives way, grow it again and the
- * user's size comes back. `--ide-region-min` is the same floor the sashes use,
+ * user's size comes back. `--region-min` is the same floor the sashes use,
  * so main is guaranteed the same minimum either way.
  *
  * Caveat: with both sidebars open each is capped independently, so together
@@ -95,13 +103,13 @@ body {
  */
 .ide-region-sidebar {
 	flex: none;
-	max-width: calc(100% - var(--ide-region-min));
-	background: var(--ide-bg-sidebar);
+	max-width: calc(100% - var(--region-min));
+	background: var(--sidebar);
 }
 
 .ide-region-main {
 	flex: 1;
-	background: var(--ide-bg);
+	background: var(--background);
 }
 
 .ide-region-main:focus {
@@ -110,8 +118,8 @@ body {
 
 .ide-region-panel {
 	flex: none;
-	max-height: calc(100% - var(--ide-region-min));
-	background: var(--ide-bg-panel);
+	max-height: calc(100% - var(--region-min));
+	background: var(--card);
 }
 
 /* Titlebar */
@@ -120,9 +128,46 @@ body {
 	display: flex;
 	align-items: center;
 	flex: none;
-	height: var(--ide-titlebar-height);
-	background: var(--ide-bg-titlebar);
-	border-bottom: 1px solid var(--ide-border);
+	height: var(--titlebar-height);
+	background: var(--sidebar);
+	border-bottom: 1px solid var(--border);
+}
+
+/*
+ * The ADE button. 42px tall like every other titlebar control, but content
+ * width — it is a label, not an icon.
+ */
+.ide-titlebar-menu {
+	display: inline-flex;
+	align-items: center;
+	flex: none;
+	gap: var(--space-1);
+	height: var(--titlebar-height);
+	padding: 0 var(--space-4);
+	border: none;
+	background: transparent;
+	color: var(--foreground);
+	font: inherit;
+	font-weight: 600;
+	letter-spacing: 0.02em;
+	cursor: pointer;
+}
+
+.ide-titlebar-menu:hover,
+.ide-titlebar-menu[data-state='open'] {
+	background: var(--accent);
+}
+
+.ide-context-menu-item-note {
+	margin-left: auto;
+	padding-left: var(--space-4);
+	color: var(--foreground-subtle);
+	font-size: var(--text-small);
+}
+
+.ide-context-menu-item[data-disabled] {
+	color: var(--foreground-subtle);
+	cursor: default;
 }
 
 .ide-titlebar-drag {
@@ -131,13 +176,29 @@ body {
 	align-items: center;
 	justify-content: center;
 	height: 100%;
+	/*
+	 * The whole point of the breadcrumb region. Without `min-width: 0` a flex
+	 * item refuses to shrink below its content, so a long workspace name would
+	 * push the window controls off the right edge instead of truncating —
+	 * Shell Guide principle 6, bought in one declaration.
+	 */
 	min-width: 0;
 }
 
 .ide-titlebar-title {
-	color: var(--ide-fg-muted);
-	font-size: var(--ide-font-size-small);
+	max-width: 100%;
+	color: var(--muted-foreground);
+	font-size: var(--text-small);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
 	user-select: none;
+	/* Not draggable itself would be wrong: the label is part of the drag region. */
+	pointer-events: none;
+}
+
+.ide-titlebar-session {
+	color: var(--foreground);
 }
 
 .ide-titlebar-actions,
@@ -148,8 +209,8 @@ body {
 }
 
 .ide-titlebar-actions {
-	gap: var(--ide-space-1);
-	padding: 0 var(--ide-space-3);
+	gap: var(--space-1);
+	padding: 0 var(--space-3);
 }
 
 /* Controls */
@@ -158,26 +219,26 @@ body {
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	width: var(--ide-control-size);
-	height: var(--ide-control-size);
+	width: var(--control-size);
+	height: var(--control-size);
 	padding: 0;
 	border: none;
-	border-radius: var(--ide-radius);
+	border-radius: var(--radius);
 	background: transparent;
-	color: var(--ide-fg);
+	color: var(--foreground);
 	cursor: pointer;
 }
 
 .ide-icon-button:hover {
-	background: var(--ide-bg-hover);
+	background: var(--accent);
 }
 
 .ide-icon-button[aria-pressed='false'] {
-	color: var(--ide-fg-subtle);
+	color: var(--foreground-subtle);
 }
 
 .ide-icon-button:disabled {
-	color: var(--ide-fg-subtle);
+	color: var(--foreground-subtle);
 	cursor: default;
 }
 
@@ -185,34 +246,35 @@ body {
 	background: transparent;
 }
 
+/* Each window control is exactly as wide as the titlebar is tall. */
 .ide-window-controls .ide-icon-button {
-	width: 46px;
-	height: var(--ide-titlebar-height);
+	width: var(--titlebar-height);
+	height: var(--titlebar-height);
 	border-radius: 0;
 }
 
 .ide-icon-button-danger:hover {
-	background: var(--ide-fg-danger);
-	color: #ffffff;
+	background: var(--destructive);
+	color: var(--destructive-foreground);
 }
 
 .ide-button {
-	padding: var(--ide-space-2) var(--ide-space-4);
-	border: 1px solid var(--ide-border-strong);
-	border-radius: var(--ide-radius);
+	padding: var(--space-2) var(--space-4);
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius);
 	background: transparent;
-	color: var(--ide-fg);
+	color: var(--foreground);
 	font: inherit;
 	cursor: pointer;
 }
 
 .ide-button:hover {
-	background: var(--ide-bg-hover);
+	background: var(--accent);
 }
 
 /* Disabled is a semantic role, so it renders the same wherever a button is. */
 .ide-button:disabled {
-	color: var(--ide-fg-subtle);
+	color: var(--foreground-subtle);
 	cursor: default;
 }
 
@@ -232,16 +294,16 @@ body {
 	display: flex;
 	align-items: center;
 	flex: none;
-	gap: var(--ide-space-2);
-	height: var(--ide-pane-header-height);
-	padding: 0 var(--ide-space-3);
+	gap: var(--space-2);
+	height: var(--pane-header-height);
+	padding: 0 var(--space-3);
 }
 
 .ide-pane-title {
 	flex: 1;
 	margin: 0;
-	color: var(--ide-fg-muted);
-	font-size: var(--ide-font-size-small);
+	color: var(--muted-foreground);
+	font-size: var(--text-small);
 	font-weight: 400;
 	text-transform: uppercase;
 	letter-spacing: 0.04em;
@@ -253,7 +315,7 @@ body {
 .ide-pane-actions {
 	display: flex;
 	flex: none;
-	gap: var(--ide-space-1);
+	gap: var(--space-1);
 }
 
 .ide-pane-body {
@@ -271,18 +333,18 @@ body {
 }
 
 .ide-sash-vertical {
-	width: var(--ide-sash-size);
+	width: var(--sash-size);
 	cursor: col-resize;
 }
 
 .ide-sash-horizontal {
-	height: var(--ide-sash-size);
+	height: var(--sash-size);
 	cursor: row-resize;
 }
 
 .ide-sash:hover,
 .ide-sash:focus-visible {
-	background: var(--ide-focus);
+	background: var(--ring);
 	outline: none;
 }
 
@@ -295,26 +357,27 @@ body {
 /* Explorer tree */
 
 .ide-tree {
-	padding: var(--ide-space-1) 0;
+	padding: var(--space-1) 0;
 }
 
 .ide-tree-row {
 	display: flex;
 	align-items: center;
-	gap: var(--ide-space-2);
-	height: var(--ide-row-height);
-	padding-right: var(--ide-space-3);
+	gap: var(--space-2);
+	height: var(--row-height);
+	padding-right: var(--space-3);
 	white-space: nowrap;
 	cursor: pointer;
 	user-select: none;
 }
 
 .ide-tree-row:hover {
-	background: var(--ide-bg-hover);
+	background: var(--accent);
 }
 
 .ide-tree-row-active {
-	background: var(--ide-bg-active);
+	background: var(--selected);
+	color: var(--selected-foreground);
 }
 
 .ide-tree-twistie {
@@ -322,7 +385,7 @@ body {
 	justify-content: center;
 	width: 16px;
 	flex: none;
-	color: var(--ide-fg-muted);
+	color: var(--muted-foreground);
 }
 
 .ide-tree-label {
@@ -332,8 +395,8 @@ body {
 
 .ide-tree-description {
 	overflow: hidden;
-	color: var(--ide-fg-subtle);
-	font-size: var(--ide-font-size-small);
+	color: var(--foreground-subtle);
+	font-size: var(--text-small);
 	text-overflow: ellipsis;
 }
 
@@ -341,13 +404,13 @@ body {
 	display: inline-flex;
 	flex: none;
 	margin-left: auto;
-	padding-left: var(--ide-space-2);
+	padding-left: var(--space-2);
 }
 
 .ide-tree-empty {
 	margin: 0;
-	padding: var(--ide-space-3);
-	color: var(--ide-fg-muted);
+	padding: var(--space-3);
+	color: var(--muted-foreground);
 }
 
 /* Search */
@@ -360,32 +423,32 @@ body {
 
 .ide-search-field {
 	flex: none;
-	padding: var(--ide-space-2) var(--ide-space-3);
+	padding: var(--space-2) var(--space-3);
 }
 
 .ide-search-input {
 	width: 100%;
-	padding: var(--ide-space-2) var(--ide-space-3);
-	border: 1px solid var(--ide-input-border);
-	border-radius: var(--ide-radius);
-	background: var(--ide-input-bg);
-	color: var(--ide-input-fg);
+	padding: var(--space-2) var(--space-3);
+	border: 1px solid var(--input-border);
+	border-radius: var(--radius);
+	background: var(--input);
+	color: var(--input-foreground);
 	font: inherit;
 }
 
 .ide-search-input::placeholder {
-	color: var(--ide-input-placeholder);
+	color: var(--input-placeholder);
 }
 
 .ide-search-status {
 	flex: none;
 	/* Reserves its line even when empty, so results do not jump on the first
 	   search. */
-	min-height: var(--ide-row-height);
+	min-height: var(--row-height);
 	margin: 0;
-	padding: 0 var(--ide-space-3);
-	color: var(--ide-fg-muted);
-	font-size: var(--ide-font-size-small);
+	padding: 0 var(--space-3);
+	color: var(--muted-foreground);
+	font-size: var(--text-small);
 }
 
 .ide-search .ide-tree {
@@ -402,64 +465,69 @@ body {
 	justify-content: center;
 	min-width: 16px;
 	height: 16px;
-	padding: 0 var(--ide-space-2);
+	padding: 0 var(--space-2);
 	border-radius: 8px;
-	background: var(--ide-bg-hover);
-	color: var(--ide-fg-muted);
-	font-size: var(--ide-font-size-small);
+	background: var(--accent);
+	color: var(--muted-foreground);
+	font-size: var(--text-small);
 	line-height: 1;
 }
 
-/* Status colours match VS Code's SCM decorations. */
+/* Status colours: one role each, defined per theme in `tokens.css`. */
 .ide-badge-added {
-	color: #81b88b;
+	color: var(--status-added);
 }
 
 .ide-badge-modified {
-	color: #e2c08d;
+	color: var(--status-modified);
 }
 
 .ide-badge-deleted {
-	color: var(--ide-fg-danger);
+	color: var(--destructive);
 }
 
 .ide-action-bar {
 	display: flex;
-	gap: var(--ide-space-1);
-	padding: var(--ide-space-1) var(--ide-space-3);
+	gap: var(--space-1);
+	padding: var(--space-1) var(--space-3);
 }
 
+/* Radix portals and positions this; only its surface is described here. */
 .ide-context-menu {
-	position: fixed;
 	z-index: 10;
 	display: flex;
 	flex-direction: column;
 	min-width: 160px;
-	padding: var(--ide-space-1);
-	border: 1px solid var(--ide-border-strong);
-	border-radius: var(--ide-radius);
-	background: var(--ide-bg-overlay);
-	box-shadow: 0 2px 8px rgb(0 0 0 / 40%);
+	padding: var(--space-1);
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius);
+	background: var(--popover);
+	box-shadow: var(--shadow-overlay);
 }
 
 .ide-context-menu-item {
-	padding: var(--ide-space-2) var(--ide-space-3);
+	padding: var(--space-2) var(--space-3);
 	border: none;
-	border-radius: var(--ide-radius);
+	border-radius: var(--radius);
 	background: transparent;
-	color: var(--ide-fg);
+	color: var(--foreground);
 	font: inherit;
 	text-align: left;
 	cursor: pointer;
 }
 
-.ide-context-menu-item:hover {
-	background: var(--ide-bg-active);
+.ide-context-menu-item:hover,
+.ide-context-menu-item[data-highlighted] {
+	background: var(--accent);
+	/* Radix moves highlight with the pointer *and* the arrow keys, so the row
+	   background is the focus indicator; a second ring on top of it reads as
+	   two selections. */
+	outline: none;
 }
 
 .ide-context-menu-item-danger,
 .ide-button-danger {
-	color: var(--ide-fg-danger);
+	color: var(--destructive);
 }
 
 /* Editor */
@@ -480,7 +548,7 @@ body {
 	align-items: center;
 	justify-content: center;
 	height: 100%;
-	color: var(--ide-fg-subtle);
+	color: var(--foreground-subtle);
 }
 
 /* Tabs */
@@ -493,8 +561,8 @@ body {
 
 /* Editor strip: boxed tabs on the titlebar surface, VS Code's tab.* colours. */
 .ide-tabs-editor {
-	background: var(--ide-bg-titlebar);
-	border-bottom: 1px solid var(--ide-border);
+	background: var(--sidebar);
+	border-bottom: 1px solid var(--border);
 }
 
 /*
@@ -506,34 +574,34 @@ body {
 	height: 30px;
 	border-right: none;
 	border-bottom: 1px solid transparent;
-	padding: 0 var(--ide-space-3);
+	padding: 0 var(--space-3);
 }
 
 .ide-tabs-panel .ide-tab-active {
 	background: transparent;
-	border-bottom-color: var(--ide-terminal-tab-active-border);
+	border-bottom-color: var(--primary);
 }
 
 .ide-tabs-panel .ide-tab:hover {
-	color: var(--ide-fg);
+	color: var(--foreground);
 }
 
 .ide-tab {
 	display: flex;
 	align-items: center;
-	gap: var(--ide-space-2);
+	gap: var(--space-2);
 	flex: none;
-	height: var(--ide-pane-header-height);
-	padding: 0 var(--ide-space-3);
-	border-right: 1px solid var(--ide-border);
-	color: var(--ide-fg-muted);
+	height: var(--pane-header-height);
+	padding: 0 var(--space-3);
+	border-right: 1px solid var(--border);
+	color: var(--muted-foreground);
 	cursor: pointer;
 	user-select: none;
 }
 
 .ide-tab-active {
-	background: var(--ide-bg);
-	color: var(--ide-fg);
+	background: var(--background);
+	color: var(--foreground);
 }
 
 .ide-tab-label {
@@ -548,7 +616,7 @@ body {
 	height: 20px;
 	padding: 0;
 	border: none;
-	border-radius: var(--ide-radius);
+	border-radius: var(--radius);
 	background: transparent;
 	color: inherit;
 	cursor: pointer;
@@ -562,7 +630,7 @@ body {
 }
 
 .ide-tab-close:hover {
-	background: var(--ide-bg-hover);
+	background: var(--accent);
 }
 
 /* The unsaved marker takes the close button's place until the tab is hovered. */
@@ -604,15 +672,15 @@ body {
 	display: flex;
 	align-items: center;
 	flex: none;
-	gap: var(--ide-space-2);
+	gap: var(--space-2);
 	height: 30px;
-	padding-right: var(--ide-space-3);
-	border-bottom: 1px solid var(--ide-border);
+	padding-right: var(--space-3);
+	border-bottom: 1px solid var(--border);
 }
 
 .ide-terminal-title {
 	flex: none;
-	padding-left: var(--ide-space-3);
+	padding-left: var(--space-3);
 }
 
 .ide-terminal-bar .ide-tabs {
@@ -631,7 +699,7 @@ body {
 	flex: 1;
 	min-height: 0;
 	/* VS Code leaves a small gutter around the buffer, not a full pane inset. */
-	padding: var(--ide-space-2) 0 0 var(--ide-space-3);
+	padding: var(--space-2) 0 0 var(--space-3);
 }
 
 .ide-terminal-empty {
@@ -640,7 +708,7 @@ body {
 	justify-content: center;
 	flex: 1;
 	margin: 0;
-	color: var(--ide-fg-subtle);
+	color: var(--foreground-subtle);
 }
 
 /* xterm sizes itself to the host; let it own the full box. */
@@ -658,33 +726,33 @@ body {
 .ide-overlay {
 	min-width: 320px;
 	max-width: 480px;
-	padding: var(--ide-space-5);
-	border: 1px solid var(--ide-border-strong);
-	border-radius: var(--ide-radius);
-	background: var(--ide-bg-overlay);
-	color: var(--ide-fg);
-	font-family: var(--ide-font-family);
-	font-size: var(--ide-font-size);
+	padding: var(--space-5);
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius);
+	background: var(--popover);
+	color: var(--foreground);
+	font-family: var(--font-sans);
+	font-size: var(--text-base);
 }
 
 .ide-overlay::backdrop {
-	background: rgb(0 0 0 / 40%);
+	background: var(--backdrop);
 }
 
 .ide-overlay-title {
-	margin: 0 0 var(--ide-space-4);
-	font-size: var(--ide-font-size);
+	margin: 0 0 var(--space-4);
+	font-size: var(--text-base);
 	font-weight: 600;
 }
 
 .ide-dialog-actions {
 	display: flex;
 	justify-content: flex-end;
-	gap: var(--ide-space-3);
+	gap: var(--space-3);
 }
 
 .ide-quickpick-row-disabled .ide-quickpick-label {
-	color: var(--ide-fg-subtle);
+	color: var(--foreground-subtle);
 }
 
 /* Empty state — a pane with nothing in it yet, offering the way out. */
@@ -693,9 +761,9 @@ body {
 	display: flex;
 	flex-direction: column;
 	align-items: stretch;
-	gap: var(--ide-space-4);
-	padding: var(--ide-space-5) var(--ide-space-4);
-	color: var(--ide-fg-muted);
+	gap: var(--space-4);
+	padding: var(--space-5) var(--space-4);
+	color: var(--muted-foreground);
 }
 
 .ide-empty-state p {
@@ -719,24 +787,24 @@ body {
 .ide-quickpick {
 	width: min(600px, 90vw);
 	max-width: none;
-	padding: var(--ide-space-2);
+	padding: var(--space-2);
 	/* Anchored near the top, like a command palette, not centred. */
 	margin-top: 12vh;
 }
 
 .ide-quickpick-input {
 	width: 100%;
-	padding: var(--ide-space-3);
-	border: 1px solid var(--ide-focus);
-	border-radius: var(--ide-radius);
-	background: var(--ide-bg);
-	color: var(--ide-fg);
+	padding: var(--space-3);
+	border: 1px solid var(--ring);
+	border-radius: var(--radius);
+	background: var(--background);
+	color: var(--foreground);
 	font: inherit;
 }
 
 .ide-quickpick-list {
 	max-height: 40vh;
-	margin: var(--ide-space-2) 0 0;
+	margin: var(--space-2) 0 0;
 	padding: 0;
 	overflow-y: auto;
 	list-style: none;
@@ -745,14 +813,15 @@ body {
 .ide-quickpick-row {
 	display: flex;
 	align-items: center;
-	gap: var(--ide-space-3);
-	padding: var(--ide-space-2) var(--ide-space-3);
-	border-radius: var(--ide-radius);
+	gap: var(--space-3);
+	padding: var(--space-2) var(--space-3);
+	border-radius: var(--radius);
 	cursor: pointer;
 }
 
 .ide-quickpick-row-active {
-	background: var(--ide-bg-active);
+	background: var(--selected);
+	color: var(--selected-foreground);
 }
 
 .ide-quickpick-label {
@@ -763,38 +832,38 @@ body {
 
 .ide-quickpick-detail {
 	margin-left: auto;
-	color: var(--ide-fg-subtle);
-	font-size: var(--ide-font-size-small);
+	color: var(--foreground-subtle);
+	font-size: var(--text-small);
 	white-space: nowrap;
 }
 
 .ide-quickpick-status {
-	margin: var(--ide-space-2) 0 0;
-	padding: 0 var(--ide-space-3);
-	color: var(--ide-fg-subtle);
-	font-size: var(--ide-font-size-small);
+	margin: var(--space-2) 0 0;
+	padding: 0 var(--space-3);
+	color: var(--foreground-subtle);
+	font-size: var(--text-small);
 }
 
 .ide-help-list {
 	display: grid;
 	grid-template-columns: auto 1fr;
-	gap: var(--ide-space-2) var(--ide-space-4);
-	margin: 0 0 var(--ide-space-4);
+	gap: var(--space-2) var(--space-4);
+	margin: 0 0 var(--space-4);
 }
 
 .ide-help-list dt {
-	color: var(--ide-fg);
+	color: var(--foreground);
 	white-space: nowrap;
 }
 
 .ide-help-list dd {
 	margin: 0;
-	color: var(--ide-fg-muted);
+	color: var(--muted-foreground);
 }
 
 .ide-help-note {
-	margin: 0 0 var(--ide-space-4);
-	color: var(--ide-fg-muted);
+	margin: 0 0 var(--space-4);
+	color: var(--muted-foreground);
 }
 
 /* Agent chat — the primary mode. Chat content leads; tool activity recedes. */
@@ -808,9 +877,9 @@ body {
 .ide-agent-log {
 	flex: 1;
 	min-height: 0;
-	padding: var(--ide-space-5);
+	padding: var(--space-5);
 	overflow-y: auto;
-	line-height: var(--ide-line-height);
+	line-height: var(--line-height);
 }
 
 .ide-agent-log:focus {
@@ -820,25 +889,25 @@ body {
 .ide-agent-placeholder,
 .ide-agent-status {
 	margin: 0;
-	color: var(--ide-fg-muted);
+	color: var(--muted-foreground);
 }
 
 .ide-agent-turn + .ide-agent-turn {
-	margin-top: var(--ide-space-5);
-	padding-top: var(--ide-space-5);
-	border-top: 1px solid var(--ide-border);
+	margin-top: var(--space-5);
+	padding-top: var(--space-5);
+	border-top: 1px solid var(--border);
 }
 
 .ide-agent-prompt {
-	margin: 0 0 var(--ide-space-4);
-	padding: var(--ide-space-3) var(--ide-space-4);
-	border-radius: var(--ide-radius);
-	background: var(--ide-bg-hover);
+	margin: 0 0 var(--space-4);
+	padding: var(--space-3) var(--space-4);
+	border-radius: var(--radius);
+	background: var(--accent);
 	white-space: pre-wrap;
 }
 
 .ide-agent-text {
-	margin: 0 0 var(--ide-space-3);
+	margin: 0 0 var(--space-3);
 	/* Streamed chunks arrive with their own newlines and spacing. */
 	white-space: pre-wrap;
 }
@@ -846,20 +915,20 @@ body {
 /* Reasoning is usually noise and always long, so it collapses. The answer
    should be the thing you read. */
 .ide-agent-thinking {
-	margin: 0 0 var(--ide-space-3);
-	color: var(--ide-fg-muted);
-	font-size: var(--ide-font-size-small);
+	margin: 0 0 var(--space-3);
+	color: var(--muted-foreground);
+	font-size: var(--text-small);
 }
 
 .ide-agent-thinking > summary {
 	cursor: pointer;
-	color: var(--ide-fg-subtle);
+	color: var(--foreground-subtle);
 }
 
 .ide-agent-thinking > p {
-	margin: var(--ide-space-2) 0 0;
-	padding-left: var(--ide-space-3);
-	border-left: 1px solid var(--ide-border);
+	margin: var(--space-2) 0 0;
+	padding-left: var(--space-3);
+	border-left: 1px solid var(--border);
 	white-space: pre-wrap;
 }
 
@@ -867,16 +936,16 @@ body {
    updates in place, so its state is carried by the row rather than by adding
    another one. */
 .ide-agent-tool {
-	margin: 0 0 var(--ide-space-2);
-	font-size: var(--ide-font-size-small);
+	margin: 0 0 var(--space-2);
+	font-size: var(--text-small);
 }
 
 .ide-agent-tool-head {
 	display: flex;
 	align-items: center;
-	gap: var(--ide-space-2);
+	gap: var(--space-2);
 	margin: 0;
-	color: var(--ide-fg-muted);
+	color: var(--muted-foreground);
 }
 
 .ide-agent-tool-name {
@@ -884,8 +953,8 @@ body {
 }
 
 .ide-agent-tool-input {
-	color: var(--ide-fg-subtle);
-	font-family: var(--ide-font-family-mono);
+	color: var(--foreground-subtle);
+	font-family: var(--font-mono);
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
@@ -895,24 +964,24 @@ body {
 .ide-agent-tool-state {
 	margin-left: auto;
 	flex: none;
-	color: var(--ide-fg-subtle);
+	color: var(--foreground-subtle);
 }
 
 .ide-agent-tool[data-state='failed'] .ide-agent-tool-state {
-	color: var(--ide-fg-danger);
+	color: var(--destructive);
 }
 
 /* Capped rather than scrolled: a long file would otherwise push the answer off
    screen, and the answer is the point. */
 .ide-agent-tool-output {
-	margin: var(--ide-space-2) 0 0;
-	padding: var(--ide-space-2) var(--ide-space-3);
+	margin: var(--space-2) 0 0;
+	padding: var(--space-2) var(--space-3);
 	max-height: 12em;
 	overflow: auto;
-	border-left: 1px solid var(--ide-border);
-	color: var(--ide-fg-subtle);
-	font-family: var(--ide-font-family-mono);
-	font-size: var(--ide-font-size-small);
+	border-left: 1px solid var(--border);
+	color: var(--foreground-subtle);
+	font-family: var(--font-mono);
+	font-size: var(--text-small);
 	white-space: pre-wrap;
 }
 
@@ -920,19 +989,19 @@ body {
 .ide-agent-error {
 	display: flex;
 	align-items: flex-start;
-	gap: var(--ide-space-2);
-	margin: var(--ide-space-2) 0;
-	padding: var(--ide-space-2) var(--ide-space-3);
-	border-left: 2px solid var(--ide-fg-danger);
-	background: var(--ide-bg-overlay);
-	color: var(--ide-fg);
+	gap: var(--space-2);
+	margin: var(--space-2) 0;
+	padding: var(--space-2) var(--space-3);
+	border-left: 2px solid var(--destructive);
+	background: var(--popover);
+	color: var(--foreground);
 }
 
 .ide-agent-compacted,
 .ide-agent-usage {
-	margin: var(--ide-space-2) 0 0;
-	color: var(--ide-fg-subtle);
-	font-size: var(--ide-font-size-small);
+	margin: var(--space-2) 0 0;
+	color: var(--foreground-subtle);
+	font-size: var(--text-small);
 }
 
 /* The summary is what the model still knows. Quiet, but reachable. */
@@ -941,26 +1010,26 @@ body {
 }
 
 .ide-agent-compacted-summary {
-	margin: var(--ide-space-2) 0 0;
-	padding-left: var(--ide-space-3);
-	border-left: 2px solid var(--ide-border);
+	margin: var(--space-2) 0 0;
+	padding-left: var(--space-3);
+	border-left: 2px solid var(--border);
 	white-space: pre-wrap;
 }
 
 /* Context pressure is the one number in the footer worth looking at. */
 .ide-agent-usage-warn {
-	color: var(--ide-fg);
+	color: var(--foreground);
 	font-weight: 600;
 }
 
 /* Approval is the one thing in the transcript that stops the user. */
 .ide-agent-approval {
-	margin: var(--ide-space-3) 0;
-	padding: var(--ide-space-4);
-	border: 1px solid var(--ide-border-strong);
-	border-left: 2px solid var(--ide-focus);
-	border-radius: var(--ide-radius);
-	background: var(--ide-bg-overlay);
+	margin: var(--space-3) 0;
+	padding: var(--space-4);
+	border: 1px solid var(--border-strong);
+	border-left: 2px solid var(--ring);
+	border-radius: var(--radius);
+	background: var(--popover);
 }
 
 .ide-agent-approval-title {
@@ -969,57 +1038,57 @@ body {
 }
 
 .ide-agent-approval-detail {
-	margin: var(--ide-space-2) 0 0;
-	color: var(--ide-fg-muted);
-	font-family: var(--ide-font-family-mono);
-	font-size: var(--ide-font-size-small);
+	margin: var(--space-2) 0 0;
+	color: var(--muted-foreground);
+	font-family: var(--font-mono);
+	font-size: var(--text-small);
 }
 
 .ide-agent-approval-actions {
 	display: flex;
-	gap: var(--ide-space-3);
-	margin-top: var(--ide-space-4);
+	gap: var(--space-3);
+	margin-top: var(--space-4);
 }
 
 .ide-agent-approval-state {
-	margin: var(--ide-space-3) 0 0;
-	color: var(--ide-fg-muted);
-	font-size: var(--ide-font-size-small);
+	margin: var(--space-3) 0 0;
+	color: var(--muted-foreground);
+	font-size: var(--text-small);
 }
 
 /* A question reuses the approval surface: both stop the run, and looking like
    two different things would teach the reader a distinction that costs them
    attention without telling them anything. Only the answer controls differ. */
 .ide-agent-question-options {
-	margin: var(--ide-space-3) 0 0;
+	margin: var(--space-3) 0 0;
 	padding: 0;
 	list-style: none;
 	display: flex;
 	flex-direction: column;
-	gap: var(--ide-space-2);
+	gap: var(--space-2);
 }
 
 .ide-agent-question-options label,
 .ide-agent-question-other {
 	display: flex;
 	align-items: center;
-	gap: var(--ide-space-2);
+	gap: var(--space-2);
 	cursor: pointer;
 }
 
 .ide-agent-question-other {
-	margin-top: var(--ide-space-3);
-	color: var(--ide-fg-muted);
-	font-size: var(--ide-font-size-small);
+	margin-top: var(--space-3);
+	color: var(--muted-foreground);
+	font-size: var(--text-small);
 }
 
 .ide-agent-question-text {
 	flex: 1;
 	min-width: 0;
-	padding: var(--ide-space-2);
-	border: 1px solid var(--ide-border-strong);
-	border-radius: var(--ide-radius);
-	background: var(--ide-bg-input, var(--ide-bg-overlay));
+	padding: var(--space-2);
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius);
+	background: var(--input, var(--popover));
 	color: inherit;
 	font: inherit;
 }
@@ -1027,25 +1096,25 @@ body {
 /* The composer is an elevated outer-tier surface, not part of the transcript. */
 .ide-agent-composer {
 	flex: none;
-	padding: var(--ide-space-4) var(--ide-space-5);
-	border-top: 1px solid var(--ide-border);
-	background: var(--ide-bg-panel);
+	padding: var(--space-4) var(--space-5);
+	border-top: 1px solid var(--border);
+	background: var(--card);
 }
 
 .ide-agent-input {
 	display: block;
 	width: 100%;
-	padding: var(--ide-space-3);
-	border: 1px solid var(--ide-input-border);
-	border-radius: var(--ide-radius);
-	background: var(--ide-input-bg);
-	color: var(--ide-input-fg);
+	padding: var(--space-3);
+	border: 1px solid var(--input-border);
+	border-radius: var(--radius);
+	background: var(--input);
+	color: var(--input-foreground);
 	font: inherit;
 	resize: none;
 }
 
 .ide-agent-input::placeholder {
-	color: var(--ide-input-placeholder);
+	color: var(--input-placeholder);
 }
 
 /*
@@ -1056,52 +1125,53 @@ body {
  */
 .ide-agent-completions {
 	max-height: 12rem;
-	margin: var(--ide-space-2) 0 0;
+	margin: var(--space-2) 0 0;
 	padding: 0;
 	overflow-y: auto;
-	border: 1px solid var(--ide-border);
-	border-radius: var(--ide-radius);
-	background: var(--ide-bg-overlay);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	background: var(--popover);
 	list-style: none;
 }
 
 .ide-agent-completion {
 	display: flex;
 	justify-content: space-between;
-	gap: var(--ide-space-4);
-	padding: var(--ide-space-2) var(--ide-space-3);
+	gap: var(--space-4);
+	padding: var(--space-2) var(--space-3);
 	cursor: default;
 }
 
 .ide-agent-completion-picked {
 	/* The same highlight the quick pick uses; one selected row, one colour. */
-	background: var(--ide-bg-active);
+	background: var(--selected);
+	color: var(--selected-foreground);
 }
 
 .ide-agent-completion-value {
-	font-family: var(--ide-font-family-mono);
+	font-family: var(--font-mono);
 }
 
 .ide-agent-completion-summary {
-	color: var(--ide-fg-muted);
-	font-size: var(--ide-font-size-small);
+	color: var(--muted-foreground);
+	font-size: var(--text-small);
 	text-align: right;
 }
 
 .ide-agent-composer-actions {
 	display: flex;
 	justify-content: flex-end;
-	gap: var(--ide-space-3);
-	margin-top: var(--ide-space-3);
+	gap: var(--space-3);
+	margin-top: var(--space-3);
 }
 
 .ide-agent-plain {
 	max-width: 70ch;
 	max-height: 50vh;
-	margin: 0 0 var(--ide-space-4);
+	margin: 0 0 var(--space-4);
 	overflow: auto;
-	font-family: var(--ide-font-family-mono);
-	font-size: var(--ide-font-size-small);
+	font-family: var(--font-mono);
+	font-size: var(--text-small);
 	white-space: pre-wrap;
 }
 
@@ -1119,6 +1189,16 @@ body {
 	max-width: none;
 	height: min(760px, 86vh);
 	padding: 0;
+	/*
+	 * Native `resize: both`, per the Shell Guide, with bounds that prevent an
+	 * unusable state in either direction. The corner indicator is the UA's own,
+	 * which is the "subtle" the Guide asks for — a drawn one would be louder.
+	 */
+	resize: both;
+	overflow: hidden;
+	min-width: 480px;
+	min-height: 320px;
+	max-height: 94vh;
 }
 
 /*
@@ -1139,19 +1219,43 @@ body {
 .ide-overlay-editor .ide-overlay-title {
 	flex: none;
 	margin: 0;
-	padding: var(--ide-space-3) var(--ide-space-5);
-	border-bottom: 1px solid var(--ide-border);
+	padding: var(--space-3) var(--space-5);
+	border-bottom: 1px solid var(--border);
 }
 
 .ide-overlay-editor .ide-editor-workbench {
 	flex: 1;
+	min-width: 0;
 	min-height: 0;
 }
 
-.ide-editor-dialog-close {
+/* Two-pane splitting. Both panes share one set of inputs and keep their own
+   selection, so the same file can be open on both sides. */
+.ide-editor-dialog-body {
+	display: flex;
+	flex: 1;
+	min-height: 0;
+}
+
+.ide-editor-split-none,
+.ide-editor-split-horizontal {
+	flex-direction: column;
+}
+
+.ide-editor-split-vertical > .ide-editor-workbench + .ide-editor-workbench {
+	border-left: 1px solid var(--border);
+}
+
+.ide-editor-split-horizontal > .ide-editor-workbench + .ide-editor-workbench {
+	border-top: 1px solid var(--border);
+}
+
+.ide-editor-dialog-actions {
 	position: absolute;
-	top: var(--ide-space-2);
-	right: var(--ide-space-3);
+	top: var(--space-2);
+	right: var(--space-3);
+	display: flex;
+	gap: var(--space-1);
 }
 
 /* Replace, ticket 30. The plan is a list of files, not a tree: every row is an
@@ -1160,15 +1264,15 @@ body {
 
 .ide-search-actions {
 	display: flex;
-	gap: var(--ide-space-2);
-	margin-top: var(--ide-space-2);
+	gap: var(--space-2);
+	margin-top: var(--space-2);
 }
 
 .ide-search-plan {
 	flex: none;
 	max-height: 40%;
 	margin: 0;
-	padding: 0 var(--ide-space-3);
+	padding: 0 var(--space-3);
 	overflow: auto;
 	list-style: none;
 }
@@ -1176,8 +1280,8 @@ body {
 .ide-search-plan-row {
 	display: flex;
 	align-items: center;
-	gap: var(--ide-space-2);
-	min-height: var(--ide-row-height);
+	gap: var(--space-2);
+	min-height: var(--row-height);
 }
 
 /* The name takes the slack, so the two buttons stay put as paths get longer. */
@@ -1186,4 +1290,378 @@ body {
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
+}
+
+/* Session Navigator — slice 39.
+
+   Every measurement here is from the Shell Guide and is exact: 32px collapsed
+   including a 1px right border, a 31px icon column that matches the actual
+   inner width, 264px expanded, 32px rows, 12px markers and 18px for the active
+   one. They are stated as literals rather than tokens because they are one
+   component's geometry, not a role anything else shares. */
+
+.ide-navigator {
+	position: absolute;
+	top: 0;
+	left: 0;
+	bottom: 0;
+	z-index: 5;
+	display: flex;
+	flex-direction: column;
+	width: 32px;
+	border-right: 1px solid var(--border);
+	overflow: hidden auto;
+	/* Collapsed it has no background: the markers float over chat. */
+	background: transparent;
+	transition: width 90ms ease-out;
+}
+
+.ide-navigator-expanded {
+	width: 264px;
+	/* Expansion is what earns the surface — labels have to be readable against
+	   whatever is behind them, and nothing else in the collapsed state does. */
+	background: var(--sidebar);
+	box-shadow: var(--shadow-overlay);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.ide-navigator {
+		transition: none;
+	}
+}
+
+.ide-navigator-group {
+	display: flex;
+	flex: none;
+	flex-direction: column;
+}
+
+.ide-navigator-header,
+.ide-navigator-row {
+	display: flex;
+	align-items: center;
+	flex: none;
+	height: 32px;
+	padding: 0;
+	border: none;
+	/* No rounding on active or hover highlights. */
+	border-radius: 0;
+	background: transparent;
+	color: var(--foreground);
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+	/* The width is the navigator's; a long session name truncates rather than
+	   widening it. Same non-shifting rule as the titlebar breadcrumb. */
+	min-width: 0;
+	overflow: hidden;
+}
+
+.ide-navigator-header {
+	color: var(--muted-foreground);
+	font-size: var(--text-small);
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+}
+
+.ide-navigator-header:hover,
+.ide-navigator-row:hover {
+	background: var(--accent);
+}
+
+/* The active session does not use a row background highlight; its marker
+   grows instead. */
+.ide-navigator-row[aria-current='true'] {
+	background: transparent;
+	color: var(--foreground);
+}
+
+.ide-navigator-icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex: none;
+	width: 31px;
+	color: var(--muted-foreground);
+}
+
+.ide-navigator-label {
+	flex: 1;
+	min-width: 0;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.ide-navigator-action {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex: none;
+	width: 24px;
+}
+
+/* Markers are rounded squares, not circles. */
+.ide-navigator-marker {
+	width: 12px;
+	height: 12px;
+	border-radius: 3px;
+	background: currentColor;
+}
+
+.ide-navigator-marker-active {
+	width: 18px;
+	height: 18px;
+	border-radius: 4px;
+}
+
+.ide-navigator-dot {
+	width: 8px;
+	height: 8px;
+	border-radius: 2px;
+	background: currentColor;
+}
+
+.ide-status-running {
+	color: var(--status-running);
+	animation: ide-status-flash 1.4s ease-in-out infinite;
+}
+
+.ide-status-done {
+	color: var(--status-done);
+}
+
+.ide-status-idle {
+	color: var(--status-idle);
+}
+
+.ide-status-waiting {
+	color: var(--status-waiting);
+}
+
+@keyframes ide-status-flash {
+	50% {
+		opacity: 0.25;
+	}
+}
+
+/* A flashing marker is the exact thing a reduced-motion preference is about.
+   The colour still distinguishes it, and the row still announces its status. */
+@media (prefers-reduced-motion: reduce) {
+	.ide-status-running {
+		animation: none;
+	}
+}
+
+.ide-navigator-unread {
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: var(--status-done);
+}
+
+/* The prototype marking. Deliberately plain and deliberately always visible:
+   a fixture that is only distinguishable on hover is not marked. */
+.ide-navigator-fixture {
+	flex: none;
+	margin-right: var(--space-2);
+	padding: 0 var(--space-2);
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius);
+	color: var(--foreground-subtle);
+	font-size: var(--text-small);
+	text-transform: none;
+	letter-spacing: 0;
+}
+
+/* Pinned Workbench — slice 40.
+
+   The dock is a flex sibling of chat rather than an overlay: chat gives up the
+   space, it is not covered. That is the difference between this and the Session
+   Navigator, which sits over chat on purpose. */
+
+.ide-dock {
+	position: relative;
+	display: flex;
+	flex: none;
+	flex-direction: column;
+	min-width: 0;
+	min-height: 0;
+	background: var(--card);
+}
+
+.ide-dock-right {
+	border-left: 1px solid var(--border);
+}
+
+.ide-dock-bottom {
+	border-top: 1px solid var(--border);
+}
+
+/* Collapsed: a 32px icon strip on the right, a 32px tab bar at the bottom. */
+
+.ide-dock-collapsed {
+	flex-direction: column;
+	width: 32px;
+	cursor: pointer;
+}
+
+.ide-dock-bottom.ide-dock-collapsed {
+	flex-direction: row;
+	width: auto;
+	height: 32px;
+}
+
+.ide-dock-strip-tab {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex: none;
+	width: 32px;
+	height: 32px;
+	padding: 0;
+	border: none;
+	background: transparent;
+	color: var(--muted-foreground);
+	cursor: pointer;
+}
+
+.ide-dock-strip-tab:hover {
+	background: var(--accent);
+	color: var(--foreground);
+}
+
+/*
+ * Anchored to the far end — bottom of the right strip, right of the bottom bar
+ * — and `auto` margin rather than a spacer element, because a spacer is the
+ * first thing to collapse once content-sized tabs overflow the bar.
+ */
+.ide-dock-collapse {
+	display: inline-flex;
+	align-items: center;
+	flex: none;
+	margin-top: auto;
+}
+
+.ide-dock-bottom .ide-dock-collapse,
+.ide-dock-tabs .ide-dock-collapse {
+	margin-top: 0;
+	margin-left: auto;
+}
+
+.ide-dock-right.ide-dock-collapsed .ide-dock-collapse {
+	margin-top: auto;
+	margin-left: 0;
+}
+
+/*
+ * The resize target: invisible, 8px, on the edge that faces chat. A real
+ * element rather than a border, because a border cannot take a pointer capture.
+ */
+.ide-dock-resize {
+	position: absolute;
+	z-index: 2;
+	background: transparent;
+}
+
+.ide-dock-right .ide-dock-resize {
+	top: 0;
+	bottom: 0;
+	left: -4px;
+	width: 8px;
+	cursor: col-resize;
+}
+
+.ide-dock-bottom .ide-dock-resize {
+	left: 0;
+	right: 0;
+	top: -4px;
+	height: 8px;
+	cursor: row-resize;
+}
+
+/* Artifact tabs — 32px, content-sized between 80 and 180px. */
+
+.ide-dock-tabs {
+	display: flex;
+	align-items: stretch;
+	flex: none;
+	height: var(--tabbar-height);
+	border-bottom: 1px solid var(--border);
+	overflow-x: auto;
+	overflow-y: hidden;
+}
+
+.ide-dock-tab {
+	position: relative;
+	display: flex;
+	flex: none;
+	min-width: 80px;
+	max-width: 180px;
+}
+
+.ide-dock-tab-label {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-2);
+	width: 100%;
+	/* Room for the overlaid close button, reserved whether or not it is shown —
+	   this is what makes showing it cost nothing. */
+	padding: 0 24px 0 var(--space-3);
+	border: none;
+	border-bottom: 1px solid transparent;
+	background: transparent;
+	color: var(--muted-foreground);
+	font: inherit;
+	cursor: pointer;
+}
+
+.ide-dock-tab-active .ide-dock-tab-label {
+	border-bottom-color: var(--primary);
+	background: var(--background);
+	color: var(--foreground);
+}
+
+.ide-dock-tab-text {
+	min-width: 0;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+/* Absolutely overlaid on the label. Labels truncate beneath it. */
+.ide-dock-tab-close {
+	position: absolute;
+	top: 50%;
+	right: var(--space-1);
+	transform: translateY(-50%);
+	display: none;
+	align-items: center;
+	justify-content: center;
+	width: 20px;
+	height: 20px;
+	padding: 0;
+	border: none;
+	border-radius: var(--radius);
+	background: transparent;
+	color: var(--foreground);
+	cursor: pointer;
+}
+
+.ide-dock-tab:hover .ide-dock-tab-close,
+.ide-dock-tab-close:focus-visible {
+	display: inline-flex;
+}
+
+.ide-dock-tab-close:hover {
+	background: var(--accent);
+}
+
+.ide-dock-body {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	min-width: 0;
+	min-height: 0;
+	overflow: hidden;
 }

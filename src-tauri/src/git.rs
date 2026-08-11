@@ -132,6 +132,25 @@ pub fn git_changes(state: tauri::State<'_, WorkspaceState>) -> Result<Vec<Change
     }
 }
 
+/// The current branch name, for the titlebar breadcrumb.
+///
+/// `None` rather than an error in the two cases that are not failures: the
+/// workspace is not a repository, or HEAD is detached and there is no branch to
+/// name. The breadcrumb shows the workspace alone in both, which is honest —
+/// inventing "main" or "HEAD" would not be.
+#[tauri::command]
+pub fn git_branch(state: tauri::State<'_, WorkspaceState>) -> Result<Option<String>, String> {
+    let root = root_of(&state)?;
+    match git(&root, &["symbolic-ref", "--short", "HEAD"]) {
+        Ok(raw) => {
+            let name = raw.trim();
+            Ok((!name.is_empty()).then(|| name.to_string()))
+        }
+        // Not a repository, or a detached HEAD, which `symbolic-ref` refuses.
+        Err(_) => Ok(None),
+    }
+}
+
 /// The working-tree side of a diff.
 ///
 /// Only one failure is allowed to read as an empty file: the file is not there,

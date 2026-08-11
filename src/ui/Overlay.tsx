@@ -23,6 +23,13 @@ export interface OverlayProps {
  * allowed to close itself. `cancel` is prevented and Escape is handled here,
  * because the dialog's own `close` event is not delivered in every WebView —
  * syncing state from it strands the overlay permanently open.
+ *
+ * Slice 37 moved `ContextMenu` onto Radix and left this alone deliberately.
+ * Radix Dialog exists because a library cannot assume `<dialog>`; this app can,
+ * and `showModal()` is the platform giving away focus containment, the top
+ * layer and the backdrop for free. Swapping it would be more code, not less,
+ * and would discard the WebView behaviour recorded in the paragraph above,
+ * which was found by measurement rather than by reading a spec.
  */
 export function Overlay({
 	open,

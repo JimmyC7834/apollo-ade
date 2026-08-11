@@ -52,11 +52,25 @@ buys length, not more findings.
 
 ## The guide is the spec
 
-`docs/# Building a VS Code-Like Agent IDE with Vertical Slices.md` is the
-authoritative architecture record and roadmap. Follow it — slice order, adapter
-seams, security policy, accessibility contracts, UI-extraction rules. If you
-deviate, say so explicitly and record it in the dev log rather than quietly
-diverging.
+Two documents are authoritative, and they cover different things. Say which one
+you mean; never write "the guide" unqualified.
+
+**The Shell Guide** — `docs/UIUX-UPDATE.md`. Authoritative for everything the
+user sees: workbench topology, chrome, the transcript, the composer, profiles as
+a surface, the palette, themes, tokens, iconography, and the component stack
+they are written in. Where it and the guide below disagree, **the Shell Guide
+wins.** It is a design that was drawn elsewhere and is being migrated to here,
+so parts of it describe a mock with no engine — its own "Interaction caveats"
+say as much. Those parts are shape, not behaviour, and a ticket that implements
+one literally is a ticket that has misread it.
+
+**The guide** — `docs/# Building a VS Code-Like Agent IDE with Vertical
+Slices.md`. Authoritative for everything else: adapter seams, security policy,
+accessibility contracts, slice discipline, the UI-extraction rule. Its shell is
+superseded; nothing else is.
+
+Follow both. If you deviate from either, say so explicitly and record it in the
+dev log rather than quietly diverging.
 
 ## Dev log rule
 

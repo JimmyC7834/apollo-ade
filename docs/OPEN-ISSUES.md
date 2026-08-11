@@ -3,8 +3,43 @@
 Living document — **edit it**, unlike `DEVLOG.md`, which is append-only history.
 Close an item by deleting it and recording the fix in the dev log.
 
-Last updated after **Slice 39**. What is left is the unverified surface, which is
-the larger half of this file and always was.
+Last updated after **Slices 37–40**, the shell migration. What is left is the
+unverified surface, which is the larger half of this file and always was.
+
+## The whole shell is written-not-seen
+
+**Nothing about slices 37–40 has been looked at.** The browser pane served no
+frames during that session — `innerWidth` and `innerHeight` both read 0 — so
+every measurement in them was written from the Shell Guide and compiled, never
+observed. Specifically unverified:
+
+- **The light theme has never been rendered.** It is new in slice 37 and there is
+  no evidence any surface in it is readable. Check Monaco, the terminal, the diff
+  editor and every overlay.
+- The 42px titlebar, and whether the breadcrumb truncates instead of pushing the
+  window controls.
+- The Session Navigator's 32px collapsed / 264px expanded widths, 32px rows,
+  12px and 18px markers, and whether expanding really does not reflow chat.
+- The dock's invisible 8px resize target, its 24–65% bounds, the 32px collapsed
+  strip and bar, and whether the collapse control stays anchored when tabs
+  overflow.
+- **Portrait docking has never been seen at a real viewport.** `dockSide` is
+  checked as arithmetic; the layout it produces is not.
+- `resize: both` on the Modal Workbench, its corner indicator, and the two-pane
+  split.
+- Whether a tab's close button really appears without resizing the tab. That is
+  the same non-shifting rule in four places and none of them are confirmed.
+
+The native window is where this has to be checked — see the WebView2 debugging
+port section below.
+
+## Three Rust commands are compiled and never called
+
+`git_branch`, `recent_workspaces` and `switch_workspace` (slices 38–39) build and
+are registered, and nothing has invoked them. Browser mode answers with the
+fixture, so a real branch name and a real workspace switch are both unproven.
+`switch_workspace` in particular has a refusal path (dirty editors, a running
+turn) that has never fired.
 
 **This file had been stale since Slice 12e** — nineteen slices, the whole of the
 agent — and it said the agent chat had never run in the native window while every

@@ -32,6 +32,15 @@ export interface ChangeDiff {
 
 export interface ChangesProvider {
 	getChanges(): Promise<readonly Change[]>;
+	/**
+	 * The current branch, for the titlebar breadcrumb.
+	 *
+	 * Undefined in the two cases that are not failures: the workspace is not a
+	 * repository, or HEAD is detached and there is no branch to name. The
+	 * breadcrumb shows the workspace alone in both — inventing "main" or "HEAD"
+	 * would not be honest.
+	 */
+	getBranch(): Promise<string | undefined>;
 	getDiff(id: string): Promise<ChangeDiff>;
 	stage(id: string): Promise<void>;
 	unstage(id: string): Promise<void>;
@@ -95,6 +104,9 @@ function fixtureChangesProvider(): ChangesProvider {
 	}
 
 	return {
+		async getBranch() {
+			return 'fixture';
+		},
 		async getChanges() {
 			return seeds.map((seed) => ({
 				id: seed.id,
@@ -152,6 +164,9 @@ function gitChangesProvider(): ChangesProvider {
 	};
 
 	return {
+		async getBranch() {
+			return (await core()).invoke<string | null>('git_branch').then((name) => name ?? undefined);
+		},
 		async getChanges() {
 			return (await core()).invoke<Change[]>('git_changes');
 		},

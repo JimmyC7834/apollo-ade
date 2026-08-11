@@ -3856,3 +3856,144 @@ a rate override and nothing without one. Every real API implementation in
 `pi-ai/dist/api/` does call it, which is a reading rather than a run. The
 dirty-editor refusal is covered by `replace.check.ts` and has not been exercised
 by hand.
+
+---
+
+## Slices 37–40 — the shell migration
+
+**User outcome.** The app is now the shell the Shell Guide describes: a light and
+a dark theme with a permanent toggle, an ADE menu and a breadcrumb in a 42px
+titlebar, a Session Navigator down the left of chat, and an artifact dock in
+place of the three panel regions.
+
+### Added
+
+- `src/ui/tokens.css` rewritten: two complete themes under the Shell Guide's
+  token names, plus `@theme inline` so Tailwind's utilities and `var()` resolve
+  to the same value.
+- `src/ui/theme.ts` — the one place a token becomes a colour literal, plus the
+  theme store the titlebar sets and the terminal subscribes to.
+- `src/sessions.ts` + `sessions.check.ts` — the session model, `liveStatus`, and
+  the fixture groups.
+- `src/artifacts.ts` + `artifacts.check.ts` — the artifact model, dock side and
+  dock bounds.
+- `src/features/sessions/SessionNavigator.tsx`, `src/workbench/PinnedWorkbench.tsx`,
+  `src/workbench/ArtifactView.tsx`.
+- Rust: `git_branch`, `recent_workspaces`, `switch_workspace`.
+- `docs/adr/0001-multi-root-confinement.md`.
+
+### UI extracted / reused
+
+Nothing new was extracted. `ContextMenu` moved onto Radix and kept its props, so
+no consumer changed. `Overlay` was **kept** and the reason is written into the
+file: `<dialog showModal()>` is the platform giving away focus containment, the
+top layer and the backdrop, and this app can assume it where a library cannot.
+`EditorWorkbench` is now mounted twice — that is what the Modal Workbench's
+two-pane split is.
+
+### Adapters and dependencies
+
+Four new dependencies, all named by the Shell Guide: `tailwindcss` v4 with
+`@tailwindcss/vite`, four Radix primitives, and `react-markdown` (installed here,
+used by slice 41). This is a deviation from `context.md`'s *"prefer an existing
+dependency to a new one"*, taken deliberately and recorded in ticket 37: the
+design was drawn in that vocabulary and reproducing it in another is how a design
+arrives 80% right in a way nobody can point at.
+
+`ChangesProvider` gained `getBranch`. `WorkspaceProvider` gained
+`recentWorkspaces` and `switchWorkspace`.
+
+### Security boundary
+
+**Switching workspaces takes an index, never a path.** `choose_workspace` exists
+so the renderer never names a root, and a path parameter on a switch command
+would reopen exactly that hole under a friendlier name — which is why
+`set_workspace`, which does take one, still refuses outside debug builds. The
+recent list lives in Rust's config dir and every entry on it is a folder the user
+handed over through an OS dialog, so an index reaches nothing choosing did not.
+
+One root remains the confinement boundary. The navigator's extra workspace group
+is a fixture and renders nothing that touches `workspace.rs`.
+
+A switch is **refused** while anything is dirty or a turn is running, rather than
+handled. Both were legitimate answers in ticket 31 and this is the cheap one.
+Project-scoped profiles are re-read on switch — the half most likely to be
+missed.
+
+**Every other recent root is a group in the navigator with no sessions, and one
+click switches to it.** The spec review caught the gap: the recent list was being
+read and had nowhere to be seen, so switching worked and was unreachable. Empty
+is the honest rendering — sessions do not persist, so a root that is not open has
+none. The current root is filtered out **by path, not by label**, because two
+checkouts of one project share a label, and `switchIndex` stays the index into
+the *unfiltered* list — filtering and then indexing the copy would hand Rust the
+wrong root, which `sessions.check.ts` now asserts against.
+
+### Accessibility behavior
+
+- The ADE menu and the context menu get their keyboard model from Radix rather
+  than from hand-rolled key handling. Escape closes and focus returns to the
+  trigger.
+- The Session Navigator expands on **focus** as well as hover, so its labels are
+  not pointer-only, and every row carries a visually-hidden status, unread state
+  and the words "prototype fixture".
+- The flashing running marker is disabled under `prefers-reduced-motion`; colour
+  and the announced status still distinguish it.
+- The dock's invisible 8px resize target is focusable and resizes with the arrow
+  keys. "No visible handle" must not also mean no keyboard.
+- `AccessibilityHelp` was rewritten: it described three regions and their
+  separators, none of which exist any more.
+
+### Validation performed
+
+`npx tsc --noEmit` clean, `npm run build` clean, `npm run check` — **25 checks**,
+all passing, including `replace.check.ts` and `WorkbenchTree.check.ts` untouched.
+`cargo test` 10 passing.
+
+Live in browser mode: the ADE menu opens with its five items and the three that
+cannot act say why; `View: Show Terminal` pins the terminal, the dock renders it,
+and the persisted record is exactly the new schema
+(`{version:2, dockFraction, dockCollapsed, pinned, activeArtifactId, theme, …}`).
+No console errors.
+
+**Not validated.** *Nothing visual.* The browser pane served no frames this
+session — `innerWidth` and `innerHeight` both read 0 — so no measurement, no
+screenshot, and no light/dark comparison was possible. Every geometry claim in
+slices 38–40 is written-not-seen: the 42px titlebar, the 32px/264px navigator,
+the 12px/18px markers, the 24–65% dock bounds, `resize: both`, and whether the
+close button really fails to resize a tab. **The light theme has never been
+looked at.** `docs/OPEN-ISSUES.md` carries this.
+
+Also unexercised: `git_branch`, `recent_workspaces` and `switch_workspace` are
+native-only and have only been type-checked and compiled — browser mode returns
+`'fixture'` and a one-item list. Portrait/bottom docking has not been seen at a
+real viewport.
+
+### Caveats and deviations
+
+**The Shell Guide's `--primary` is not this app's selection colour.** Mapping the
+old `--ide-bg-active` onto `--primary` put dark text on saturated blue in the
+light theme. `--selected` / `--selected-foreground` were added; the Guide's list
+of fifteen names is a floor, not a ceiling. Same for `--foreground-subtle`,
+`--status-added`, `--status-modified`, `--shadow-overlay` and `--backdrop`, each
+added because a colour literal was otherwise left in `App.css`.
+
+**Persistence version 1 is dropped, not migrated.** A version-1 record stores
+geometry for three regions that no longer exist, and there is no honest mapping
+from "panel 220px tall" to a dock fraction.
+
+**The Explorer tree survives as an artifact.** Ticket 40 forbids deleting it
+until slice 42's Context Explorer lands, so it is pinned like any other artifact
+rather than removed with its region.
+
+**`App.css` was not rewritten into Tailwind utilities.** Tailwind is installed
+and configured, and `@theme inline` makes both spellings the same value, so new
+components are written in utilities while 1,100 lines of working CSS keep
+running off the same tokens. Rewriting them would have been a second full
+restyle inside a slice whose job was to make one possible.
+
+**The fixture sessions are on `master` and marked.** Three extra sessions and one
+extra workspace group, every one carrying a visible "fixture" chip and the words
+"prototype fixture" in its accessible name, and `sessions.check.ts` asserts that
+exactly one session is `live`. Clicking a fixture announces that it is one and
+starts no harness.

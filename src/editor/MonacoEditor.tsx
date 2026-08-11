@@ -4,6 +4,7 @@ import { useEffect, useImperativeHandle, useRef, type Ref } from 'react';
 import type { EditorHandle } from './EditorHandle';
 import { focusEditor } from './focusEditor';
 import { languageForPath } from './monacoEnvironment';
+import { MONACO_THEME } from '../ui/theme';
 
 export interface MonacoEditorProps {
 	readonly ref?: Ref<EditorHandle>;
@@ -56,7 +57,7 @@ export function MonacoEditor({ ref, id, content, revealLine, onChange }: MonacoE
 			return;
 		}
 		const editor = monaco.editor.create(host, {
-			theme: 'vs-dark',
+			theme: MONACO_THEME,
 			automaticLayout: true,
 			minimap: { enabled: false },
 			scrollBeyondLastLine: false,

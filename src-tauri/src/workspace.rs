@@ -263,7 +263,33 @@ fn record(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         .map_err(|e| e.to_string())
 }
 
-/// Write the record `restore_workspace` reads back.
+/// Where the recent-roots list lives, one canonical path per line.
+fn recents_file(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_config_dir()
+        .map(|dir| dir.join("recent-workspaces"))
+        .map_err(|e| e.to_string())
+}
+
+/// How many roots the list holds. Small on purpose: it is a switcher, not a
+/// history, and every entry is a folder this app has been given authority over.
+const MAX_RECENTS: usize = 8;
+
+fn read_recents(app: &tauri::AppHandle) -> Vec<String> {
+    let Ok(file) = recents_file(app) else {
+        return Vec::new();
+    };
+    fs::read_to_string(file)
+        .unwrap_or_default()
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// Write the record `restore_workspace` reads back, and push the root onto the
+/// recent list that `switch_workspace` indexes into.
 ///
 /// Silent on failure, deliberately: the user asked to open a folder and it is
 /// open. Losing only the ability to reopen it automatically next launch is not
@@ -274,6 +300,57 @@ fn remember(app: &tauri::AppHandle, path: &str) {
         let _ = fs::create_dir_all(dir);
     }
     let _ = fs::write(file, path);
+
+    // Most recent first, no duplicates, capped.
+    let mut recents = read_recents(app);
+    recents.retain(|entry| entry != path);
+    recents.insert(0, path.to_string());
+    recents.truncate(MAX_RECENTS);
+    if let Ok(list) = recents_file(app) {
+        let _ = fs::write(list, recents.join("\n"));
+    }
+}
+
+/// The roots this app has already been given, most recent first.
+#[tauri::command]
+pub fn recent_workspaces(app: tauri::AppHandle) -> Result<Vec<WorkspaceInfo>, String> {
+    Ok(read_recents(&app)
+        .into_iter()
+        .map(|path| {
+            let label = Path::new(&path)
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.clone());
+            WorkspaceInfo { label, path }
+        })
+        .collect())
+}
+
+/// Switch to a root **already on the recent list**, by its index in that list.
+///
+/// The index is the whole security argument. `choose_workspace` exists so the
+/// renderer never names a root; a path parameter here would reopen exactly that
+/// hole under a friendlier name, and `set_workspace` — which does take a path —
+/// refuses outside debug builds for the same reason. An index can only reach a
+/// folder the user has already picked through an OS dialog in some earlier
+/// session, so switching grants no authority that choosing did not already.
+///
+/// One root remains the confinement boundary. It is merely a different root
+/// than it was a moment ago; see `docs/adr/0001-multi-root-confinement.md` for
+/// why more than one at a time is a different decision that has not been made.
+#[tauri::command]
+pub fn switch_workspace(
+    index: usize,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, WorkspaceState>,
+) -> Result<WorkspaceInfo, String> {
+    let recents = read_recents(&app);
+    let path = recents
+        .get(index)
+        .ok_or_else(|| "no such recent workspace".to_string())?;
+    let info = adopt(Path::new(path), &state)?;
+    remember(&app, &info.path);
+    Ok(info)
 }
 
 /// Choose the workspace root through an OS folder dialog.

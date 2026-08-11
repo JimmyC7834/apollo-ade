@@ -2,12 +2,17 @@
 // without a version leaves users with state that cannot be read or safely
 // discarded. Anything unrecognised is ignored, never migrated by guesswork.
 
+import type { ThemeName } from './ui/theme';
 import type { WorkspaceSelection } from './workspace';
 
 const KEY = 'ade.workbench';
-const VERSION = 1;
-
-export type PrimaryView = 'explorer' | 'search';
+/*
+ * 2 as of slice 40. The three regions this used to store geometry for no longer
+ * exist, so a version-1 record describes a workbench that cannot be rebuilt —
+ * which is exactly what the version is for. It is dropped, not migrated by
+ * guesswork: there is no honest mapping from "panel 220px tall" to a dock.
+ */
+const VERSION = 2;
 
 export interface PersistedEditor {
 	readonly id: string;
@@ -17,11 +22,14 @@ export interface PersistedEditor {
 }
 
 export interface PersistedState {
-	readonly visible: Record<'primarySidebar' | 'secondarySidebar' | 'panel', boolean>;
-	readonly primaryWidth: number;
-	readonly secondaryWidth: number;
-	readonly panelHeight: number;
-	readonly primaryView: PrimaryView;
+	/** Fraction of the workbench the dock takes, already within its bounds. */
+	readonly dockFraction: number;
+	readonly dockCollapsed: boolean;
+	/** Artifact ids currently pinned, in tab order. A dock you rebuild every
+	 *  launch is a dock you stop using. */
+	readonly pinned: readonly string[];
+	readonly activeArtifactId?: string;
+	readonly theme?: ThemeName;
 	readonly workspace?: WorkspaceSelection;
 	readonly editors: readonly PersistedEditor[];
 	readonly activeEditorId?: string;

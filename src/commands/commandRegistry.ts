@@ -5,6 +5,10 @@
  * drifting apart as features are added.
  */
 
+import { TOOL_ARTIFACTS } from '../artifacts.ts';
+
+const TOOL_ARTIFACT_LIST = Object.values(TOOL_ARTIFACTS);
+
 export interface Command {
 	readonly id: string;
 	/** Shown in the palette; also what the query is matched against. */
@@ -27,13 +31,11 @@ export function commandLabel(command: Command): string {
 }
 
 export interface WorkbenchActions {
-	togglePrimarySidebar: () => void;
-	toggleSecondarySidebar: () => void;
-	togglePanel: () => void;
+	/** Pin an artifact into the dock, or raise it if it is already there. */
+	showArtifact: (id: string) => void;
+	toggleDock: () => void;
 	closeActiveEditor: () => void;
 	saveActiveEditor: () => void;
-	showExplorer: () => void;
-	showSearch: () => void;
 	/** Raise the editor dialog over the workbench. */
 	showEditor: () => void;
 	/** Set when the editor could be raised but has nothing to show. */
@@ -81,35 +83,23 @@ export function buildCommands(actions: WorkbenchActions): readonly Command[] {
 			disabled: actions.showEditorDisabled,
 			run: actions.showEditor,
 		},
-		{
-			id: 'view.showExplorer',
+		/*
+		 * One command per artifact, from `TOOL_ARTIFACTS`, rather than one per
+		 * region. Slice 40 replaced the three regions with the dock; these are
+		 * how the four features that lived in them are still reachable from the
+		 * palette. Adding a fifth artifact adds its command for free.
+		 */
+		...TOOL_ARTIFACT_LIST.map((artifact) => ({
+			id: `view.show.${artifact.id}`,
 			category: 'View',
-			title: 'Show Explorer',
-			run: actions.showExplorer,
-		},
+			title: `Show ${artifact.title}`,
+			run: () => actions.showArtifact(artifact.id),
+		})),
 		{
-			id: 'view.showSearch',
+			id: 'view.toggleDock',
 			category: 'View',
-			title: 'Show Search',
-			run: actions.showSearch,
-		},
-		{
-			id: 'view.togglePrimarySidebar',
-			category: 'View',
-			title: 'Toggle Primary Sidebar',
-			run: actions.togglePrimarySidebar,
-		},
-		{
-			id: 'view.toggleSecondarySidebar',
-			category: 'View',
-			title: 'Toggle Secondary Sidebar',
-			run: actions.toggleSecondarySidebar,
-		},
-		{
-			id: 'view.togglePanel',
-			category: 'View',
-			title: 'Toggle Panel',
-			run: actions.togglePanel,
+			title: 'Toggle Artifact Dock',
+			run: actions.toggleDock,
 		},
 		{
 			id: 'editor.closeActive',

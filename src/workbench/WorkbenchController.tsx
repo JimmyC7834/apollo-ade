@@ -2,39 +2,55 @@
 // commands do, what is persisted, and which feature renders into which slot.
 // Geometry lives in WorkbenchLayout — this file never sets a width.
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 
 import { createAgentProvider, loadProfileFiles } from '../agent';
+import { clampDock, dockSide } from '../artifacts';
 import { createChangesProvider } from '../changes';
 import { buildCommands } from '../commands/commandRegistry';
 import { EditorDialog } from '../editor/EditorDialog';
 import { isDirty, type EditorInput } from '../editor/EditorWorkbench';
 import { neighbourId } from '../ids';
 import { AgentChat } from '../features/agent/AgentChat';
-import { ChangesView } from '../features/changes/ChangesView';
 import { CommandCenter } from '../features/commandCenter/CommandCenter';
-import { ExplorerTree } from '../features/explorer/ExplorerTree';
-import { SearchView } from '../features/search/SearchView';
 import { refuseReason, type Replacement } from '../features/search/replace';
-import { TerminalPanel } from '../features/terminal/TerminalPanel';
-import { createPersistenceAdapter, type PersistedState, type PrimaryView } from '../persistence';
+import { SessionNavigator } from '../features/sessions/SessionNavigator';
+import { createPersistenceAdapter, type PersistedState } from '../persistence';
+import { LIVE_SESSION_ID, breadcrumb, buildGroups, type SessionStatus } from '../sessions';
 import { createTerminalAdapter } from '../terminal';
-import { ActionBar, IconButton, Pane } from '../ui';
+import { applyTheme, type ThemeName } from '../ui/theme';
 import {
 	createWorkspaceProvider,
 	type WorkspaceEntry,
 	type WorkspaceSelection,
 } from '../workspace';
 import { AccessibilityHelp } from './AccessibilityHelp';
+import { ArtifactView, artifactRef } from './ArtifactView';
 import { ConfirmDiscard } from './ConfirmDiscard';
-import { Titlebar } from './Titlebar';
-import {
-	DEFAULT_LAYOUT,
-	WorkbenchLayout,
-	type WorkbenchLayoutState,
-	type WorkbenchRegion,
-} from './WorkbenchLayout';
+import { PinnedWorkbench } from './PinnedWorkbench';
+import { Titlebar, type AdeMenuAction } from './Titlebar';
+import { WorkbenchLayout } from './WorkbenchLayout';
 import { useWindowControls } from './useWindowControls';
+
+/** The dock's default share of the workbench, and what it opens with. */
+const DEFAULT_DOCK_FRACTION = 0.34;
+
+/**
+ * Which way the workbench splits, from the window as it is now.
+ *
+ * A subscription rather than a `useState` plus a listener: the value is not
+ * this component's to own, it is the window's, and `useSyncExternalStore` is
+ * the hook that says so.
+ */
+function useDockSide() {
+	return useSyncExternalStore(
+		(listener) => {
+			window.addEventListener('resize', listener);
+			return () => window.removeEventListener('resize', listener);
+		},
+		() => dockSide(window.innerWidth, window.innerHeight)
+	);
+}
 
 // Rust rejections arrive as strings, not Errors, so both shapes are read.
 function reason(error: unknown): string {
@@ -49,20 +65,41 @@ export function WorkbenchController() {
 	const persistence = useMemo(() => createPersistenceAdapter(), []);
 	const restored = useMemo(() => persistence.load(), [persistence]);
 
-	// The persisted geometry fields are exactly WorkbenchLayoutState, so the
-	// refactor did not touch the storage schema.
-	const [layout, setLayout] = useState<WorkbenchLayoutState>(() =>
-		restored
-			? {
-					visible: restored.visible,
-					primaryWidth: restored.primaryWidth,
-					secondaryWidth: restored.secondaryWidth,
-					panelHeight: restored.panelHeight,
-				}
-			: DEFAULT_LAYOUT
+	const side = useDockSide();
+
+	/*
+	 * The dock. `pinned` holds artifact ids in tab order — tool artifacts from
+	 * `TOOL_ARTIFACTS` and file ids side by side, because the dock does not care
+	 * which it is showing. Nothing is pinned by default: an empty dock is not
+	 * rendered at all, so a first launch is chat and nothing else, which is what
+	 * "chat is the primary workspace" means.
+	 */
+	const [dockFraction, setDockFraction] = useState(
+		() => restored?.dockFraction ?? DEFAULT_DOCK_FRACTION
 	);
-	const [primaryView, setPrimaryView] = useState<PrimaryView>(restored?.primaryView ?? 'explorer');
+	const [dockCollapsed, setDockCollapsed] = useState(restored?.dockCollapsed ?? false);
+	const [pinned, setPinned] = useState<readonly string[]>(restored?.pinned ?? []);
+	const [activeArtifactId, setActiveArtifactId] = useState<string | undefined>(
+		restored?.activeArtifactId
+	);
+
+	/*
+	 * The theme is applied before the first paint rather than from an effect:
+	 * an effect runs after the commit, which would show every user one frame of
+	 * the wrong theme on every launch. `applyTheme` also redefines Monaco's
+	 * theme, which is global and keyed by name, so this is the only call site.
+	 */
+	const [theme, setTheme] = useState<ThemeName>(restored?.theme ?? 'dark');
+	useMemo(() => applyTheme(theme), [theme]);
+
 	const [helpOpen, setHelpOpen] = useState(false);
+	const [branch, setBranch] = useState<string | undefined>(undefined);
+	const [recents, setRecents] = useState<readonly WorkspaceSelection[]>([]);
+	/** The live session, as `AgentChat` reports it. */
+	const [session, setSession] = useState<{
+		readonly status: SessionStatus;
+		readonly name: string | undefined;
+	}>({ status: 'idle', name: undefined });
 	const [commandCenterOpen, setCommandCenterOpen] = useState(false);
 	/*
 	 * The editor is a transient surface over the workbench, not a region and not
@@ -498,8 +535,11 @@ export function WorkbenchController() {
 			return;
 		}
 		const state: PersistedState = {
-			...layout,
-			primaryView,
+			dockFraction,
+			dockCollapsed,
+			pinned,
+			activeArtifactId,
+			theme,
 			// Geometry always belongs to this session. The workspace and its
 			// editors still belong to the last one until the root it named is
 			// either restored or replaced.
@@ -522,23 +562,44 @@ export function WorkbenchController() {
 					}),
 		};
 		persistence.save(state);
-	}, [hydrated, unrestored, persistence, layout, primaryView, selection, inputs, activeEditorId]);
+	}, [
+		hydrated,
+		unrestored,
+		persistence,
+		dockFraction,
+		dockCollapsed,
+		pinned,
+		activeArtifactId,
+		theme,
+		selection,
+		inputs,
+		activeEditorId,
+	]);
 
-	const toggle = useCallback((region: WorkbenchRegion) => {
-		setLayout((current) => ({
-			...current,
-			visible: { ...current.visible, [region]: !current.visible[region] },
-		}));
+	/**
+	 * Pin an artifact, or raise it if it is already pinned.
+	 *
+	 * Also un-collapses. An artifact the user just asked for that stays behind a
+	 * collapsed strip looks exactly like the command did nothing — the same rule
+	 * the old `showPrimaryView` followed for a hidden sidebar.
+	 */
+	const showArtifact = useCallback((id: string) => {
+		setPinned((current) => (current.includes(id) ? current : [...current, id]));
+		setActiveArtifactId(id);
+		setDockCollapsed(false);
 	}, []);
 
-	// Switching the primary view also reveals it: a view the user just asked
-	// for that stays hidden looks like the command did nothing.
-	const showPrimaryView = useCallback((view: PrimaryView) => {
-		setPrimaryView(view);
-		setLayout((current) => ({
-			...current,
-			visible: { ...current.visible, primarySidebar: true },
-		}));
+	const unpin = useCallback((id: string) => {
+		setPinned((current) => {
+			const next = current.filter((pinnedId) => pinnedId !== id);
+			// Unpinning the visible artifact selects its neighbour, the same way
+			// closing the active editor tab does.
+			setActiveArtifactId((active) => (active === id ? neighbourId(
+				current.map((pinnedId) => ({ id: pinnedId })),
+				id
+			) : active));
+			return next;
+		});
 	}, []);
 
 	const closeHelp = useCallback(() => setHelpOpen(false), []);
@@ -547,9 +608,8 @@ export function WorkbenchController() {
 	const commands = useMemo(
 		() =>
 			buildCommands({
-				togglePrimarySidebar: () => toggle('primarySidebar'),
-				toggleSecondarySidebar: () => toggle('secondarySidebar'),
-				togglePanel: () => toggle('panel'),
+				showArtifact,
+				toggleDock: () => setDockCollapsed((current) => !current),
 				closeActiveEditor: () => {
 					if (activeEditorId) {
 						closeEditor(activeEditorId);
@@ -560,8 +620,6 @@ export function WorkbenchController() {
 						void saveFile(activeEditorId);
 					}
 				},
-				showExplorer: () => showPrimaryView('explorer'),
-				showSearch: () => showPrimaryView('search'),
 				// Reopening is only meaningful with something to reopen, and an
 				// empty modal over the agent is worse than no modal.
 				showEditor: () => setEditorOpen(true),
@@ -574,8 +632,7 @@ export function WorkbenchController() {
 				showAccessibilityHelp: () => setHelpOpen(true),
 			}),
 		[
-			toggle,
-			showPrimaryView,
+			showArtifact,
 			closeEditor,
 			saveFile,
 			activeEditorId,
@@ -619,116 +676,210 @@ export function WorkbenchController() {
 		return () => window.removeEventListener('keydown', onKeyDown, true);
 	}, [activeEditorId, saveFile]);
 
+	/*
+	 * The branch, for the titlebar breadcrumb. Read with the root and again
+	 * whenever the change set moves, because that is when a checkout would have
+	 * happened — nothing watches `.git/HEAD`, and adding a watcher for a label
+	 * is more machinery than the label is worth.
+	 */
+	useEffect(() => {
+		if (!selection) {
+			setBranch(undefined);
+			return;
+		}
+		let cancelled = false;
+		const read = () => {
+			void changesProvider.getBranch().then((name) => {
+				if (!cancelled) {
+					setBranch(name);
+				}
+			});
+		};
+		read();
+		const stop = changesProvider.subscribe(read);
+		return () => {
+			cancelled = true;
+			stop();
+		};
+	}, [changesProvider, selection]);
+
+	// The recent list is Rust's; this only reads it, and re-reads it after a
+	// switch because switching reorders it.
+	useEffect(() => {
+		void provider.recentWorkspaces().then(setRecents);
+	}, [provider, selection]);
+
+	/**
+	 * Switch roots by index into that list — never by path. See
+	 * `docs/adr/0001-multi-root-confinement.md`.
+	 *
+	 * Refused outright while anything is dirty or a turn is running, rather
+	 * than handled. Both are legitimate answers and this is the cheap one:
+	 * editor ids are relative to the old root and the agent's `ExecutionEnv` is
+	 * bound to it, so a switch underneath either loses work or races.
+	 */
+	const switchWorkspace = useCallback(
+		async (index: number) => {
+			if (index >= recents.length) {
+				return;
+			}
+			if (dirty) {
+				announce('Save your changes before switching workspace.');
+				return;
+			}
+			if (session.status === 'running' || session.status === 'waiting') {
+				announce('The agent is mid-turn. Wait for it to finish before switching workspace.');
+				return;
+			}
+			let chosen: WorkspaceSelection;
+			try {
+				chosen = await provider.switchWorkspace(index);
+			} catch (error) {
+				announce(`Could not switch workspace. ${reason(error)}`);
+				return;
+			}
+			// Editor ids are relative to the old root, so they cannot survive.
+			setInputs([]);
+			setActiveEditorId(undefined);
+			setSelection(chosen);
+			setUnrestored(undefined);
+			/*
+			 * Project-scoped profiles, skills and user tools are read from the
+			 * root, so a switch has to re-read them. This is the half of ticket
+			 * 31 most likely to be missed, and it fails quietly when it is.
+			 */
+			const loaded = await loadProfileFiles();
+			announce(
+				loaded.problems.length > 0
+					? `Switched to ${chosen.label}. Profiles: ${loaded.problems.join('. ')}`
+					: `Switched to ${chosen.label}.`
+			);
+		},
+		[announce, dirty, provider, recents.length, session.status]
+	);
+
+	const groups = useMemo(
+		() =>
+			buildGroups({
+				workspace: selection,
+				branch,
+				recents,
+				liveName: session.name,
+				liveStatus: session.status,
+			}),
+		[branch, recents, selection, session]
+	);
+
+	/**
+	 * The ADE menu — the only application menu.
+	 *
+	 * Settings and About say what they are rather than being absent: a menu item
+	 * that will exist is more honest present-and-explained than missing.
+	 */
+	const adeMenu = useMemo<readonly AdeMenuAction[]>(
+		() => [
+			{
+				id: 'new-session',
+				label: 'New session',
+				// One harness, one session. Saying so beats an item that does
+				// nothing, and beats hiding what the Guide says is there.
+				disabled: 'one session in this build',
+				run: () => {},
+			},
+			{ id: 'palette', label: 'Command palette', run: () => setCommandCenterOpen(true) },
+			{ id: 'settings', label: 'Settings', disabled: 'not built yet', run: () => {} },
+			{
+				id: 'about',
+				label: 'About ADE',
+				run: () => announce('ADE — an agent development environment. Prototype build.'),
+			},
+			{
+				id: 'quit',
+				label: 'Quit',
+				disabled: controls.available ? undefined : 'native window only',
+				run: controls.close,
+			},
+		],
+		[announce, controls.available, controls.close]
+	);
+
+	// A pinned id that is no longer pinned would render an empty dock body.
+	const activeArtifact =
+		activeArtifactId && pinned.includes(activeArtifactId) ? activeArtifactId : pinned[0];
+
 	return (
 		<WorkbenchLayout
-			state={layout}
-			onChange={setLayout}
+			side={side}
 			titlebar={
 				<Titlebar
-					title="ADE"
+					workspace={breadcrumb(selection, branch)}
+					session={session.name}
 					controls={controls}
-					actions={
-						<>
-							<IconButton
-								icon="edit"
-								label={inputs.length === 0 ? 'Show editor (no open editors)' : 'Show editor'}
-								disabled={inputs.length === 0}
-								onClick={() => setEditorOpen(true)}
-							/>
-							<IconButton
-								icon="layout-sidebar-left"
-								label="Toggle primary sidebar"
-								pressed={layout.visible.primarySidebar}
-								onClick={() => toggle('primarySidebar')}
-							/>
-							<IconButton
-								icon="layout-panel"
-								label="Toggle panel"
-								pressed={layout.visible.panel}
-								onClick={() => toggle('panel')}
-							/>
-							<IconButton
-								icon="layout-sidebar-right"
-								label="Toggle secondary sidebar"
-								pressed={layout.visible.secondarySidebar}
-								onClick={() => toggle('secondarySidebar')}
-							/>
-							<IconButton
-								icon="question"
-								label="Keyboard help"
-								onClick={() => setHelpOpen(true)}
-							/>
-						</>
-					}
+					theme={theme}
+					onToggleTheme={() => setTheme((current) => (current === 'dark' ? 'light' : 'dark'))}
+					menu={adeMenu}
 				/>
 			}
-			primarySidebar={
-				<Pane
-					title={
-						primaryView === 'search'
-							? 'Search'
-							: selection
-								? `Explorer — ${selection.label}`
-								: 'Explorer'
-					}
-					actions={
-						<ActionBar label="Primary sidebar views">
-							<IconButton
-								icon="files"
-								label="Show Explorer"
-								pressed={primaryView === 'explorer'}
-								onClick={() => setPrimaryView('explorer')}
-							/>
-							<IconButton
-								icon="search"
-								label="Show Search"
-								pressed={primaryView === 'search'}
-								onClick={() => setPrimaryView('search')}
-							/>
-							{provider.canChooseWorkspace ? (
-								<IconButton
-									icon="folder-opened"
-									label={dirty ? 'Open folder (save your changes first)' : 'Open folder'}
-									disabled={dirty}
-									onClick={() => void openFolder()}
-								/>
-							) : null}
-						</ActionBar>
-					}
-				>
-					{primaryView === 'search' ? (
-						<SearchView
-							provider={provider}
-							onOpenResult={(id, line) => void openFile(id, line)}
-							onPreviewReplace={openReplacePreview}
-							onApplyReplace={applyReplacements}
-						/>
-					) : (
-						<ExplorerTree
-							entries={entries}
-							activeId={activeEditorId}
-							onOpenFile={(entry) => void openFile(entry.id)}
-							onOpenFolder={
-								provider.canChooseWorkspace && !selection
-									? () => void openFolder()
-									: undefined
+			main={
+				<>
+					<SessionNavigator
+						groups={groups}
+						activeId={LIVE_SESSION_ID}
+						onSelect={(picked) => {
+							// A fixture session has no harness and must not pretend to
+							// have one. Saying so is the prototype marking doing its job.
+							if (!picked.live) {
+								announce(
+									`${picked.name} is a prototype fixture. Only one session runs in this build.`
+								);
 							}
-						/>
-					)}
-				</Pane>
-			}
-			main={<AgentChat provider={agentProvider} files={fileIds} onAnnounce={announce} />}
-			announcement={<span key={announcement.seq}>{announcement.message}</span>}
-			secondarySidebar={
-				<Pane title="Changes">
-					<ChangesView
-						provider={changesProvider}
-						activeDiffId={activeEditorId?.startsWith('diff:') ? activeEditorId : undefined}
-						onOpenDiff={(id) => void openDiff(id)}
+						}}
+						onSwitchWorkspace={(index) => void switchWorkspace(index)}
 					/>
-				</Pane>
+					<AgentChat
+						provider={agentProvider}
+						files={fileIds}
+						onAnnounce={announce}
+						onSession={setSession}
+					/>
+				</>
 			}
-			panel={<TerminalPanel adapter={terminalAdapter} />}
+			announcement={<span key={announcement.seq}>{announcement.message}</span>}
+			dock={
+				pinned.length === 0 ? null : (
+					<PinnedWorkbench
+						side={side}
+						fraction={clampDock(dockFraction)}
+						onFraction={setDockFraction}
+						collapsed={dockCollapsed}
+						onCollapsed={setDockCollapsed}
+						artifacts={pinned.map((id) => artifactRef(id, inputs))}
+						activeId={activeArtifact}
+						onSelect={setActiveArtifactId}
+						onUnpin={unpin}
+					>
+						{activeArtifact ? (
+							<ArtifactView
+								id={activeArtifact}
+								provider={provider}
+								changesProvider={changesProvider}
+								terminalAdapter={terminalAdapter}
+								entries={entries}
+								inputs={inputs}
+								activeEditorId={activeEditorId}
+								onOpenFile={(id, line) => void openFile(id, line)}
+								onOpenDiff={(id) => void openDiff(id)}
+								onOpenFolder={
+									provider.canChooseWorkspace && !selection ? () => void openFolder() : undefined
+								}
+								onPreviewReplace={openReplacePreview}
+								onApplyReplace={applyReplacements}
+								onChange={editFile}
+							/>
+						) : null}
+					</PinnedWorkbench>
+				)
+			}
 			overlays={
 				<>
 					<EditorDialog
@@ -739,6 +890,10 @@ export function WorkbenchController() {
 						onCloseEditor={closeEditor}
 						onChange={editFile}
 						onDismiss={() => setEditorOpen(false)}
+						onPin={(id) => {
+							showArtifact(id);
+							setEditorOpen(false);
+						}}
 					/>
 					<CommandCenter
 						open={commandCenterOpen}

@@ -561,6 +561,68 @@ reporting them:
   unbuilt rather than rewritten, and whoever builds the completion list should build it
   over pi's loader rather than over the `startsWith` chain.
 
+### The shell migration — first priority, tickets 37–44
+
+**This is the front of the queue.** `docs/UIUX-UPDATE.md` — the **Shell Guide** — is a new
+UI/UX design for the whole application, and the dev's decision is to migrate to it. It now
+outranks `docs/# Building a VS Code-Like Agent IDE with Vertical Slices.md` on everything
+it covers; `context.md` records the split. Tickets 25, 28, 32 and the LSP chain wait.
+
+Four things established by grilling it, before any ticket:
+
+- **The topology is nearly already here.** `WorkbenchController.tsx` passes
+  `main={<AgentChat/>}`, and `EditorDialog.tsx` describes itself as *"the editor as a
+  transient, dismissible surface over the workbench, so Agent Chat stays the primary
+  experience underneath."* The Shell Guide's first two design principles are already law.
+  Its Modal Workbench is `EditorDialog` plus splitting. What is genuinely new is the
+  **Pinned Workbench**, the **Session Navigator**, **two themes**, and the **artifact
+  model**.
+- **The Shell Guide is a mock with no engine; this repo is an engine with the wrong shell.**
+  Its own caveats say artifacts are mocked, sessions are fixtures, profiles are in-memory,
+  and the directory map is fictional. All four are real here. The prototype it claims to
+  describe was not available to read, so every line is prose rather than something that
+  ran.
+- **Mock-first is allowed, and marked.** The dev chose to build the UI ahead of the
+  functionality. It lands on `master` **behind a visible prototype affordance** — not on a
+  branch that diverges from every other ticket, and not indistinguishable from real. This
+  reintroduces the parallel fiction [ticket 10](tickets/10-browser-mode-env.md) deliberately
+  deleted, which is why the marking is a condition rather than a nicety.
+- **It collides with the security boundary in exactly one place.** The Context Explorer's
+  location rail lists `Downloads`, `Desktop`, `C:`, `D:`. `workspace.rs` is root-confined
+  and will refuse all of them. **Deferred** by the dev; ticket 42 ships the explorer
+  root-confined with the rail unbuilt. The option to look at first is a second confined
+  mount, on the terms `.skills/` already uses.
+
+Two deviations from the Shell Guide, taken in the open: **no microphone button** (it is a
+mock transcription in the prototype and would be a button that lies here — dictation is its
+own ticket with its own credential decision), and **`@` file mention survives** despite the
+Guide calling drag-to-attach the only way to attach, because ticket 27 landed it in Slice 39
+and the Guide is describing a prototype with no completion menu.
+
+Two things pre-decided by the Guide that it does not get to decide: **turn undo** — it says
+undo *"removes the corresponding change event from the transcript"*, which pi's append-only
+JSONL cannot do, so ticket 28 keeps the decision and ticket 41 builds the affordance only —
+and **approval modes**, where the dev chose the Guide's Ask/Auto/Bypass over the existing
+two after hearing the objection to Bypass.
+
+The sequence, each slice demoable:
+
+| | | |
+|---|---|---|
+| **[37](tickets/37-shell-tokens-and-stack.md)** | Tokens, Tailwind, Radix, two themes | First and not negotiable — every later slice is written against it |
+| **[38](tickets/38-app-chrome.md)** | Titlebar, ADE menu, breadcrumb | 37 |
+| **[39](tickets/39-session-navigator.md)** | Session Navigator | 37; **absorbs [31](tickets/31-workspace-switching.md)** |
+| **[40](tickets/40-pinned-workbench.md)** | Pinned Workbench + artifact model | 37; re-homes terminal, changes, replace |
+| **[41](tickets/41-transcript-markdown.md)** | Markdown, `artifact:` refs, event chips | 37, 40 |
+| **[42](tickets/42-composer-and-context-explorer.md)** | Composer + Context Explorer | 37, 40 |
+| **[43](tickets/43-profile-modal.md)** | Profile modal, subpages, Ask/Auto/Bypass | 37 |
+| **[44](tickets/44-palette-and-notifications.md)** | Palette, Global Search, notifications | 39, 40 |
+
+Two things are written but not built, deliberately: an **ADR for multi-root confinement**
+(ticket 39 — two live workspaces means two roots, and `workspace.rs` holds one), and
+**concurrent live sessions**, which make the per-turn `git_checkpoint` meaningless and are
+their own ticket rather than navigator chrome.
+
 ### Queued by the dev after Slice 38
 
 Nine items, accepted as a batch, now written up as **tickets 25–36**. They are **not**
@@ -570,6 +632,9 @@ Nine items, accepted as a batch, now written up as **tickets 25–36**. They are
 **26, 27 and 30 landed in Slice 39** — the three that were unblocked, needed no new
 subsystem, and turned out to be joins between parts that already existed. Six remain, of
 which 29 is the only one still gated (on 25) and 36 is still a question rather than work.
+**[31](tickets/31-workspace-switching.md) has since been absorbed into
+[39](tickets/39-session-navigator.md)** — it is the only real functionality in that slice.
+The rest now wait behind the shell migration above.
 
 Twelve tickets for nine items, because three things came out of slicing them:
 

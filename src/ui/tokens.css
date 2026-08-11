@@ -1,98 +1,139 @@
 /*
- * The central styling contract. Feature CSS uses --ide-* tokens rather than
- * inventing isolated values, so a semantic role always renders the same way.
- * Values follow VS Code's dark theme.
+ * The central styling contract. Every visible colour in the app comes from a
+ * token defined in this file — there is no colour literal anywhere else, and
+ * Monaco, xterm, the diff editor, menus and overlays all derive theirs from
+ * here (see `theme.ts`, which reads these off the document).
+ *
+ * The names are the Shell Guide's, which are shadcn's convention. The palette
+ * used to be VS Code's dark theme value for value under `--ide-*` names; both
+ * the names and the single dark theme are gone, replaced by a neutral warm
+ * light theme and a neutral charcoal dark theme.
+ *
+ * Layout: `:root` holds light, `.dark` holds dark, and `@theme inline` maps
+ * both into Tailwind so `bg-background` and `var(--background)` are the same
+ * value. Anything without a Tailwind utility — terminal ANSI, dimensions —
+ * lives in the plain blocks and is read with `var()`.
  */
 
 :root {
-	/* Surfaces */
-	--ide-bg: #1f1f1f;
-	--ide-bg-titlebar: #181818;
-	--ide-bg-sidebar: #181818;
-	--ide-bg-panel: #181818;
-	--ide-bg-overlay: #202020;
-	--ide-bg-hover: #2a2d2e;
-	--ide-bg-active: #04395e;
+	color-scheme: light;
 
-	/* Foreground hierarchy */
-	--ide-fg: #cccccc;
-	--ide-fg-muted: #9d9d9d;
-	--ide-fg-subtle: #6e6e6e;
-	--ide-fg-danger: #f14c4c;
+	/* Surfaces. Neutral warm: a trace of yellow, no saturation elsewhere. */
+	--background: #faf9f7;
+	--foreground: #1c1b19;
+	--card: #f2f0ed;
+	--card-foreground: #1c1b19;
+	--popover: #ffffff;
+	--popover-foreground: #1c1b19;
+	--sidebar: #f2f0ed;
+	--sidebar-foreground: #1c1b19;
 
-	/* Borders and focus */
-	--ide-border: #2b2b2b;
-	--ide-border-strong: #454545;
-	--ide-focus: #0078d4;
-	--ide-focus-width: 1px;
+	/* Intent */
+	--primary: #1f6feb;
+	--primary-foreground: #ffffff;
+	--secondary: #e9e6e2;
+	--secondary-foreground: #1c1b19;
+	--muted: #eceae6;
+	--muted-foreground: #5f5c57;
+	--accent: #e6e3de;
+	--accent-foreground: #1c1b19;
+	/*
+	 * Selection, which is not `--primary`. A selected row is a surface a label
+	 * sits on; `--primary` is an intent colour a button is filled with. The two
+	 * were the same token before slice 37 because there was only a dark theme
+	 * and both happened to be blue — in light they are not interchangeable, and
+	 * using `--primary` here puts dark text on saturated blue.
+	 */
+	--selected: #d6e4fb;
+	--selected-foreground: #10213a;
+	--destructive: #c0342b;
+	--destructive-foreground: #ffffff;
+
+	/* Structure. `--foreground-subtle` is a third tier the Guide's list does
+	 * not name but the app has always had: disabled text and hint labels. */
+	--foreground-subtle: #8a8680;
+	--border: #dedad4;
+	--border-strong: #bcb7af;
+	--ring: #1f6feb;
+	--ring-width: 1px;
+
+	/* Inputs */
+	--input: #ffffff;
+	--input-foreground: #1c1b19;
+	--input-border: #cfcac3;
+	--input-placeholder: #8a8680;
+
+	/* Session statuses. Running is the foreground so it reads while flashing. */
+	--status-running: var(--foreground);
+	--status-done: #1f6feb;
+	--status-idle: #8a8680;
+	--status-waiting: #b07d17;
+
+	/* Source-control decorations. Same three roles as VS Code's SCM colours. */
+	--status-added: #2c7a4b;
+	--status-modified: #8a6215;
+
+	/* Elevation. Minimal, per the Shell Guide's tone rules. */
+	--shadow-overlay: 0 2px 8px rgb(0 0 0 / 14%);
+	--backdrop: rgb(0 0 0 / 22%);
+
+	/* Terminal. Light-theme ANSI, darkened so they hold on a pale surface. */
+	--terminal-foreground: #1c1b19;
+	--terminal-selection: #cddffb;
+	--ansi-black: #1c1b19;
+	--ansi-red: #b02c2c;
+	--ansi-green: #0b7a4b;
+	--ansi-yellow: #8a6d00;
+	--ansi-blue: #1f5fc0;
+	--ansi-magenta: #98328f;
+	--ansi-cyan: #0e7490;
+	--ansi-white: #5f5c57;
+	--ansi-bright-black: #8a8680;
+	--ansi-bright-red: #c0342b;
+	--ansi-bright-green: #14966a;
+	--ansi-bright-yellow: #a8811a;
+	--ansi-bright-blue: #2b74d8;
+	--ansi-bright-magenta: #b247aa;
+	--ansi-bright-cyan: #1291b3;
+	--ansi-bright-white: #1c1b19;
+
+	/* Scrollbars — translucent so they work over any surface in either theme. */
+	--scrollbar-slider: rgb(0 0 0 / 22%);
+	--scrollbar-slider-hover: rgb(0 0 0 / 38%);
+	--scrollbar-slider-active: rgb(0 0 0 / 50%);
 
 	/*
-	 * Terminal. Values are VS Code's own dark defaults, not approximations:
-	 * `terminal.foreground` and the `terminal.ansi*` map from
-	 * src/vs/workbench/contrib/terminal/common/terminalColorRegistry.ts,
-	 * `terminal.selectionBackground` from `editor.selectionBackground`,
-	 * `terminal.tab.activeBorder` from the dark_modern theme, and the font
-	 * from DEFAULT_WINDOWS_FONT_FAMILY / defaultTerminalFontSize.
-	 * `terminal.background` is unset in VS Code, so it inherits the panel.
+	 * Everything below is theme-independent: it does not change between light
+	 * and dark, so it is stated once here rather than twice.
 	 */
-	--ide-terminal-font-family: Consolas, "Courier New", monospace;
-	--ide-terminal-font-size: 14px;
-	--ide-terminal-fg: #cccccc;
-	--ide-terminal-selection: #264f78;
-	--ide-terminal-tab-active-border: #0078d4;
-
-	--ide-ansi-black: #000000;
-	--ide-ansi-red: #cd3131;
-	--ide-ansi-green: #0dbc79;
-	--ide-ansi-yellow: #e5e510;
-	--ide-ansi-blue: #2472c8;
-	--ide-ansi-magenta: #bc3fbc;
-	--ide-ansi-cyan: #11a8cd;
-	--ide-ansi-white: #e5e5e5;
-	--ide-ansi-bright-black: #666666;
-	--ide-ansi-bright-red: #f14c4c;
-	--ide-ansi-bright-green: #23d18b;
-	--ide-ansi-bright-yellow: #f5f543;
-	--ide-ansi-bright-blue: #3b8eea;
-	--ide-ansi-bright-magenta: #d670d6;
-	--ide-ansi-bright-cyan: #29b8db;
-	--ide-ansi-bright-white: #e5e5e5;
-
-	/* Scrollbars — VS Code's translucent slider over the scrolled surface. */
-	--ide-scrollbar-size: 10px;
-	--ide-scrollbar-slider: rgb(121 121 121 / 40%);
-	--ide-scrollbar-slider-hover: rgb(100 100 100 / 70%);
-	--ide-scrollbar-slider-active: rgb(191 191 191 / 40%);
-
-	/* Inputs — VS Code `input.*` from dark_modern. */
-	--ide-input-bg: #313131;
-	--ide-input-border: #3c3c3c;
-	--ide-input-fg: #cccccc;
-	--ide-input-placeholder: #989898;
 
 	/* Spacing */
-	--ide-space-1: 2px;
-	--ide-space-2: 4px;
-	--ide-space-3: 8px;
-	--ide-space-4: 12px;
-	--ide-space-5: 16px;
+	--space-1: 2px;
+	--space-2: 4px;
+	--space-3: 8px;
+	--space-4: 12px;
+	--space-5: 16px;
 
 	/* Typography */
-	--ide-font-family: "Segoe UI", system-ui, sans-serif;
-	--ide-font-family-mono: "Cascadia Mono", Consolas, monospace;
-	--ide-font-size: 13px;
-	--ide-font-size-small: 11px;
-	--ide-line-height: 22px;
+	--font-sans: "Segoe UI", system-ui, sans-serif;
+	--font-mono: "Cascadia Mono", Consolas, monospace;
+	--text-base: 13px;
+	--text-small: 11px;
+	--line-height: 22px;
+	--terminal-font-family: Consolas, "Courier New", monospace;
+	--terminal-font-size: 14px;
 
-	/* Radii */
-	--ide-radius: 4px;
+	/* Radii — small, per the Shell Guide's tone rules. */
+	--radius: 4px;
 
-	/* Pane and control dimensions */
-	--ide-titlebar-height: 35px;
-	--ide-pane-header-height: 35px;
-	--ide-row-height: 22px;
-	--ide-control-size: 24px;
-	--ide-sash-size: 4px;
+	/* Dimensions */
+	--titlebar-height: 42px;
+	--pane-header-height: 32px;
+	--tabbar-height: 32px;
+	--row-height: 22px;
+	--control-size: 24px;
+	--sash-size: 4px;
+	--scrollbar-size: 8px;
 	/*
 	 * Only the floor is here. The sidebar width and panel height that used to
 	 * sit beside it were never read by any rule — `DEFAULT_LAYOUT` in
@@ -100,5 +141,118 @@
 	 * drags and persists, not a token. The floor stays because CSS enforces it
 	 * too, in the max-width rules that keep a region from eating the center.
 	 */
-	--ide-region-min: 170px;
+	--region-min: 170px;
+}
+
+.dark {
+	color-scheme: dark;
+
+	/* Surfaces. Neutral charcoal: no blue cast, no pure black. */
+	--background: #1b1b1b;
+	--foreground: #e4e2df;
+	--card: #212121;
+	--card-foreground: #e4e2df;
+	--popover: #262626;
+	--popover-foreground: #e4e2df;
+	--sidebar: #171717;
+	--sidebar-foreground: #e4e2df;
+
+	--primary: #3b82f6;
+	--primary-foreground: #0d0d0d;
+	--secondary: #2b2b2b;
+	--secondary-foreground: #e4e2df;
+	--muted: #2b2b2b;
+	--muted-foreground: #a3a09b;
+	--accent: #303030;
+	--accent-foreground: #e4e2df;
+	--selected: #103a5e;
+	--selected-foreground: #e4e2df;
+	--destructive: #f14c4c;
+	--destructive-foreground: #1b1b1b;
+
+	--foreground-subtle: #75726e;
+	--border: #303030;
+	--border-strong: #4a4a4a;
+	--ring: #3b82f6;
+
+	--input: #2a2a2a;
+	--input-foreground: #e4e2df;
+	--input-border: #3c3c3c;
+	--input-placeholder: #8f8c88;
+
+	--status-running: var(--foreground);
+	--status-done: #3b82f6;
+	--status-idle: #75726e;
+	--status-waiting: #d0a215;
+
+	--status-added: #81b88b;
+	--status-modified: #e2c08d;
+
+	--shadow-overlay: 0 2px 8px rgb(0 0 0 / 40%);
+	--backdrop: rgb(0 0 0 / 40%);
+
+	/* VS Code's dark ANSI defaults, which this app has always used. */
+	--terminal-foreground: #cccccc;
+	--terminal-selection: #264f78;
+	--ansi-black: #000000;
+	--ansi-red: #cd3131;
+	--ansi-green: #0dbc79;
+	--ansi-yellow: #e5e510;
+	--ansi-blue: #2472c8;
+	--ansi-magenta: #bc3fbc;
+	--ansi-cyan: #11a8cd;
+	--ansi-white: #e5e5e5;
+	--ansi-bright-black: #666666;
+	--ansi-bright-red: #f14c4c;
+	--ansi-bright-green: #23d18b;
+	--ansi-bright-yellow: #f5f543;
+	--ansi-bright-blue: #3b8eea;
+	--ansi-bright-magenta: #d670d6;
+	--ansi-bright-cyan: #29b8db;
+	--ansi-bright-white: #e5e5e5;
+
+	--scrollbar-slider: rgb(121 121 121 / 40%);
+	--scrollbar-slider-hover: rgb(100 100 100 / 70%);
+	--scrollbar-slider-active: rgb(191 191 191 / 40%);
+}
+
+/*
+ * `inline` so the utilities resolve to `var(--background)` rather than baking
+ * the light value in — without it, `.dark` would change the variable and the
+ * utility would keep the old colour.
+ */
+@theme inline {
+	--color-background: var(--background);
+	--color-foreground: var(--foreground);
+	--color-card: var(--card);
+	--color-card-foreground: var(--card-foreground);
+	--color-popover: var(--popover);
+	--color-popover-foreground: var(--popover-foreground);
+	--color-sidebar: var(--sidebar);
+	--color-sidebar-foreground: var(--sidebar-foreground);
+	--color-primary: var(--primary);
+	--color-primary-foreground: var(--primary-foreground);
+	--color-secondary: var(--secondary);
+	--color-secondary-foreground: var(--secondary-foreground);
+	--color-muted: var(--muted);
+	--color-muted-foreground: var(--muted-foreground);
+	--color-accent: var(--accent);
+	--color-accent-foreground: var(--accent-foreground);
+	--color-selected: var(--selected);
+	--color-selected-foreground: var(--selected-foreground);
+	--color-destructive: var(--destructive);
+	--color-destructive-foreground: var(--destructive-foreground);
+	--color-subtle: var(--foreground-subtle);
+	--color-border: var(--border);
+	--color-border-strong: var(--border-strong);
+	--color-input: var(--input);
+	--color-ring: var(--ring);
+	--color-status-running: var(--status-running);
+	--color-status-done: var(--status-done);
+	--color-status-idle: var(--status-idle);
+	--color-status-waiting: var(--status-waiting);
+
+	--font-sans: var(--font-sans);
+	--font-mono: var(--font-mono);
+	--radius-DEFAULT: var(--radius);
 }

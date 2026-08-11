@@ -1,7 +1,11 @@
 # 31 — More than one workspace
 
 **Blocked by:** none — can start immediately.
-**Status:** ready-for-agent. Called a **must-have** by the dev.
+**Status:** **absorbed into [ticket 39](39-session-navigator.md).** Still a must-have —
+it is the only *real* functionality in that slice. It moved because the Session Navigator
+groups sessions by workspace and shows `workspace · branch` in its headers, so the
+navigator cannot be drawn honestly without switching working underneath it. The decisions
+below stand; build them there.
 
 ## A correction this ticket is built on
 

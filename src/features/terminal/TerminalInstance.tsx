@@ -3,6 +3,7 @@ import { Terminal } from '@xterm/xterm';
 import { useEffect, useRef } from 'react';
 
 import type { TerminalAdapter } from '../../terminal';
+import { readToken, terminalTheme, useTheme } from '../../ui/theme';
 
 export interface TerminalInstanceProps {
 	readonly adapter: TerminalAdapter;
@@ -22,6 +23,8 @@ export interface TerminalInstanceProps {
 export function TerminalInstance({ adapter, id, active, onExit }: TerminalInstanceProps) {
 	const hostRef = useRef<HTMLDivElement>(null);
 	const fitRef = useRef<FitAddon>(null);
+	const termRef = useRef<Terminal>(null);
+	const theme = useTheme();
 	// The exit callback must not re-create the terminal when it changes.
 	const exitRef = useRef(onExit);
 	exitRef.current = onExit;
@@ -31,46 +34,18 @@ export function TerminalInstance({ adapter, id, active, onExit }: TerminalInstan
 		if (!host) {
 			return;
 		}
-		/*
-		 * xterm measures and paints on a canvas, so it needs literal values —
-		 * a `var(--ide-*)` string would be taken as a font name. The tokens
-		 * are still the single source: they are read off the document here.
-		 */
-		const styles = getComputedStyle(document.documentElement);
-		const token = (name: string) => styles.getPropertyValue(name).trim();
-
 		const terminal = new Terminal({
-			fontFamily: token('--ide-terminal-font-family'),
-			fontSize: Number.parseInt(token('--ide-terminal-font-size'), 10),
+			fontFamily: readToken('--terminal-font-family'),
+			fontSize: Number.parseInt(readToken('--terminal-font-size'), 10),
 			// VS Code's defaults: block cursor, no blink, no extra leading.
 			cursorStyle: 'block',
 			cursorBlink: false,
 			lineHeight: 1,
 			letterSpacing: 0,
 			scrollback: 1000,
-			theme: {
-				background: token('--ide-bg-panel'),
-				foreground: token('--ide-terminal-fg'),
-				cursor: token('--ide-terminal-fg'),
-				selectionBackground: token('--ide-terminal-selection'),
-				black: token('--ide-ansi-black'),
-				red: token('--ide-ansi-red'),
-				green: token('--ide-ansi-green'),
-				yellow: token('--ide-ansi-yellow'),
-				blue: token('--ide-ansi-blue'),
-				magenta: token('--ide-ansi-magenta'),
-				cyan: token('--ide-ansi-cyan'),
-				white: token('--ide-ansi-white'),
-				brightBlack: token('--ide-ansi-bright-black'),
-				brightRed: token('--ide-ansi-bright-red'),
-				brightGreen: token('--ide-ansi-bright-green'),
-				brightYellow: token('--ide-ansi-bright-yellow'),
-				brightBlue: token('--ide-ansi-bright-blue'),
-				brightMagenta: token('--ide-ansi-bright-magenta'),
-				brightCyan: token('--ide-ansi-bright-cyan'),
-				brightWhite: token('--ide-ansi-bright-white'),
-			},
+			theme: terminalTheme(),
 		});
+		termRef.current = terminal;
 		const fit = new FitAddon();
 		fitRef.current = fit;
 		terminal.loadAddon(fit);
@@ -121,6 +96,14 @@ export function TerminalInstance({ adapter, id, active, onExit }: TerminalInstan
 			void adapter.kill(id);
 		};
 	}, [adapter, id]);
+
+	// A live terminal keeps its scrollback across a theme switch, so it is
+	// retinted in place rather than re-created.
+	useEffect(() => {
+		if (termRef.current) {
+			termRef.current.options.theme = terminalTheme();
+		}
+	}, [theme]);
 
 	// Becoming visible again is not a resize of the element, so fit explicitly.
 	useEffect(() => {
