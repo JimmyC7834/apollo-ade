@@ -6,32 +6,31 @@ Close an item by deleting it and recording the fix in the dev log.
 Last updated after **Slices 37–40**, the shell migration. What is left is the
 unverified surface, which is the larger half of this file and always was.
 
-## The whole shell is written-not-seen
+## The shell has now been seen, and three layout bugs were found
 
-**Nothing about slices 37–40 has been looked at.** The browser pane served no
-frames during that session — `innerWidth` and `innerHeight` both read 0 — so
-every measurement in them was written from the Shell Guide and compiled, never
-observed. Specifically unverified:
+Slices 37–40 landed unverified because the browser pane served no frames. It has
+since been looked at, at 630×1758 and at 1280×800, in both themes. **Confirmed by
+measurement:** 42px titlebar and 42px window controls, navigator 32px collapsed /
+264px expanded with 32px rows and 12px/18px markers, expanding over chat without
+reflowing it, dock right at 34% in landscape and full-width below in portrait,
+and the light theme readable on every surface that exists today.
 
-- **The light theme has never been rendered.** It is new in slice 37 and there is
-  no evidence any surface in it is readable. Check Monaco, the terminal, the diff
-  editor and every overlay.
-- The 42px titlebar, and whether the breadcrumb truncates instead of pushing the
-  window controls.
-- The Session Navigator's 32px collapsed / 264px expanded widths, 32px rows,
-  12px and 18px markers, and whether expanding really does not reflow chat.
-- The dock's invisible 8px resize target, its 24–65% bounds, the 32px collapsed
-  strip and bar, and whether the collapse control stays anchored when tabs
-  overflow.
-- **Portrait docking has never been seen at a real viewport.** `dockSide` is
-  checked as arithmetic; the layout it produces is not.
-- `resize: both` on the Modal Workbench, its corner indicator, and the two-pane
-  split.
-- Whether a tab's close button really appears without resizing the tab. That is
-  the same non-shifting rule in four places and none of them are confirmed.
+Three bugs were found and fixed in the process — all three were things only
+looking could have caught:
 
-The native window is where this has to be checked — see the WebView2 debugging
-port section below.
+- `.ide-body-right` and `.ide-body-bottom` were referenced and never written, so
+  a portrait window kept a row direction and the dock took a slice of the
+  right-hand side that stopped partway down.
+- `.ide-region-main` was `position: static`, so the navigator's `absolute` fell
+  through to the viewport: it covered the titlebar and ran the full window
+  height instead of the Chat Workbench's.
+- Nothing reserved the navigator's 32px, so chat's first column of text and the
+  left edge of the composer sat underneath the status markers.
+
+**Still unseen:** Monaco and the diff editor in the light theme (no file has been
+opened since the theme landed), `resize: both` and the two-pane split on the
+Modal Workbench, and whether a tab's close button really appears without
+resizing the tab.
 
 ## Three Rust commands are compiled and never called
 

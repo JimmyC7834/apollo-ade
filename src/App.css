@@ -67,10 +67,25 @@ body {
 	height: 100vh;
 }
 
+/*
+ * Chat and the dock. Which way they split is the dock's side, and both
+ * directions have to be stated: without the second rule a portrait window
+ * applies `height: <fraction>%` to a dock that is still a row item, so it takes
+ * a slice of the right-hand side and stops partway down.
+ */
 .ide-body {
 	display: flex;
 	flex: 1;
+	min-width: 0;
 	min-height: 0;
+}
+
+.ide-body-right {
+	flex-direction: row;
+}
+
+.ide-body-bottom {
+	flex-direction: column;
 }
 
 .ide-center {
@@ -108,8 +123,31 @@ body {
 }
 
 .ide-region-main {
+	/*
+	 * `relative` is what the Session Navigator anchors to. Without it the
+	 * navigator's `position: absolute` falls through to the viewport, which puts
+	 * it over the titlebar and gives it the window's full height instead of the
+	 * Chat Workbench's — the Guide is explicit that it spans only chat.
+	 */
+	position: relative;
 	flex: 1;
+	min-width: 0;
+	min-height: 0;
 	background: var(--background);
+}
+
+/*
+ * The navigator floats over chat rather than sitting beside it, so nothing
+ * reserves its 32px. Chat has to, or its first column of text and the left edge
+ * of the composer sit underneath the status markers.
+ *
+ * A margin on the child, not padding on the region: an absolutely positioned
+ * child resolves `left: 0` against its containing block's *padding* box, so
+ * padding here would push the navigator right by exactly as much and change
+ * nothing.
+ */
+.ide-region-main > .ide-agent {
+	margin-left: 32px;
 }
 
 .ide-region-main:focus {
@@ -1664,4 +1702,21 @@ body {
 	min-width: 0;
 	min-height: 0;
 	overflow: hidden;
+}
+
+/*
+ * The dock's tab is the artifact's title, so a renderer that draws its own
+ * title draws it twice — the terminal did, because it used to be a panel with
+ * no tab above it. Removed from the eye, kept in the accessibility tree, where
+ * it is still the heading for the section.
+ */
+.ide-dock-body .ide-terminal-title {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	margin: -1px;
+	padding: 0;
+	overflow: hidden;
+	clip-path: inset(50%);
+	white-space: nowrap;
 }
