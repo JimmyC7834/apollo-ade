@@ -1,7 +1,8 @@
 # 25 — One confirm dialog, not three
 
 **Blocked by:** none — can start immediately.
-**Status:** ready-for-agent. **Prefactor**, not a feature: nothing a user can see changes.
+**Status:** **landed.** See [What was built](#what-was-built). **Prefactor**, not a
+feature: nothing a user can see changed.
 
 ## Why this is first
 
@@ -29,14 +30,14 @@ both call sites, not by arguing.**
 
 ## Acceptance criteria
 
-- [ ] Both `ConfirmDiscard` and the revert confirm in `ChangesView` render through the
+- [x] Both `ConfirmDiscard` and the revert confirm in `ChangesView` render through the
       primitive; neither builds its own `Overlay`.
-- [ ] `ChangesView` no longer holds dialog mechanics beyond *which item* is pending.
-- [ ] Escape cancels, focus lands on the non-destructive action, and focus returns to the
+- [x] `ChangesView` no longer holds dialog mechanics beyond *which item* is pending.
+- [x] Escape cancels, focus lands on the non-destructive action, and focus returns to the
       trigger on close. Verified in the DOM, and recorded as structural in `OPEN-ISSUES.md`
       like every other accessibility claim in this repo — it has not been heard.
-- [ ] No user-visible change. Both dialogs read and behave as they did.
-- [ ] `npm run check` and `npx tsc --noEmit` clean.
+- [x] No user-visible change. Both dialogs read and behave as they did.
+- [x] `npm run check` and `npx tsc --noEmit` clean.
 
 ## What was built
 

@@ -3,6 +3,7 @@ import { useEffect, useImperativeHandle, useRef, type Ref } from 'react';
 
 import type { EditorHandle } from './EditorHandle';
 import { focusEditor } from './focusEditor';
+import { registerModel, unregisterModel } from './modelRegistry';
 import { languageForPath } from './monacoEnvironment';
 import { MONACO_THEME } from '../ui/theme';
 
@@ -79,6 +80,7 @@ export function MonacoEditor({ ref, id, content, revealLine, onChange }: MonacoE
 			subscription.dispose();
 			editor.dispose();
 			for (const model of models.values()) {
+				unregisterModel(model.uri.toString());
 				model.dispose();
 			}
 			models.clear();
@@ -102,6 +104,9 @@ export function MonacoEditor({ ref, id, content, revealLine, onChange }: MonacoE
 		if (!model) {
 			model = monaco.editor.createModel(content, languageForPath(id));
 			modelsRef.current.set(id, model);
+			// The TS worker is already computing markers for this model. Saying
+			// which file it is is the whole cost of the Problems panel.
+			registerModel(model.uri.toString(), id);
 		} else if (model.getValue() !== content) {
 			model.setValue(content);
 		}

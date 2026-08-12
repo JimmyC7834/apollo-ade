@@ -19,7 +19,7 @@
  * Replace surface. Giving them ids rather than a boolean apiece is what lets
  * the dock hold "whatever is pinned" as a list instead of a set of flags.
  */
-export type ToolArtifactKind = 'terminal' | 'changes' | 'replace' | 'explorer';
+export type ToolArtifactKind = 'terminal' | 'changes' | 'replace' | 'explorer' | 'problems';
 
 export interface ArtifactRef {
 	readonly id: string;
@@ -39,6 +39,12 @@ export const TOOL_ARTIFACTS: Record<ToolArtifactKind, ArtifactRef> = {
 	 * way to open a file that is not a search result.
 	 */
 	explorer: { id: 'artifact:explorer', title: 'Explorer', icon: 'files' },
+	/*
+	 * Errors and warnings — ticket 32. An artifact rather than a region, like
+	 * everything else that used to be a panel, so it can be pinned beside the
+	 * file it is complaining about.
+	 */
+	problems: { id: 'artifact:problems', title: 'Problems', icon: 'warning' },
 };
 
 export const TOOL_ARTIFACT_IDS = Object.values(TOOL_ARTIFACTS).map((artifact) => artifact.id);

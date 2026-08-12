@@ -63,6 +63,52 @@ Escape, focus containment and focus restoration are `Overlay`'s and were not
 re-verified here — this change did not touch them. Nothing in this file has been
 heard by a screen reader, and that has not changed.
 
+## Five more Rust commands are compiled and never called
+
+`create_file`, `create_folder`, `rename_entry`, `delete_plan` and `delete_entry`
+(slice 46, ticket 29). Their containment is unit-tested through `existing` and
+`creatable`, which is every path any of them takes to a path, and the whole
+feature was exercised end to end **against the browser fixture** — create,
+rename with the open editor following it, delete with the confirmation and the
+tab closing. None of that touched a disk.
+
+Three things are therefore unproven and are the ones to check first in the
+native window:
+
+- **`trash::delete` on Windows.** It is a new dependency, it is what makes the
+  ticket's "recoverable beats confirmed" true, and it has never run. Confirm the
+  entry actually lands in the Recycle Bin and can be restored from it, for a
+  file *and* for a directory.
+- **The case-only rename.** `Foo.ts` → `foo.ts` is distinguished from a real
+  collision by canonicalising the destination and comparing it to the source.
+  That reasoning is about NTFS behaviour and was written from knowledge of it,
+  not from a run.
+- **`delete_plan`'s count against a large directory.** `MAX_COUNT` caps the
+  walk at 10,000 and the dialog then says "more than", but no directory that big
+  has been counted.
+
+## Problems is scoped to open files, on purpose
+
+The panel (ticket 32) reports only on files that have been opened, because
+Monaco's TypeScript worker only knows about models that exist. This is stated in
+the panel's first line rather than left implicit, and the reasoning is in the
+ticket. It is listed here because it is the kind of thing that reads as a bug
+later: an empty Problems list means nothing is wrong *in what you have opened*.
+[Ticket 33](wayfinder/pi-harness/tickets/33-lsp-adaptor.md) is what widens it.
+
+Its accessibility is structural like everything else here: `role="tree"` with
+labelled rows, keyboard activation through `WorkbenchTree`, verified in the DOM.
+Not heard.
+
+## A pre-existing React warning, seen but not introduced
+
+The browser console logs *"Cannot update a component (`ComposerBar`) while
+rendering a different component (`WorkbenchController`)"* on load. It is recorded
+here because it was observed during slice 46's verification, **not** because that
+slice caused it: it fires on first paint, before anything from ticket 29 or 32 is
+mounted — no explorer artifact, no problems panel, no models. Worth chasing on
+its own; the likely culprit is the profile store notifying during render.
+
 ## Three Rust commands are compiled and never called
 
 `git_branch`, `recent_workspaces` and `switch_workspace` (slices 38–39) build and

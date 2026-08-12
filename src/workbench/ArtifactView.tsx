@@ -11,7 +11,8 @@ import { MonacoDiffEditor } from '../editor/MonacoDiffEditor';
 import { MonacoEditor } from '../editor/MonacoEditor';
 import type { EditorInput } from '../editor/EditorWorkbench';
 import { ChangesView } from '../features/changes/ChangesView';
-import { ExplorerTree } from '../features/explorer/ExplorerTree';
+import { ExplorerTree, type FileOperations } from '../features/explorer/ExplorerTree';
+import { ProblemsView } from '../features/problems/ProblemsView';
 import { SearchView } from '../features/search/SearchView';
 import type { Replacement } from '../features/search/replace';
 import { TerminalPanel } from '../features/terminal/TerminalPanel';
@@ -29,6 +30,8 @@ export interface ArtifactViewProps {
 	readonly onOpenFile: (id: string, line?: number) => void;
 	readonly onOpenDiff: (id: string) => void;
 	readonly onOpenFolder: (() => void) | undefined;
+	/** The explorer's file operations. Absent without a root. */
+	readonly fileOperations: FileOperations | undefined;
 	readonly onPreviewReplace: (plan: Replacement) => void;
 	readonly onApplyReplace: (plans: readonly Replacement[]) => Promise<string>;
 	readonly onChange: (id: string, content: string) => void;
@@ -66,6 +69,9 @@ export function ArtifactView(props: ArtifactViewProps) {
 			/>
 		);
 	}
+	if (kind === 'problems') {
+		return <ProblemsView onOpen={props.onOpenFile} />;
+	}
 	if (kind === 'explorer') {
 		return (
 			<ExplorerTree
@@ -73,6 +79,7 @@ export function ArtifactView(props: ArtifactViewProps) {
 				activeId={props.activeEditorId}
 				onOpenFile={(entry) => props.onOpenFile(entry.id)}
 				onOpenFolder={props.onOpenFolder}
+				operations={props.fileOperations}
 			/>
 		);
 	}

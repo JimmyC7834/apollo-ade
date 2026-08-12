@@ -10,10 +10,12 @@ import { createChangesProvider } from '../changes';
 import { buildCommands } from '../commands/commandRegistry';
 import { EditorDialog } from '../editor/EditorDialog';
 import { isDirty, type EditorInput } from '../editor/EditorWorkbench';
-import { neighbourId } from '../ids';
+import { basename, neighbourId } from '../ids';
 import { AgentChat } from '../features/agent/AgentChat';
 import type { TranscriptHit } from '../features/agent/transcript';
 import { CommandCenter } from '../features/commandCenter/CommandCenter';
+import type { FileOperations } from '../features/explorer/ExplorerTree';
+import { isUnder, movedId } from '../features/explorer/fileOperations';
 import { refuseReason, type Replacement } from '../features/search/replace';
 import { SessionNavigator } from '../features/sessions/SessionNavigator';
 import { createPersistenceAdapter, type PersistedState } from '../persistence';
@@ -57,6 +59,17 @@ function useDockSide() {
 // Rust rejections arrive as strings, not Errors, so both shapes are read.
 function reason(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Which workspace file an editor is showing.
+ *
+ * Diffs live in their own id space (`diff:<path>`) so a file and its diff can be
+ * open at once. That makes an editor id the wrong thing to compare against a
+ * path the explorer just renamed or deleted, and this is the translation.
+ */
+function fileIdOf(input: EditorInput): string {
+	return input.kind === 'diff' ? input.id.slice('diff:'.length) : input.id;
 }
 
 export function WorkbenchController() {
@@ -583,6 +596,117 @@ export function WorkbenchController() {
 		});
 	}, []);
 
+	/**
+	 * Close every editor `gone` picks out, keeping a sensible selection.
+	 *
+	 * The plural of `forceCloseEditor`, needed because deleting a *folder* takes
+	 * an unknown number of tabs at once and closing them one by one would pick a
+	 * neighbour that is itself about to close.
+	 */
+	const closeEditors = useCallback((gone: (input: EditorInput) => boolean) => {
+		setInputs((current) => {
+			const kept = current.filter((input) => !gone(input));
+			setActiveEditorId((active) =>
+				active && kept.some((input) => input.id === active) ? active : kept[0]?.id
+			);
+			return kept;
+		});
+	}, []);
+
+	const refreshTree = useCallback(async () => {
+		setEntries(await provider.getTree());
+	}, [provider]);
+
+	/**
+	 * Ticket 29's operations, wired to everything they knock over.
+	 *
+	 * Undefined without a root, which is what makes the explorer's context menu
+	 * absent rather than present-and-failing. None of these rejects: a refusal is
+	 * announced here, because this is the side that owns the live region, and a
+	 * dialog that stayed open waiting for one would be a second place to decide
+	 * what went wrong.
+	 */
+	const fileOperations = useMemo<FileOperations | undefined>(() => {
+		if (!selection) {
+			return undefined;
+		}
+		const failed = (what: string, error: unknown) => {
+			announce(`Could not ${what}. ${reason(error)}`);
+		};
+		return {
+			deletesToTrash: provider.deletesToTrash,
+			async create(id, kind) {
+				try {
+					await (kind === 'folder' ? provider.createFolder(id) : provider.createFile(id));
+				} catch (error) {
+					failed(`create ${id}`, error);
+					return;
+				}
+				await refreshTree();
+				announce(`Created ${id}.`);
+				if (kind === 'file') {
+					// Creating a file and not opening it is asking the user to go
+					// and find the thing they just named.
+					await openFile(id);
+				}
+			},
+			async rename(from, to) {
+				try {
+					await provider.rename(from, to);
+				} catch (error) {
+					failed(`rename ${from}`, error);
+					return;
+				}
+				/*
+				 * Editors follow the file. A tab left pointing at the old id would
+				 * save to a path that no longer exists — and `write_file` creates
+				 * nothing, so it would fail on every save from then on.
+				 */
+				setInputs((current) =>
+					current.map((input) => {
+						const moved = input.kind === 'source' ? movedId(input.id, from, to) : undefined;
+						return moved ? { ...input, id: moved, name: basename(moved) } : input;
+					})
+				);
+				setActiveEditorId((active) => (active ? (movedId(active, from, to) ?? active) : active));
+				// A diff is a snapshot against a path git no longer has in the
+				// working tree, so it is closed rather than moved.
+				closeEditors((input) => input.kind === 'diff' && isUnder(fileIdOf(input), from));
+				await refreshTree();
+				changesProvider.refresh();
+				announce(`Renamed ${from} to ${to}.`);
+			},
+			async plan(id) {
+				try {
+					const plan = await provider.deletePlan(id);
+					return {
+						...plan,
+						// Only this side knows what is open, and an unsaved buffer is
+						// the one part of a delete the trash cannot give back.
+						unsaved: inputs.filter((input) => isDirty(input) && isUnder(fileIdOf(input), id))
+							.length,
+					};
+				} catch (error) {
+					failed(`work out what deleting ${id} would take`, error);
+					return undefined;
+				}
+			},
+			async remove(id) {
+				try {
+					await provider.deleteEntry(id);
+				} catch (error) {
+					failed(`delete ${id}`, error);
+					return;
+				}
+				// The ticket's rule: no tab left writing to nothing.
+				closeEditors((input) => isUnder(fileIdOf(input), id));
+				await refreshTree();
+				changesProvider.refresh();
+				announce(`Deleted ${id}.${provider.deletesToTrash ? ' It is in the trash.' : ''}`);
+			},
+		};
+	}, [announce, changesProvider, closeEditors, inputs, openFile, provider, refreshTree, selection]);
+
 	const closeEditor = useCallback(
 		(id: string) => {
 			const input = inputs.find((item) => item.id === id);
@@ -997,6 +1121,7 @@ export function WorkbenchController() {
 								onOpenFolder={
 									provider.canChooseWorkspace && !selection ? () => void openFolder() : undefined
 								}
+								fileOperations={fileOperations}
 								onPreviewReplace={openReplacePreview}
 								onApplyReplace={applyReplacements}
 								onChange={editFile}

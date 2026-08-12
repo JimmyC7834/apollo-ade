@@ -83,6 +83,20 @@ export function AccessibilityHelp({ open, onClose }: AccessibilityHelpProps) {
 				</dd>
 				<dt>Arrow keys in the file tree</dt>
 				<dd>Move between files; left and right collapse and expand folders.</dd>
+				<dt>Menu key in the file tree</dt>
+				<dd>
+					New file, New folder, Rename and Delete, anchored to the row. New entries go
+					inside a folder and beside a file, and a new file opens as soon as it exists.
+					Delete says how many entries a folder holds and moves it to the system trash,
+					so it can be put back from there.
+				</dd>
+				<dt>Problems</dt>
+				<dd>
+					Errors and warnings for the files you have open, grouped by file, from the same
+					checker that underlines them in the editor. Enter on a row opens the file at
+					that line. A file no editor has opened is not checked, and the panel says so —
+					an empty list means nothing is wrong <em>here</em>, not nothing is wrong.
+				</dd>
 				<dt>Shift+Tab in the terminal</dt>
 				<dd>Leave the terminal. Tab itself is sent to the shell.</dd>
 				<dt>Escape</dt>

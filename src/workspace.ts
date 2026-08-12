@@ -2,7 +2,8 @@
 // Tauri directly, so the UI runs in a plain browser (`npm run dev`) against
 // the fixture provider with no native process involved.
 
-import { basename } from './ids';
+import type { DeletePlan } from './features/explorer/fileOperations';
+import { basename, dirname } from './ids';
 import { isTauri } from './native';
 
 export interface WorkspaceEntry {
@@ -68,6 +69,28 @@ export interface WorkspaceProvider {
 	writeFile(id: string, content: string): Promise<void>;
 	/** Case-insensitive line search. The Search UI cannot tell which impl ran. */
 	search(query: string): Promise<readonly SearchResult[]>;
+
+	/**
+	 * Whether a delete is recoverable afterwards.
+	 *
+	 * A property of the workspace rather than of this app: natively it is the OS
+	 * trash, and the browser fixture has nowhere to put anything. The dialog says
+	 * whichever is true, because "you can put it back" is the sentence in it that
+	 * changes what someone decides.
+	 */
+	readonly deletesToTrash: boolean;
+	/*
+	 * Ticket 29's operations. They are on the provider rather than invoked
+	 * directly because that is what makes them work in the browser at all — and
+	 * the rule from ticket 10 is that a mode which cannot do something says so,
+	 * rather than succeeding at nothing.
+	 */
+	createFile(id: string): Promise<void>;
+	createFolder(id: string): Promise<void>;
+	rename(from: string, to: string): Promise<void>;
+	/** What a delete would take. Reads only; nothing has happened yet. */
+	deletePlan(id: string): Promise<DeletePlan>;
+	deleteEntry(id: string): Promise<void>;
 }
 
 const MAX_RESULTS = 500;
@@ -104,18 +127,66 @@ export const FIXTURE: Record<string, string> = {
 	'src/util.ts': 'export const noop = (): void => {};\n',
 };
 
-function fixtureProvider(): WorkspaceProvider {
-	const entries: WorkspaceEntry[] = [
-		{ id: 'src', name: 'src', kind: 'dir', depth: 0 },
-		{ id: 'src/main.ts', name: 'main.ts', kind: 'file', depth: 1 },
-		{ id: 'src/util.ts', name: 'util.ts', kind: 'file', depth: 1 },
-		{ id: 'README.md', name: 'README.md', kind: 'file', depth: 0 },
+/**
+ * The fixture's tree, derived rather than maintained.
+ *
+ * It was a hand-written array until ticket 29 let the explorer create and delete
+ * things — at which point an array and a content map would have been two records
+ * of the same fact, disagreeing the moment one of them was edited.
+ *
+ * The ordering is `walk`'s in `workspace.rs`: directories before files at every
+ * level, alphabetical within each, parents before their children.
+ */
+function fixtureEntries(
+	files: readonly string[],
+	folders: ReadonlySet<string>
+): readonly WorkspaceEntry[] {
+	// A folder exists if it was created or if something is in it.
+	const dirs = new Set(folders);
+	for (const id of files) {
+		for (let parent = dirname(id); parent; parent = dirname(parent)) {
+			dirs.add(parent);
+		}
+	}
+	const nodes = [
+		...[...dirs].map((id) => ({ id, kind: 'dir' as const })),
+		...files.map((id) => ({ id, kind: 'file' as const })),
 	];
+
+	const out: WorkspaceEntry[] = [];
+	function emit(parent: string | undefined, depth: number): void {
+		const here = nodes
+			.filter((node) => dirname(node.id) === parent)
+			.sort((a, b) =>
+				a.kind === b.kind ? a.id.localeCompare(b.id) : a.kind === 'dir' ? -1 : 1
+			);
+		for (const node of here) {
+			out.push({ id: node.id, name: basename(node.id), kind: node.kind, depth });
+			if (node.kind === 'dir') {
+				emit(node.id, depth + 1);
+			}
+		}
+	}
+	emit(undefined, 0);
+	return out;
+}
+
+function fixtureProvider(): WorkspaceProvider {
 	// Writes stay in this object for the session, so the dirty/save workflow is
 	// exercisable in the browser without a native process.
 	const contents = { ...FIXTURE };
+	// Only the empty ones need recording; the rest are implied by their contents.
+	const folders = new Set<string>();
+	const entries = () => fixtureEntries(Object.keys(contents), folders);
+
+	/** Every id at or under `id`, which is what a folder operation acts on. */
+	const under = (id: string) =>
+		Object.keys(contents).filter((key) => key === id || key.startsWith(`${id}/`));
+
 	return {
 		canChooseWorkspace: false,
+		// In memory, and gone when it goes.
+		deletesToTrash: false,
 		defaultWorkspace: { label: 'Fixture', path: '' },
 		async chooseWorkspace() {
 			return undefined;
@@ -132,10 +203,10 @@ function fixtureProvider(): WorkspaceProvider {
 			return { label: 'Fixture', path: '' };
 		},
 		async getTree() {
-			return entries;
+			return entries();
 		},
 		async getFiles() {
-			return entries.filter((entry) => entry.kind === 'file');
+			return entries().filter((entry) => entry.kind === 'file');
 		},
 		async readFile(id) {
 			const content = contents[id];
@@ -150,6 +221,58 @@ function fixtureProvider(): WorkspaceProvider {
 			}
 			contents[id] = content;
 		},
+
+		/*
+		 * Ticket 29 against the fixture. The rule from ticket 10 is support it or
+		 * refuse it out loud, and support is the better half of that here: it is
+		 * in memory, it costs thirty lines, and it is the only way this app's file
+		 * operations can be looked at without a native window.
+		 */
+		async createFile(id) {
+			if (contents[id] !== undefined || folders.has(id)) {
+				throw new Error('something with that name is already there');
+			}
+			contents[id] = '';
+		},
+		async createFolder(id) {
+			if (contents[id] !== undefined || folders.has(id)) {
+				throw new Error('something with that name is already there');
+			}
+			folders.add(id);
+		},
+		async rename(from, to) {
+			if (contents[to] !== undefined || folders.has(to)) {
+				throw new Error('something with that name is already there');
+			}
+			const moving = under(from);
+			if (moving.length === 0 && !folders.has(from)) {
+				throw new Error(`not found: ${from}`);
+			}
+			for (const id of moving) {
+				contents[`${to}${id.slice(from.length)}`] = contents[id]!;
+				delete contents[id];
+			}
+			for (const id of [...folders].filter((f) => f === from || f.startsWith(`${from}/`))) {
+				folders.delete(id);
+				folders.add(`${to}${id.slice(from.length)}`);
+			}
+		},
+		async deletePlan(id) {
+			if (contents[id] !== undefined) {
+				return { kind: 'file', entries: 0, capped: false };
+			}
+			const inside = entries().filter((entry) => entry.id.startsWith(`${id}/`));
+			return { kind: 'directory', entries: inside.length, capped: false };
+		},
+		async deleteEntry(id) {
+			for (const key of under(id)) {
+				delete contents[key];
+			}
+			for (const folder of [...folders].filter((f) => f === id || f.startsWith(`${id}/`))) {
+				folders.delete(folder);
+			}
+		},
+
 		// Same rules as the native search: case-insensitive, line-oriented,
 		// capped. It searches the fixture's own (possibly edited) contents.
 		async search(query) {
@@ -158,7 +281,7 @@ function fixtureProvider(): WorkspaceProvider {
 				return [];
 			}
 			const results: SearchResult[] = [];
-			for (const entry of entries) {
+			for (const entry of entries()) {
 				for (const [index, line] of (contents[entry.id] ?? '').split('\n').entries()) {
 					if (results.length >= MAX_RESULTS) {
 						return results;
@@ -228,11 +351,46 @@ async function handleAt(
 	if (parts.some((part) => part === '' || part === '.' || part === '..')) {
 		throw new Error(`invalid path: ${id}`);
 	}
+	return (await parentOf(root, id)).getFileHandle(parts[parts.length - 1]!);
+}
+
+/**
+ * The directory an id lives in, under the same segment rule as `handleAt`.
+ *
+ * `create` is what the explorer's new-file needs and what saving must never
+ * have: `writeFile` can only overwrite, so a typo in a restored editor id
+ * cannot conjure a directory tree on the way to writing nothing anyone asked
+ * for.
+ */
+async function parentOf(
+	root: FileSystemDirectoryHandle,
+	id: string,
+	create = false
+): Promise<FileSystemDirectoryHandle> {
+	const parts = id.split('/');
+	if (parts.some((part) => part === '' || part === '.' || part === '..')) {
+		throw new Error(`invalid path: ${id}`);
+	}
 	let dir = root;
 	for (const part of parts.slice(0, -1)) {
-		dir = await dir.getDirectoryHandle(part);
+		dir = await dir.getDirectoryHandle(part, { create });
 	}
-	return dir.getFileHandle(parts[parts.length - 1]!);
+	return dir;
+}
+
+/** Whether anything at all is already at `id`, file or directory. */
+async function takenAt(root: FileSystemDirectoryHandle, id: string): Promise<boolean> {
+	const dir = await parentOf(root, id);
+	const name = basename(id);
+	for (const check of [dir.getFileHandle(name), dir.getDirectoryHandle(name)]) {
+		try {
+			await check;
+			return true;
+		} catch {
+			// Absent, which is the answer this is looking for.
+		}
+	}
+	return false;
 }
 
 /**
@@ -263,6 +421,9 @@ function fileSystemAccessProvider(pick: NonNullable<Window['showDirectoryPicker'
 
 	const provider: WorkspaceProvider = {
 		canChooseWorkspace: true,
+		// The browser has no trash either way; with a real root, delete is refused
+		// outright rather than done unrecoverably.
+		deletesToTrash: false,
 		defaultWorkspace: fixture.defaultWorkspace,
 
 		async chooseWorkspace() {
@@ -336,6 +497,57 @@ function fileSystemAccessProvider(pick: NonNullable<Window['showDirectoryPicker'
 			await writable.close();
 		},
 
+		/*
+		 * Ticket 29 against a real browser-picked folder. Creating is supported;
+		 * renaming and deleting are refused, and for two different reasons.
+		 *
+		 * Rename has no portable API — `FileSystemHandle.move` is Chromium-only
+		 * and recent — so there is nothing to call.
+		 *
+		 * Delete has an API, `removeEntry({ recursive: true })`, and is refused
+		 * anyway. The ticket asked for recoverable over confirmed and the browser
+		 * has no trash, so implementing it here would put the app's one
+		 * unrecoverable action behind its least-tested provider, on a folder the
+		 * user picked out of their real filesystem. A refusal is worse UI and
+		 * better behaviour.
+		 */
+		async createFile(id) {
+			if (!root) {
+				return fixture.createFile(id);
+			}
+			if (await takenAt(root, id)) {
+				throw new Error('something with that name is already there');
+			}
+			await (await parentOf(root, id, true)).getFileHandle(basename(id), { create: true });
+		},
+		async createFolder(id) {
+			if (!root) {
+				return fixture.createFolder(id);
+			}
+			if (await takenAt(root, id)) {
+				throw new Error('something with that name is already there');
+			}
+			await (await parentOf(root, id, true)).getDirectoryHandle(basename(id), { create: true });
+		},
+		async rename(from, to) {
+			if (!root) {
+				return fixture.rename(from, to);
+			}
+			throw new Error('a browser folder cannot be renamed in — open it natively');
+		},
+		async deletePlan(id) {
+			if (!root) {
+				return fixture.deletePlan(id);
+			}
+			throw new Error('deleting is native-only: the browser has no trash to put it in');
+		},
+		async deleteEntry(id) {
+			if (!root) {
+				return fixture.deleteEntry(id);
+			}
+			throw new Error('deleting is native-only: the browser has no trash to put it in');
+		},
+
 		async search(query) {
 			if (!root) {
 				return fixture.search(query);
@@ -386,6 +598,7 @@ function tauriProvider(): WorkspaceProvider {
 
 	return {
 		canChooseWorkspace: true,
+		deletesToTrash: true,
 		/*
 		 * The folder dialog runs in Rust, not here. Rust is the filesystem
 		 * authority, so it is also the only side that gets to learn a root:
@@ -418,6 +631,21 @@ function tauriProvider(): WorkspaceProvider {
 		},
 		async search(query) {
 			return (await core()).invoke<SearchResult[]>('search_workspace', { query });
+		},
+		async createFile(id) {
+			await (await core()).invoke('create_file', { id });
+		},
+		async createFolder(id) {
+			await (await core()).invoke('create_folder', { id });
+		},
+		async rename(from, to) {
+			await (await core()).invoke('rename_entry', { from, to });
+		},
+		async deletePlan(id) {
+			return (await core()).invoke<DeletePlan>('delete_plan', { id });
+		},
+		async deleteEntry(id) {
+			await (await core()).invoke('delete_entry', { id });
 		},
 	};
 }

@@ -1,7 +1,7 @@
 # 28 — Undo a turn
 
 **Blocked by:** none — can start immediately.
-**Status:** ready-for-agent.
+**Status:** **landed.** See [What was built, and why](#what-was-built-and-why).
 
 ## Half of this already runs, every turn
 
@@ -38,14 +38,14 @@ conversation ends in a state the model can reason from truthfully.
 
 ## Acceptance criteria
 
-- [ ] A turn can be undone from the transcript, and it is obvious which turn.
-- [ ] After an undo the working tree matches the checkpoint taken before that turn.
-- [ ] The transcript cannot end in a state where the model believes an edit survives that
+- [x] A turn can be undone from the transcript, and it is obvious which turn.
+- [x] After an undo the working tree matches the checkpoint taken before that turn.
+- [x] The transcript cannot end in a state where the model believes an edit survives that
       does not. Whichever option is chosen, this is the criterion it must meet.
-- [ ] Undo is refused, with a reason, while a turn is running.
-- [ ] Uncommitted work the user did by hand between turns is not silently destroyed —
+- [x] Undo is refused, with a reason, while a turn is running.
+- [x] Uncommitted work the user did by hand between turns is not silently destroyed —
       state what happens to it, and confirm before discarding.
-- [ ] The choice and its reason are recorded in this ticket.
+- [x] The choice and its reason are recorded in this ticket.
 
 ## What was built, and why
 

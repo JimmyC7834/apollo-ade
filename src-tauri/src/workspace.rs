@@ -913,6 +913,218 @@ pub fn search_workspace(
     Ok(results)
 }
 
+// ---------------------------------------------------------------------------
+// What the person in front of the window may do to the tree — ticket 29.
+//
+// Rust already exposed `agent_write_file`, `agent_append_file` and
+// `agent_create_dir` and nothing at all for rename or delete, so **the agent
+// could create files the human could not**. That was an omission rather than a
+// posture, and these four commands close it.
+//
+// They use `may_write`, not `agent_may_write`. The difference is deliberate and
+// is the whole reason the two functions exist separately: `ade.profiles.json`
+// and `.agents/skills` are protected from the *agent* because an agent that can
+// rewrite what it is told can grant itself anything. The human is the one who
+// writes those files. What binds both is `contained` plus a canonicalised
+// parent, which is the real boundary and is enforced here the same way.
+// ---------------------------------------------------------------------------
+
+/// Stop counting a directory here. A confirmation needs an order of magnitude,
+/// not an exact figure, and a `node_modules` under the cursor should not make
+/// the dialog wait on a full walk.
+const MAX_COUNT: u64 = 10_000;
+
+/// Where an entry that **already exists** lives, with the escape closed.
+///
+/// Neither `resolve` nor `writable_parent` fits: `resolve` requires a regular
+/// file and the explorer renames and deletes directories too, and
+/// `writable_parent` creates the parent, which is wrong for an operation whose
+/// whole premise is that the path is already there.
+///
+/// Symlinks are refused rather than followed, as everywhere else here. Renaming
+/// a link is harmless, but *deleting* one is the case where following it and
+/// not following it differ by an entire directory tree, so the rule is stated
+/// once for both.
+fn existing(root: &Path, id: &str) -> Result<PathBuf, String> {
+    if id.trim().is_empty() {
+        // `contained(root, "")` is the root itself, and the root is not the
+        // explorer's to rename or delete.
+        return Err("that is the workspace itself".into());
+    }
+    let target = contained(root, id)?;
+    let parent = target.parent().ok_or_else(|| "invalid path".to_string())?;
+    let real_parent = canonical(parent).map_err(|_| "not found".to_string())?;
+    if !real_parent.starts_with(root) {
+        return Err("path escapes the workspace".into());
+    }
+    let meta = fs::symlink_metadata(&target).map_err(|_| "not found".to_string())?;
+    if meta.file_type().is_symlink() {
+        return Err("symlinks are not supported".into());
+    }
+    let name = target.file_name().ok_or_else(|| "invalid path".to_string())?;
+    Ok(real_parent.join(name))
+}
+
+/// A name that may be created: contained, not taken, and inside the root.
+fn creatable(root: &Path, id: &str) -> Result<PathBuf, String> {
+    if id.trim().is_empty() {
+        return Err("give it a name".into());
+    }
+    let target = contained(root, id)?;
+    if fs::symlink_metadata(&target).is_ok() {
+        return Err("something with that name is already there".into());
+    }
+    Ok(target)
+}
+
+/// Create an empty file.
+///
+/// `create_new`, so this can only ever bring a path into existence — two
+/// windows racing on the same name must not end with one of them silently
+/// truncating a file the other just wrote.
+#[tauri::command]
+pub fn create_file(id: String, state: tauri::State<'_, WorkspaceState>) -> Result<(), String> {
+    let root = root_of(&state)?;
+    may_write(&id)?;
+    let target = creatable(&root, &id)?;
+    writable_parent(&root, &target)?;
+    fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&target)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// Create a directory.
+#[tauri::command]
+pub fn create_folder(id: String, state: tauri::State<'_, WorkspaceState>) -> Result<(), String> {
+    let root = root_of(&state)?;
+    may_write(&id)?;
+    let target = creatable(&root, &id)?;
+    fs::create_dir_all(&target).map_err(|e| e.to_string())?;
+    // Canonicalise the directory itself rather than its parent — it is the
+    // thing created, and a symlinked ancestor would otherwise pass. Same
+    // argument as `agent_create_dir`.
+    let real = canonical(&target).map_err(|e| e.to_string())?;
+    if !real.starts_with(&root) {
+        return Err("refusing to create outside the workspace".into());
+    }
+    Ok(())
+}
+
+/// Move an entry to another root-relative id.
+///
+/// Both ends are checked, and for different reasons: the source has to exist
+/// inside the root, and the destination has to be somewhere the renderer is
+/// allowed to put things. Renaming *into* `.skills` would otherwise be a way to
+/// write a read-only mount by the back door.
+#[tauri::command]
+pub fn rename_entry(
+    from: String,
+    to: String,
+    state: tauri::State<'_, WorkspaceState>,
+) -> Result<(), String> {
+    let root = root_of(&state)?;
+    may_write(&from)?;
+    may_write(&to)?;
+    let source = existing(&root, &from)?;
+    if to.trim().is_empty() {
+        return Err("give it a name".into());
+    }
+    let target = contained(&root, &to)?;
+
+    /*
+     * Changing only the case of a name is a rename, not a collision — but on a
+     * case-insensitive filesystem the destination "already exists", because it
+     * is the source. Canonicalising is what tells the two apart: it reports the
+     * casing actually on disk, so a real collision resolves to some other path
+     * and `Foo.ts` → `foo.ts` resolves right back to where it started.
+     */
+    let same_entry = canonical(&target).ok().as_deref() == Some(source.as_path());
+    if !same_entry && fs::symlink_metadata(&target).is_ok() {
+        return Err("something with that name is already there".into());
+    }
+    writable_parent(&root, &target)?;
+    fs::rename(&source, &target).map_err(|e| e.to_string())
+}
+
+/// What a delete would take, so the confirmation can say it before it happens.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeletePlan {
+    /// `"file"` or `"directory"`.
+    kind: String,
+    /// Entries underneath, directories included. Zero for a file.
+    entries: u64,
+    /// The walk hit `MAX_COUNT` — `entries` is a floor, not a total.
+    capped: bool,
+}
+
+/// Everything under `dir`, counted without the tree walk's exclusions.
+///
+/// `walk` deliberately skips `node_modules` and friends because it is building
+/// a view of the project. This is answering "what is about to be destroyed", and
+/// a count that hides the largest directory in the tree would be the one number
+/// in this dialog that must not be reassuring.
+fn count_under(dir: &Path, total: &mut u64) {
+    let Ok(read) = fs::read_dir(dir) else { return };
+    for entry in read.flatten() {
+        if *total >= MAX_COUNT {
+            return;
+        }
+        *total += 1;
+        // `file_type` rather than `metadata`: it does not follow a symlink, and
+        // neither will the delete.
+        if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            count_under(&entry.path(), total);
+        }
+    }
+}
+
+/// What `delete_entry` would remove. Reads only.
+#[tauri::command]
+pub fn delete_plan(
+    id: String,
+    state: tauri::State<'_, WorkspaceState>,
+) -> Result<DeletePlan, String> {
+    let root = root_of(&state)?;
+    // Checked here as well as in `delete_entry`, even though this only reads: a
+    // path that cannot be deleted should be refused before the confirmation
+    // appears, not after someone has agreed to it.
+    may_write(&id)?;
+    let target = existing(&root, &id)?;
+    if !target.is_dir() {
+        return Ok(DeletePlan {
+            kind: "file".into(),
+            entries: 0,
+            capped: false,
+        });
+    }
+    let mut entries = 0;
+    count_under(&target, &mut entries);
+    Ok(DeletePlan {
+        kind: "directory".into(),
+        entries,
+        capped: entries >= MAX_COUNT,
+    })
+}
+
+/// Move an entry to the OS trash.
+///
+/// **Trash, not unlink.** Ticket 29 asked for recoverable over confirmed, and a
+/// confirmation is only as good as the attention of the person clicking it — a
+/// delete that took a directory is otherwise the one action in this app with no
+/// way back. `git` is not the answer here either: the files most likely to be
+/// lost are the ones never committed.
+#[tauri::command]
+pub fn delete_entry(id: String, state: tauri::State<'_, WorkspaceState>) -> Result<(), String> {
+    let root = root_of(&state)?;
+    may_write(&id)?;
+    let target = existing(&root, &id)?;
+    trash::delete(&target).map_err(|e| format!("could not move it to the trash: {e}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1056,5 +1268,56 @@ mod tests {
 
         let _ = fs::remove_dir_all(&dir);
         let _ = fs::remove_file(dir.join("../ade-outside.txt"));
+    }
+
+    /// Ticket 29's criterion: rename and delete refuse a path outside the root.
+    ///
+    /// Asserted on `existing` and `creatable` rather than on the four commands,
+    /// because those two are the only way any of them reaches a path — a command
+    /// needs a `tauri::State` to construct, and testing through one would test
+    /// Tauri's plumbing instead of the boundary. Every escape below is refused
+    /// before anything touches the disk.
+    #[test]
+    fn rename_and_delete_cannot_leave_the_root() {
+        let dir = std::env::temp_dir().join("ade-fileops-test");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("sub")).unwrap();
+        fs::write(dir.join("sub/ok.txt"), "hi").unwrap();
+        fs::write(dir.join("../ade-fileops-outside.txt"), "nope").unwrap();
+        let root = canonical(&dir).unwrap();
+
+        assert!(existing(&root, "sub/ok.txt").is_ok());
+        assert!(existing(&root, "sub").is_ok(), "a directory is deletable too");
+
+        for escape in [
+            "../ade-fileops-outside.txt",
+            "sub/../../ade-fileops-outside.txt",
+            "/etc/passwd",
+            r"..\ade-fileops-outside.txt",
+        ] {
+            assert!(existing(&root, escape).is_err(), "existing took {escape:?}");
+            assert!(creatable(&root, escape).is_err(), "creatable took {escape:?}");
+        }
+
+        // The root is not the explorer's to rename or delete, and an empty id is
+        // exactly what an unnamed row would send.
+        assert!(existing(&root, "").is_err());
+        assert!(existing(&root, "   ").is_err());
+        assert!(creatable(&root, "").is_err());
+
+        assert!(existing(&root, "sub/gone.txt").is_err(), "nothing to act on");
+        assert!(creatable(&root, "sub/ok.txt").is_err(), "would clobber");
+        assert!(creatable(&root, "sub/new.txt").is_ok());
+
+        // A directory of two entries counts two, and a file has nothing under it.
+        let mut total = 0;
+        count_under(&root, &mut total);
+        assert_eq!(total, 2, "sub, and the file in it");
+
+        #[cfg(windows)]
+        assert!(existing(&root, r"C:\Windows\System32\drivers\etc\hosts").is_err());
+
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_file(dir.join("../ade-fileops-outside.txt"));
     }
 }

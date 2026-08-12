@@ -431,6 +431,28 @@ body {
 	text-overflow: ellipsis;
 }
 
+/* Problems — ticket 32. The scope note is part of the answer, not a footnote,
+   so it sits above the list rather than under it. */
+
+.ide-problems {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+}
+
+.ide-problems-scope {
+	flex: none;
+	margin: 0;
+	padding: var(--space-2) var(--space-3);
+	border-bottom: 1px solid var(--border);
+	color: var(--muted-foreground);
+	font-size: var(--text-small);
+}
+
+.ide-problems .ide-tree {
+	overflow: auto;
+}
+
 .ide-tree-description {
 	overflow: hidden;
 	color: var(--foreground-subtle);
@@ -787,6 +809,29 @@ body {
 	display: flex;
 	justify-content: flex-end;
 	gap: var(--space-3);
+}
+
+/* Prompt — one line of text, asked for in a dialog. */
+
+.ide-prompt {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+	min-width: 20rem;
+}
+
+.ide-prompt-label {
+	color: var(--muted-foreground);
+	font-size: var(--text-small);
+}
+
+/* Reserves its line whether or not there is a problem, so appearing text does
+   not push the buttons out from under the pointer. */
+.ide-prompt-problem {
+	min-height: 1.2em;
+	margin: 0 0 var(--space-2);
+	color: var(--destructive);
+	font-size: var(--text-small);
 }
 
 .ide-quickpick-row-disabled .ide-quickpick-label {
