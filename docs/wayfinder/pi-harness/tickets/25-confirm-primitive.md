@@ -37,3 +37,23 @@ both call sites, not by arguing.**
       like every other accessibility claim in this repo — it has not been heard.
 - [ ] No user-visible change. Both dialogs read and behave as they did.
 - [ ] `npm run check` and `npx tsc --noEmit` clean.
+
+## What was built
+
+**A list of actions, not a two-button dialog.** Decided by writing both call
+sites as the ticket said: `ConfirmDiscard` offers save *and* discard, so a
+primitive with one `onConfirm` would have left the awkward consumer outside —
+and the awkward consumer is the one that proves the shape.
+
+**Cancel is rendered first, and that is the entire focus rule.** `Overlay`
+focuses the first control it finds, so ordering the safe action first is what
+puts initial focus on it. No `autoFocus`, no ref, nothing that can fall out of
+sync with the layout.
+
+Actions do not close the dialog. The caller owns `open` — a primitive that
+closed itself would be a second source of truth for state the caller has to hold
+anyway, and both call sites already hold "which item is pending".
+
+Ticket 28's undo confirmation is the third consumer, written the same day, which
+is what the "extract after two, act on it when a third arrives" rule was waiting
+for.

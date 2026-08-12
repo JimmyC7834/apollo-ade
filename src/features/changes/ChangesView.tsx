@@ -5,9 +5,9 @@ import { dirname } from '../../ids';
 import {
 	ActionBar,
 	Badge,
+	Confirm,
 	ContextMenu,
 	IconButton,
-	Overlay,
 	WorkbenchTree,
 	type TreeNode,
 } from '../../ui';
@@ -165,36 +165,25 @@ export function ChangesView({ provider, activeDiffId, onOpenDiff }: ChangesViewP
 				onClose={() => setMenu(undefined)}
 			/>
 
-			<Overlay
+			{/* Which item is pending is all this view holds; `Confirm` owns the rest. */}
+			<Confirm
 				open={confirmRevertId !== undefined}
 				title="Revert file"
-				onClose={() => setConfirmRevertId(undefined)}
-			>
-				<p className="ide-help-note">
-					Discard the changes in {confirmRevertId}? This cannot be undone.
-				</p>
-				<div className="ide-dialog-actions">
-					<button
-						type="button"
-						className="ide-button"
-						onClick={() => setConfirmRevertId(undefined)}
-					>
-						Cancel
-					</button>
-					<button
-						type="button"
-						className="ide-button ide-button-danger"
-						onClick={() => {
+				message={`Discard the changes in ${confirmRevertId}? This cannot be undone.`}
+				onCancel={() => setConfirmRevertId(undefined)}
+				actions={[
+					{
+						label: 'Revert',
+						danger: true,
+						run: () => {
 							if (confirmRevertId) {
 								void provider.revert(confirmRevertId);
 							}
 							setConfirmRevertId(undefined);
-						}}
-					>
-						Revert
-					</button>
-				</div>
-			</Overlay>
+						},
+					},
+				]}
+			/>
 		</>
 	);
 }

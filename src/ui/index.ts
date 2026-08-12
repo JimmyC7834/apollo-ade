@@ -3,6 +3,7 @@
 
 export { ActionBar, type ActionBarProps } from './ActionBar';
 export { Badge, type BadgeProps, type BadgeTone } from './Badge';
+export { Confirm, type ConfirmProps, type ConfirmAction } from './Confirm';
 export { ContextMenu, type ContextMenuProps, type ContextMenuItem } from './ContextMenu';
 export { Icon, type IconProps } from './Icon';
 export { IconButton, type IconButtonProps } from './IconButton';
