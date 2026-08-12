@@ -1,7 +1,9 @@
 mod exec;
 mod git;
+mod lsp;
 mod profiles;
 mod provider;
+mod reaper;
 mod terminal;
 mod workspace;
 
@@ -12,6 +14,7 @@ pub fn run() {
         .manage(workspace::WorkspaceState::default())
         .manage(terminal::TerminalState::default())
         .manage(exec::ExecState::default())
+        .manage(lsp::LspState::default())
         .invoke_handler(tauri::generate_handler![
             workspace::choose_workspace,
             workspace::restore_workspace,
@@ -44,6 +47,9 @@ pub fn run() {
             terminal::terminal_write,
             terminal::terminal_resize,
             terminal::terminal_kill,
+            lsp::lsp_start,
+            lsp::lsp_send,
+            lsp::lsp_stop,
             git::git_branch,
             git::git_changes,
             git::git_diff,
@@ -53,6 +59,15 @@ pub fn run() {
             git::git_checkpoint,
             git::git_restore_checkpoint,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        // `build` + `run` rather than `Builder::run`, for one reason: a language
+        // server has to be killed when the app goes, and this callback is the
+        // only place that is guaranteed to happen. A leaked `rust-analyzer` is
+        // a gigabyte of resident memory with nothing left to talk to.
+        .run(|app, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                lsp::shutdown_all(app);
+            }
+        });
 }

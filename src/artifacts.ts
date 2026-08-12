@@ -19,7 +19,13 @@
  * Replace surface. Giving them ids rather than a boolean apiece is what lets
  * the dock hold "whatever is pinned" as a list instead of a set of flags.
  */
-export type ToolArtifactKind = 'terminal' | 'changes' | 'replace' | 'explorer' | 'problems';
+export type ToolArtifactKind =
+	| 'terminal'
+	| 'changes'
+	| 'replace'
+	| 'explorer'
+	| 'problems'
+	| 'references';
 
 export interface ArtifactRef {
 	readonly id: string;
@@ -45,6 +51,13 @@ export const TOOL_ARTIFACTS: Record<ToolArtifactKind, ArtifactRef> = {
 	 * file it is complaining about.
 	 */
 	problems: { id: 'artifact:problems', title: 'Problems', icon: 'warning' },
+	/*
+	 * Where a symbol is used — ticket 34. An artifact for the same reason
+	 * Problems is one: it is a result set about a file, and being pinnable
+	 * beside that file is the point. `references.ts` records why it is not a
+	 * second copy of Search.
+	 */
+	references: { id: 'artifact:references', title: 'References', icon: 'references' },
 };
 
 export const TOOL_ARTIFACT_IDS = Object.values(TOOL_ARTIFACTS).map((artifact) => artifact.id);

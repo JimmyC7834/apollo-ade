@@ -3,6 +3,8 @@ import { useEffect, useMemo, useState } from 'react';
 
 import { fileIdForModel } from '../../editor/modelRegistry';
 import { Badge, WorkbenchTree, type TreeNode } from '../../ui';
+import type { LspStatus } from '../lsp/client';
+import { LspStatusNote } from '../lsp/LspStatusNote';
 import {
 	groupProblems,
 	problemLabel,
@@ -38,6 +40,13 @@ function currentProblems(): readonly Problem[] {
 export interface ProblemsViewProps {
 	/** Open the file at the problem. The same call a search result makes. */
 	readonly onOpen: (id: string, line: number) => void;
+	/**
+	 * What the language server is doing — ticket 33. Its diagnostics arrive as
+	 * markers and need nothing here; its *absence* does, because an empty list
+	 * with no explanation reads as "nothing is wrong".
+	 */
+	readonly lspStatus?: LspStatus;
+	readonly onRestartLsp?: () => void;
 }
 
 /**
@@ -55,7 +64,7 @@ export interface ProblemsViewProps {
  * a subset would be worse than one that names its own edge, because the useful
  * reading of an empty list is "nothing is wrong" and that would be a lie.
  */
-export function ProblemsView({ onOpen }: ProblemsViewProps) {
+export function ProblemsView({ onOpen, lspStatus, onRestartLsp }: ProblemsViewProps) {
 	const [files, setFiles] = useState<readonly ProblemFile[]>([]);
 
 	useEffect(() => {
@@ -112,6 +121,7 @@ export function ProblemsView({ onOpen }: ProblemsViewProps) {
 				<strong>{problemSummary(files)}</strong> in open files. Nothing else has been looked
 				at — a file no editor has opened is not checked.
 			</p>
+			<LspStatusNote status={lspStatus} onRestart={onRestartLsp ?? (() => {})} />
 			<WorkbenchTree
 				label="Problems"
 				nodes={nodes}

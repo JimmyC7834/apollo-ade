@@ -1,7 +1,8 @@
 # 34 — Go to definition, find references, hover
 
 **Blocked by:** [33](33-lsp-adaptor.md).
-**Status:** ready-for-agent, once 33 lands.
+**Status:** **built, and the TypeScript half is measured.** The language-server half shares
+33's caveat — no server has run here. See [Landed](#landed).
 
 ## Why this is its own ticket
 
@@ -43,3 +44,54 @@ and it should not start allowing it silently for this. Failing honestly is accep
 - [ ] A server that does not support a capability degrades to it being absent, not to an
       error.
 - [ ] Keyboard reachable, including the references list.
+
+## Landed
+
+**The transport was right, and this ticket found the thing that was not: Monaco's standalone
+editor cannot open a file it has no model for.** That single fact decided both open
+questions.
+
+`monaco.editor.registerEditorOpener` is the seam, and it is registered **once for every
+language**, not per server. It is what makes go-to-definition land somewhere — including for
+TypeScript, where Monaco's own worker has always answered correctly and then had nowhere to
+put the answer. Both languages now behave the same way from the user's side, which is what
+the ticket asked for, and they do so through one piece of code rather than two.
+
+**Find references does not use Monaco's peek widget**, because peek resolves its targets the
+same way the default opener does and throws on a file the workbench has not opened. It would
+have worked for TypeScript and broken for Rust, which is worse than either.
+
+**So the result set is an artifact, and the ticket's warning is answered rather than
+dodged.** What Search and References genuinely share is `WorkbenchTree` and the
+`onOpen(id, line)` contract — already shared by the Explorer, Problems and Changes.
+`SearchView` on top of that carries a query box, a replace box, a preview/apply pair and the
+staleness rule protecting them; References has none of those, so reusing it would mean four
+dead controls or a forked body. A search panel with a disabled search box is a worse lie
+than a list that says what it is. The grouping is `references.ts` and is checked; the view
+is 80 lines with the same shape as `ProblemsView`.
+
+**Containment is refused, not widened.** `fileIdFromUri` returns `undefined` for anything
+outside the root, and that undefined is the answer — a definition in `~/.cargo/registry`
+produces a named sentence in the live region and no navigation. `workspace.rs` was not
+touched. The read-only mechanism the ticket left open is still not built, and this does not
+pretend otherwise.
+
+**Keyboard:** `Shift`+`F12` for references, on a global `addEditorAction`. Monaco's own
+binding for it is disabled for a language with no reference provider — its precondition is
+`hasReferenceProvider` — so there is no race for the key, which is the reason no provider is
+registered rather than an accident of it.
+
+### Measured, in the browser, against the TypeScript worker
+
+Ran at 1280×800 in `npm run dev`, on the fixture's `src/util.ts`:
+
+- Cursor on `noop`, `Shift`+`F12` → References artifact raised itself and read
+  **`1 reference in 1 file to noop.`**, with the row `export const noop = (): void => {};`
+  at `1:14`. The word came from the model, the offset came back through
+  `getPositionAt`, and the file id came back through the model registry.
+- Cursor on empty space, same key → **`No references to symbol.`** Empty, not an error.
+- The Problems panel carries the server's state under its own scope note.
+
+That exercises the action, the language dispatch, the TypeScript worker path, the grouping
+and the artifact. The `client.references` branch is the same code path with a different
+source of locations, and it is the half that waits on 33's caveat.

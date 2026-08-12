@@ -27,6 +27,7 @@ use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;
 use tauri::Manager;
 
+use crate::reaper::Reaper;
 use crate::workspace::{root_of, WorkspaceState};
 
 /// Ceiling on what crosses the IPC, per stream.
@@ -159,115 +160,6 @@ fn shell() -> Option<&'static (PathBuf, &'static str)> {
 #[tauri::command]
 pub fn agent_shell() -> Option<&'static str> {
     shell().map(|(_, name)| *name)
-}
-
-/// Everything one command started, killable as a unit.
-///
-/// **Three mechanisms were tried before this one, and the first two look like
-/// they work.**
-///
-/// `child.kill()` — what `terminal.rs` does — kills only the direct child and
-/// leaves every descendant running.
-///
-/// `taskkill /F /T` prints SUCCESS for each process it kills and still leaves
-/// grandchildren behind, because it kills a process before enumerating that
-/// process's children.
-///
-/// Enumerating the tree first and killing leaves-first *also* fails here, and
-/// this is the finding that settles it: Git Bash's fork emulation spawns
-/// intermediate processes that exit immediately, so a `sleep` under
-/// `bash -lc` ends up with a **parent id that no longer resolves to any
-/// process**. Measured directly — `ppid=9568, parentName=<GONE>` while the
-/// sleep was still running. No walk from our root pid can reach it, because the
-/// chain is already broken.
-///
-/// A job object does not care about parentage: every process created inside it
-/// belongs to it, orphaned or not, and `TerminateJobObject` takes the lot.
-#[cfg(windows)]
-struct Reaper(windows_sys::Win32::Foundation::HANDLE);
-
-#[cfg(windows)]
-// The handle is owned by this struct and only ever used through it. Tauri moves
-// it between threads with the rest of the run state.
-unsafe impl Send for Reaper {}
-
-#[cfg(windows)]
-impl Reaper {
-    fn new() -> Option<Self> {
-        use std::mem::{size_of, zeroed};
-        use windows_sys::Win32::System::JobObjects::{
-            JobObjectExtendedLimitInformation, SetInformationJobObject, CreateJobObjectW,
-            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-        };
-
-        unsafe {
-            let handle = CreateJobObjectW(std::ptr::null(), std::ptr::null());
-            if handle.is_null() {
-                return None;
-            }
-            // Kill on close as well as on demand, so a panic or an early return
-            // cannot leak the tree either.
-            let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = zeroed();
-            limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-            SetInformationJobObject(
-                handle,
-                JobObjectExtendedLimitInformation,
-                &limits as *const _ as *const std::ffi::c_void,
-                size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-            );
-            Some(Self(handle))
-        }
-    }
-
-    fn adopt(&self, pid: u32) {
-        use windows_sys::Win32::Foundation::CloseHandle;
-        use windows_sys::Win32::System::JobObjects::AssignProcessToJobObject;
-        use windows_sys::Win32::System::Threading::{
-            OpenProcess, PROCESS_SET_QUOTA, PROCESS_TERMINATE,
-        };
-
-        unsafe {
-            let process = OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, 0, pid);
-            if process.is_null() {
-                return;
-            }
-            AssignProcessToJobObject(self.0, process);
-            CloseHandle(process);
-        }
-    }
-
-    fn kill(&self) {
-        unsafe { windows_sys::Win32::System::JobObjects::TerminateJobObject(self.0, 1) };
-    }
-}
-
-#[cfg(windows)]
-impl Drop for Reaper {
-    fn drop(&mut self) {
-        unsafe { windows_sys::Win32::Foundation::CloseHandle(self.0) };
-    }
-}
-
-/// Elsewhere the process group does the same job, and `process_group(0)` below
-/// makes the child its leader.
-#[cfg(not(windows))]
-struct Reaper(u32);
-
-#[cfg(not(windows))]
-impl Reaper {
-    fn new() -> Option<Self> {
-        Some(Self(0))
-    }
-    fn adopt(&mut self, pid: u32) {
-        self.0 = pid;
-    }
-    fn kill(&self) {
-        // Shelling out to `kill` rather than taking a `libc` dependency for one
-        // call. The negative pid targets the group.
-        let _ = Command::new("kill")
-            .args(["-KILL", &format!("-{}", self.0)])
-            .status();
-    }
 }
 
 /// Has this run been cancelled? Read on every loop turn rather than waited on,

@@ -12,6 +12,8 @@ import { MonacoEditor } from '../editor/MonacoEditor';
 import type { EditorInput } from '../editor/EditorWorkbench';
 import { ChangesView } from '../features/changes/ChangesView';
 import { ExplorerTree, type FileOperations } from '../features/explorer/ExplorerTree';
+import { ReferencesView } from '../features/lsp/ReferencesView';
+import type { Lsp } from '../features/lsp/useLsp';
 import { ProblemsView } from '../features/problems/ProblemsView';
 import { SearchView } from '../features/search/SearchView';
 import type { Replacement } from '../features/search/replace';
@@ -32,6 +34,8 @@ export interface ArtifactViewProps {
 	readonly onOpenFolder: (() => void) | undefined;
 	/** The explorer's file operations. Absent without a root. */
 	readonly fileOperations: FileOperations | undefined;
+	/** The language server, for the Problems status line and References. */
+	readonly lsp: Lsp;
 	readonly onPreviewReplace: (plan: Replacement) => void;
 	readonly onApplyReplace: (plans: readonly Replacement[]) => Promise<string>;
 	readonly onChange: (id: string, content: string) => void;
@@ -70,7 +74,22 @@ export function ArtifactView(props: ArtifactViewProps) {
 		);
 	}
 	if (kind === 'problems') {
-		return <ProblemsView onOpen={props.onOpenFile} />;
+		return (
+			<ProblemsView
+				onOpen={props.onOpenFile}
+				lspStatus={props.lsp.status}
+				onRestartLsp={props.lsp.restart}
+			/>
+		);
+	}
+	if (kind === 'references') {
+		return (
+			<ReferencesView
+				symbol={props.lsp.symbol}
+				references={props.lsp.references}
+				onOpen={props.onOpenFile}
+			/>
+		);
 	}
 	if (kind === 'explorer') {
 		return (

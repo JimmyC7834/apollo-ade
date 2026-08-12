@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 
 import { createAgentProvider, loadProfileFiles } from '../agent';
-import { clampDock, dockSide, isToolArtifact } from '../artifacts';
+import { TOOL_ARTIFACTS, clampDock, dockSide, isToolArtifact } from '../artifacts';
 import { createChangesProvider } from '../changes';
 import { buildCommands } from '../commands/commandRegistry';
 import { EditorDialog } from '../editor/EditorDialog';
@@ -16,11 +16,13 @@ import type { TranscriptHit } from '../features/agent/transcript';
 import { CommandCenter } from '../features/commandCenter/CommandCenter';
 import type { FileOperations } from '../features/explorer/ExplorerTree';
 import { isUnder, movedId } from '../features/explorer/fileOperations';
+import { useLsp } from '../features/lsp/useLsp';
 import { refuseReason, type Replacement } from '../features/search/replace';
 import { SessionNavigator } from '../features/sessions/SessionNavigator';
 import { createPersistenceAdapter, type PersistedState } from '../persistence';
 import { LIVE_SESSION_ID, breadcrumb, buildGroups, type Session, type SessionStatus } from '../sessions';
 import { createTerminalAdapter } from '../terminal';
+import { Confirm, Prompt } from '../ui';
 import { applyTheme, type ThemeName } from '../ui/theme';
 import {
 	createWorkspaceProvider,
@@ -785,6 +787,56 @@ export function WorkbenchController() {
 		setDockCollapsed(false);
 	}, []);
 
+	/*
+	 * The language server — tickets 33, 34 and 35.
+	 *
+	 * One hook, because everything it needs is already here and nowhere else:
+	 * the workspace root it is initialised against, the open files it has to be
+	 * told about, and `openFile`, which is where a definition or a reference
+	 * ends up. What it hands back is what has to be rendered — the status line
+	 * in the Problems panel, the References artifact's contents, and the rename
+	 * prompt.
+	 */
+	const lspFiles = useMemo(
+		() =>
+			inputs.flatMap((input) =>
+				input.kind === 'source' ? [{ id: input.id, content: input.content }] : []
+			),
+		[inputs]
+	);
+	const lsp = useLsp({
+		root: selection?.path,
+		openFiles: lspFiles,
+		openFile: (id, line) => void openFile(id, line),
+		readFile: useCallback(
+			async (id: string) => {
+				try {
+					return (await provider.readFile(id)).content;
+				} catch {
+					return undefined;
+				}
+			},
+			[provider]
+		),
+		announce,
+		revealReferences: useCallback(
+			() => showArtifact(TOOL_ARTIFACTS.references.id),
+			[showArtifact]
+		),
+	});
+
+	/*
+	 * A rename the server has computed and nobody has applied — ticket 35.
+	 *
+	 * It is `Replacement[]`, the same type ticket 30's preview and apply already
+	 * carry, so the previewing and the writing below are literally ticket 30's
+	 * code and not a second implementation of it. That was the acceptance
+	 * criterion; sharing the *type* is what makes it true rather than claimed.
+	 */
+	const [pendingRename, setPendingRename] = useState<
+		{ readonly to: string; readonly files: readonly Replacement[] } | undefined
+	>(undefined);
+
 	/**
 	 * Where an artifact reference goes when it is clicked — ticket 41.
 	 *
@@ -1122,6 +1174,7 @@ export function WorkbenchController() {
 									provider.canChooseWorkspace && !selection ? () => void openFolder() : undefined
 								}
 								fileOperations={fileOperations}
+								lsp={lsp}
 								onPreviewReplace={openReplacePreview}
 								onApplyReplace={applyReplacements}
 								onChange={editFile}
@@ -1174,6 +1227,58 @@ export function WorkbenchController() {
 								void saveFile(id).then(() => forceCloseEditor(id));
 							}
 						}}
+					/>
+					{/*
+					 * Rename, in two dialogs — ticket 35. The name is asked for
+					 * first, then the server is asked what that would change, and
+					 * only then is there anything to confirm. Confirming before the
+					 * server has answered would be confirming a number nobody knows.
+					 */}
+					<Prompt
+						open={lsp.renameTarget !== undefined}
+						title="Rename symbol"
+						label="New name"
+						initialValue={lsp.renameTarget?.symbol ?? ''}
+						confirmLabel="Preview"
+						validate={(value) => (value.trim() === '' ? 'A name is required.' : undefined)}
+						onCancel={lsp.cancelRename}
+						onSubmit={(value) => {
+							lsp.cancelRename();
+							void lsp.planRename(value).then((plan) => {
+								if (!plan.ok) {
+									announce(plan.reason);
+									return;
+								}
+								// Every file, not just the first: a preview showing one
+								// of nine is a preview of the wrong thing.
+								for (const file of plan.files) {
+									openReplacePreview(file);
+								}
+								setPendingRename({ to: value, files: plan.files });
+							});
+						}}
+					/>
+					<Confirm
+						open={pendingRename !== undefined}
+						title="Apply rename"
+						message={
+							pendingRename
+								? `Rename to ${pendingRename.to} in ${pendingRename.files.length} ` +
+									`file${pendingRename.files.length === 1 ? '' : 's'}. The tabs behind this ` +
+									'dialog show every change. Nothing is written until you apply.'
+								: ''
+						}
+						onCancel={() => setPendingRename(undefined)}
+						actions={[
+							{
+								label: 'Apply',
+								run: () => {
+									const files = pendingRename?.files ?? [];
+									setPendingRename(undefined);
+									void applyReplacements(files);
+								},
+							},
+						]}
 					/>
 					<AccessibilityHelp open={helpOpen} onClose={closeHelp} />
 				</>

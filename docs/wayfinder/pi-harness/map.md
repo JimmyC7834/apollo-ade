@@ -635,11 +635,18 @@ subsystem, and turned out to be joins between parts that already existed. **25, 
 32 have since landed too**, and **[31](tickets/31-workspace-switching.md) was absorbed into
 [39](tickets/39-session-navigator.md)** — it is the only real functionality in that slice.
 
-**What is left of this batch is the LSP chain and one question.**
-[33](tickets/33-lsp-adaptor.md) is the only one that can start: 32 was its blocker and 32
-has landed. [34](tickets/34-lsp-navigation.md) waits on 33,
-[35](tickets/35-lsp-rename.md) on 34, and [36](tickets/36-acp-direction.md) is a question
-recorded at the dev's direction rather than work.
+**The LSP chain is built, and [36](tickets/36-acp-direction.md) is all that is left** — a
+question recorded at the dev's direction rather than work.
+
+[33](tickets/33-lsp-adaptor.md), [34](tickets/34-lsp-navigation.md) and
+[35](tickets/35-lsp-rename.md) landed together. **They are marked *built* rather than
+*landed*, and the distinction is real:** `rust-analyzer` is not installed on the dev's
+machine — `~/.cargo/bin/rust-analyzer.exe` is a rustup shim for a missing component — so no
+language server has been started by this code. Everything that does not need one *was*
+measured: the client's states render in the Problems panel, and ticket 34's whole mechanism
+works against Monaco's TypeScript worker. `rustup component add rust-analyzer` is the one
+command that turns the rest from reviewed into observed, and a Rust test is already written
+and skipping until it is.
 
 Twelve tickets for nine items, because three things came out of slicing them:
 

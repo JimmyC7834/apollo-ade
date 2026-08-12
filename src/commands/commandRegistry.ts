@@ -86,8 +86,9 @@ export function buildCommands(actions: WorkbenchActions): readonly Command[] {
 		/*
 		 * One command per artifact, from `TOOL_ARTIFACTS`, rather than one per
 		 * region. Slice 40 replaced the three regions with the dock; these are
-		 * how the four features that lived in them are still reachable from the
-		 * palette. Adding a fifth artifact adds its command for free.
+		 * how the features that lived in them are still reachable from the
+		 * palette. Adding an artifact adds its command for free — which is how
+		 * References arrived with ticket 34 and needed nothing here.
 		 */
 		...TOOL_ARTIFACT_LIST.map((artifact) => ({
 			id: `view.show.${artifact.id}`,
