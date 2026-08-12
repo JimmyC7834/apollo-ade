@@ -8,6 +8,8 @@
 // is what keeps a vocabulary which breaks in minor releases every couple of
 // days from reaching the UI.
 
+import type { UndoOutcome } from './undo';
+
 export type AgentEvent =
 	/** One chunk of streamed prose. Chunks concatenate; they are not lines. */
 	| { readonly kind: 'text'; readonly text: string }
@@ -120,6 +122,21 @@ export type AgentEvent =
 			/** Bound for a turn of its own, after this one. */
 			readonly followUp: readonly string[];
 	  }
+	/**
+	 * The tree was snapshotted before this turn, and this is the snapshot.
+	 *
+	 * The fourteenth kind, added by
+	 * [ticket 28](docs/wayfinder/pi-harness/tickets/28-session-undo.md). The
+	 * checkpoint has been taken on every turn since the walking skeleton and
+	 * nothing could ever spend it, because the sha never left the provider.
+	 *
+	 * An event rather than a field on `AgentRun`: the transcript is built from
+	 * events, and undo belongs to the *turn* — which outlives its run by exactly
+	 * as long as anyone might want to undo it. Absent for a turn that changed
+	 * nothing, in a repository-less workspace, or in browser mode, and a turn
+	 * with no checkpoint simply cannot be undone.
+	 */
+	| { readonly kind: 'checkpoint'; readonly sha: string }
 	/** A failure worth styling and acting on, rather than prose that reads like one. */
 	| { readonly kind: 'error'; readonly message: string; readonly code?: string }
 	| { readonly kind: 'complete' }
@@ -177,7 +194,17 @@ export interface AgentProvider {
 	 * offering none. It ends with `complete` like a turn does.
 	 */
 	compact(onEvent: (event: AgentEvent) => void): void;
+	/**
+	 * Put the tree back to a turn's checkpoint, and tell the model it happened.
+	 *
+	 * Rejects rather than resolving on failure — a caller that showed "undone"
+	 * for a restore that did not run would be worse than no undo at all. The
+	 * *conversation* is not rewound; see `undo.ts` for why, and for the note this
+	 * appends to the session so the model's context stays true.
+	 */
+	undo(checkpoint: string): Promise<UndoOutcome>;
 }
 
 export { createAgentProvider } from './provider';
+export { undoNote, type UndoOutcome } from './undo';
 export { loadProfileFiles, type ProfileLoad } from './profileFiles';

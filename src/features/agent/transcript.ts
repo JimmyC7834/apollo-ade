@@ -34,6 +34,15 @@ export type Part =
 	| ToolPart
 	| { readonly kind: 'error'; readonly message: string; readonly code?: string }
 	| { readonly kind: 'compacted'; readonly tokensBefore: number; readonly summary: string }
+	/**
+	 * The turn was undone, and this is what that did to the tree.
+	 *
+	 * A part rather than a flag on the `Turn`, so it appears *after* whatever the
+	 * turn produced — reading in the order it happened, which is the only order
+	 * that makes "these edits are gone" attach to the edits above it. The same
+	 * sentence is in the model's context; see `undo.ts`.
+	 */
+	| { readonly kind: 'undone'; readonly note: string }
 	| {
 			readonly kind: 'approval';
 			readonly id: string;
@@ -135,6 +144,14 @@ export interface Turn {
 	/** Last reported usage for the turn. Absent until the provider reports any. */
 	readonly usage?: Usage;
 	/**
+	 * The tree as it was before this turn ran, if anything was saved.
+	 *
+	 * What makes the turn undoable. Absent means it is not — no repository, a
+	 * clean tree, or browser mode — and the UI offers nothing rather than a
+	 * button that fails.
+	 */
+	readonly checkpoint?: string;
+	/**
 	 * What you typed during the turn that has not been sent yet.
 	 *
 	 * Not `Part`s. A part is something that happened, and these have not happened
@@ -168,6 +185,33 @@ export function canAnswer(part: Part, turn: Turn): boolean {
 	);
 }
 
+/**
+ * Is there anything to undo here, and is now the time?
+ *
+ * Three conditions, and each one is a way the button could otherwise lie. No
+ * checkpoint means nothing was saved. A running turn is not finished changing
+ * the tree, so its checkpoint is not yet what "before this turn" will mean to
+ * the person clicking. And an already-undone turn's checkpoint is still a valid
+ * sha — restoring it a second time would silently discard everything done since
+ * the first undo, which is the opposite of what a second click implies.
+ *
+ * The provider refuses a running turn as well, from the queue. Two guards for
+ * one rule, deliberately: this one is what makes the button absent, and that one
+ * is what makes the absence not a security property of the UI.
+ */
+export function canUndo(turn: Turn): boolean {
+	return (
+		turn.checkpoint !== undefined &&
+		turn.status !== 'running' &&
+		!turn.parts.some((part) => part.kind === 'undone')
+	);
+}
+
+/** Record the undo on the turn it undid. */
+export function markUndone(turn: Turn, note: string): Turn {
+	return { ...turn, parts: [...turn.parts, { kind: 'undone', note }] };
+}
+
 /** Replace the tool part with this id, or leave the parts untouched. */
 function patchTool(
 	turn: Turn,
@@ -190,6 +234,8 @@ function patchTool(
 /** Fold one event into the running turn. Text chunks merge; the rest append. */
 export function applyEvent(turn: Turn, event: AgentEvent): Turn {
 	switch (event.kind) {
+		case 'checkpoint':
+			return { ...turn, checkpoint: event.sha };
 		case 'complete':
 			return { ...turn, status: 'complete' };
 		case 'cancelled':
@@ -466,6 +512,11 @@ export function asPlainText(turns: readonly Turn[]): string {
 						return `\n[error] ${part.message}\n`;
 					case 'compacted':
 						return `\n[compacted ${part.tokensBefore} tokens] ${part.summary}\n`;
+					// In the plain-text transcript too, because that is where someone
+					// reads back what happened — and "these edits are gone" is the
+					// most important sentence in the turn once it is true.
+					case 'undone':
+						return `\n[undone] ${part.note}\n`;
 					case 'approval':
 						return `\n[approval] ${part.label} — ${part.detail} (${approvalLabel(
 							part.state,

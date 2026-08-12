@@ -13,6 +13,8 @@ import {
 	approvalLabel,
 	asPlainText,
 	canAnswer,
+	canUndo,
+	markUndone,
 	questionLabel,
 	queuedLabel,
 	formatCost,
@@ -447,4 +449,33 @@ const started = (): Turn => ({ id: 1, prompt: 'go', parts: [], status: 'running'
 	assert.equal(searchTranscript(turns, 'deny')[0]?.detail, 'rename the gate policy');
 }
 
-console.log('transcript.check.ts: thirteen kinds ok');
+// Undo — ticket 28. Every one of these is a way the button could offer to
+// restore something it should not.
+{
+	const base: Turn = { id: 1, prompt: 'edit it', parts: [], status: 'running' };
+
+	assert.equal(canUndo(base), false, 'no checkpoint, nothing to go back to');
+
+	const saved = applyEvent(base, { kind: 'checkpoint', sha: 'abc1234' });
+	assert.equal(saved.checkpoint, 'abc1234');
+	assert.equal(canUndo(saved), false, 'still running — the tree is still moving');
+
+	const done = applyEvent(saved, { kind: 'complete' });
+	assert.equal(canUndo(done), true);
+
+	// A stopped turn is undoable too: it is the one most likely to have left the
+	// tree half-edited, which is the case undo exists for.
+	assert.equal(canUndo(applyEvent(saved, { kind: 'cancelled' })), true);
+
+	const undone = markUndone(done, 'The user undid this turn.');
+	assert.equal(undone.parts.at(-1)?.kind, 'undone', 'the mark goes last, after the edits');
+	assert.equal(
+		canUndo(undone),
+		false,
+		'twice would restore the same sha over everything done since the first'
+	);
+	// The checkpoint is deliberately kept: it is the record of what was restored.
+	assert.equal(undone.checkpoint, 'abc1234');
+}
+
+console.log('transcript.check.ts: fourteen kinds ok');

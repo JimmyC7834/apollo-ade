@@ -1208,6 +1208,24 @@ body {
 	color: var(--foreground);
 }
 
+/*
+ * The undo mark. Shaped like an error — a left rule, unmuted text — because it
+ * carries the same weight: everything above it in the turn is no longer true of
+ * the files. `--muted-foreground` on the rule rather than `--destructive`, since
+ * an undo is a thing the user chose, not a thing that went wrong.
+ */
+.ide-agent-undone {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--space-2);
+	margin: var(--space-2) 0;
+	padding: var(--space-2) var(--space-3);
+	border-left: 2px solid var(--muted-foreground);
+	background: var(--popover);
+	color: var(--foreground);
+	font-size: var(--text-small);
+}
+
 /* A failure the user can act on, so it is not muted like activity is. */
 .ide-agent-error {
 	display: flex;

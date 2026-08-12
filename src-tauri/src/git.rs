@@ -35,6 +35,20 @@ pub struct ChangeDiff {
     modified: String,
 }
 
+/// A git object id and nothing else.
+///
+/// The same trust boundary `relative` is, for the other kind of argument the
+/// frontend supplies. A sha reaches git in a position where `--upload-pack=…`
+/// or `-c` would be read as an option, and a ref name would let the frontend
+/// choose a tree this app never took a checkpoint of.
+fn object_id(sha: &str) -> Result<&str, String> {
+    if sha.len() >= 7 && sha.len() <= 64 && sha.chars().all(|c| c.is_ascii_hexdigit()) {
+        Ok(sha)
+    } else {
+        Err("invalid checkpoint".into())
+    }
+}
+
 /// Ids arrive from the frontend, so this is a trust boundary: only plain
 /// relative paths are ever handed to git.
 fn relative(id: &str) -> Result<&str, String> {
@@ -329,4 +343,101 @@ pub fn git_checkpoint(
     }
     git(&root, &["stash", "store", "-m", &label, sha])?;
     Ok(Some(sha.to_string()))
+}
+
+#[derive(Serialize, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Restored {
+    /// The tree as it was *immediately before* the undo, stashed. `None` means
+    /// there was nothing to save. This is what makes the undo itself undoable.
+    backup: Option<String>,
+    /// Workspace-relative paths that were put back.
+    restored: Vec<String>,
+    /// Paths git tracked that the checkpoint did not have, and that were
+    /// therefore removed. They are in `backup`.
+    removed: Vec<String>,
+}
+
+/// Put the working tree back to a checkpoint taken by `git_checkpoint`.
+///
+/// The other half of the safety net, and the reason the net was worth hanging:
+/// see [ticket 28](docs/wayfinder/pi-harness/tickets/28-session-undo.md).
+///
+/// **A checkpoint of the current tree is taken first, always.** Everything this
+/// then overwrites — including work the user did by hand after the turn began —
+/// is recoverable from `backup` by the same mechanism, which is what makes an
+/// operation that destroys uncommitted changes an acceptable thing to offer at
+/// all. The UI confirms before calling this; that confirmation is the gate, and
+/// this is the floor beneath it.
+///
+/// `restore --worktree` rather than `checkout <sha> -- .`, so the index is left
+/// exactly as it was: an undo that silently staged everything it touched would
+/// change what the user's next commit contains.
+///
+/// **Untracked files are never touched.** `git stash create` does not capture
+/// them, so deleting one here would be the single unrecoverable thing this
+/// command could do — and it is precisely the case a checkpoint cannot cover.
+/// A file the agent created and left untracked survives the undo, and the
+/// caller says so.
+#[tauri::command]
+pub fn git_restore_checkpoint(
+    sha: String,
+    state: tauri::State<'_, WorkspaceState>,
+) -> Result<Restored, String> {
+    let root = root_of(&state)?;
+    let sha = object_id(&sha)?;
+    // Refuse an id that is not a commit we could have made, before anything moves.
+    git(&root, &["cat-file", "-e", &format!("{sha}^{{commit}}")])
+        .map_err(|_| "that checkpoint is no longer in this repository".to_string())?;
+
+    // Read what will change *before* changing it — afterwards the answer is empty.
+    let changes = git(&root, &["diff", "--name-status", sha])?;
+    let mut restored = Vec::new();
+    let mut removed = Vec::new();
+    for line in changes.lines() {
+        let Some((status, path)) = line.split_once('\t') else {
+            continue;
+        };
+        // "A" is added *in the working tree* relative to the checkpoint, so
+        // restoring the checkpoint removes it. Everything else is put back.
+        if status.starts_with('A') {
+            removed.push(path.to_string());
+        } else {
+            restored.push(path.to_string());
+        }
+    }
+
+    let created = git(&root, &["stash", "create"])?;
+    let backup = created.trim();
+    let backup = if backup.is_empty() {
+        None
+    } else {
+        git(&root, &["stash", "store", "-m", "before undo", backup])?;
+        Some(backup.to_string())
+    };
+
+    git(&root, &["restore", "--source", sha, "--worktree", "--", "."])?;
+    Ok(Restored {
+        backup,
+        restored,
+        removed,
+    })
+}
+
+#[cfg(test)]
+mod restore_tests {
+    use super::object_id;
+
+    #[test]
+    fn object_id_rejects_anything_that_is_not_a_sha() {
+        assert!(object_id("1b5d27b48a3bc5dfa5ee11231ef4b51af39c0c82").is_ok());
+        assert!(object_id("1b5d27b").is_ok());
+        // The three shapes that would make this an injection rather than a lookup.
+        assert!(object_id("--upload-pack=touch owned").is_err());
+        assert!(object_id("HEAD").is_err());
+        assert!(object_id("refs/heads/master").is_err());
+        // Too short to be an abbreviation git would accept, and empty.
+        assert!(object_id("1b5d2").is_err());
+        assert!(object_id("").is_err());
+    }
 }

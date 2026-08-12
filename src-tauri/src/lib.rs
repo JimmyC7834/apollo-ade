@@ -46,6 +46,7 @@ pub fn run() {
             git::git_unstage,
             git::git_revert,
             git::git_checkpoint,
+            git::git_restore_checkpoint,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -32,6 +32,37 @@ opened since the theme landed), `resize: both` and the two-pane split on the
 Modal Workbench, and whether a tab's close button really appears without
 resizing the tab.
 
+## Turn undo has never run against a real repository
+
+`git_restore_checkpoint` (slice 45, ticket 28) is registered and its argument
+validation is unit-tested in Rust, and the restore mechanics — `git restore
+--source --worktree -- .` putting back a deletion, removing a since-added tracked
+file, and leaving an untracked file alone — were verified in a throwaway
+repository before the command was written. **The command itself has only been
+called from nothing.** Browser mode never emits a `checkpoint` event, because
+there is no repository and `git_checkpoint` is a Rust command, so the Undo button
+is correctly absent there and the whole path is unreachable without the native
+window. Confirmed in the preview: a completed turn renders no `.ide-agent-undo`.
+
+The same applies to the note reaching the model. `convertToLlm` in pi's `dist`
+maps a `custom_message` to a `role: "user"` message, which is why this design
+works at all — but no model has yet been asked a follow-up question after an
+undo, so "the model reasons correctly from the note" is a reading of pi's source
+and not an observation.
+
+## Confirm's accessibility is structural, not heard
+
+The `Confirm` primitive (ticket 25) was checked in the DOM, both consumers:
+`role="dialog"`, `aria-modal="true"`, and the first focusable control being
+Cancel in each — which is *how* initial focus lands on the safe action, since
+`Overlay` focuses the first control it finds. The destructive action carries
+`ide-button-danger` and the non-destructive ones do not. `ConfirmDiscard` still
+renders Cancel / Don't save / Save in that order, so the prefactor is invisible.
+
+Escape, focus containment and focus restoration are `Overlay`'s and were not
+re-verified here — this change did not touch them. Nothing in this file has been
+heard by a screen reader, and that has not changed.
+
 ## Three Rust commands are compiled and never called
 
 `git_branch`, `recent_workspaces` and `switch_workspace` (slices 38–39) build and

@@ -46,3 +46,61 @@ conversation ends in a state the model can reason from truthfully.
 - [ ] Uncommitted work the user did by hand between turns is not silently destroyed —
       state what happens to it, and confirm before discarding.
 - [ ] The choice and its reason are recorded in this ticket.
+
+## What was built, and why
+
+**pi offers both options.** `Session.moveTo(entryId)` really does rewind the
+conversation — the ticket was right to insist on checking — and
+`appendCustomMessageEntry(type, content, display)` puts a message into the
+model's context without pretending a person said it.
+
+**Chosen: rewind the tree, and tell the model.** `moveTo` throws away the
+reasoning that produced the edits, which is usually the part worth keeping and
+rephrasing, and it addresses pi entry ids where our `Turn` ids are our own — so
+taking it means building a mapping in order to lose something. The note is the
+whole answer to the desync: after an undo the last thing in the model's context
+says the edits are gone and that files must be re-read. `undoNote` is one
+function used by both the session write and the transcript, so the two cannot
+come to say different things.
+
+**What the restore actually does.** `git restore --source=<checkpoint>
+--worktree -- .`, after taking a fresh checkpoint of the current tree. So:
+
+- Modified and deleted tracked files come back.
+- Tracked files the checkpoint did not have are removed — recoverable, because
+  the backup stash captures the index.
+- **Untracked files are never touched.** `git stash create` does not capture
+  them, so deleting one would be the single thing here that no checkpoint could
+  undo. The note says so, and the confirmation says so before it runs.
+- The index is left alone. `checkout <sha> -- .` would have worked too and would
+  have silently staged everything it restored, changing what the next commit
+  contains.
+
+`--worktree` restoring a deletion and removing a since-added file was verified
+in a throwaway repository before the command was written, not assumed.
+
+**Refusal while a turn runs** is two guards on purpose: `canUndo` hides the
+button, and `createRunner.undo` counts live turns and throws. The first is the
+affordance; the second is what makes the first not a security claim about the
+UI. `undo` also goes through the same queue every harness operation uses, so it
+can never land inside a turn.
+
+**Deliberately not done:** removing the change event from the transcript, which
+is what the Shell Guide's Undo says it does. The session is append-only and the
+transcript is what the user reads back — a turn that vanished would be a
+transcript that disagrees with the context it produced.
+
+### The gap the spec review found
+
+The restore and the session note are two operations and cannot be made one — by
+the time the note is attempted the tree is already back. The first cut threw on
+a failed note, which left the files gone, the model's context untouched, and the
+transcript recording *neither*: exactly the state this ticket's third criterion
+forbids, reached by the error path rather than the happy one.
+
+Fixed by carrying the failure out instead of throwing it. `UndoOutcome.told` is
+set by the provider, and a `false` makes `undoNote` say plainly that the agent's
+context still describes the edits and that the user must say so in their next
+message. The transcript therefore records the undo in both cases, the button
+does not come back, and the one thing that cannot be recovered — a silent
+divergence — is not reachable. Asserted in `undo.check.ts`.

@@ -26,6 +26,13 @@ export function AccessibilityHelp({ open, onClose }: AccessibilityHelpProps) {
 				<dd>Cancel the running agent. Focus returns to the prompt when a run ends.</dd>
 				<dt>Continue / Skip</dt>
 				<dd>Answer an approval request. The agent waits and does nothing until you do.</dd>
+				<dt>Undo, at the end of a turn</dt>
+				<dd>
+					Puts the files back to how they were before that turn ran, after a confirmation
+					that says what happens to work you did by hand. The conversation is kept and the
+					agent is told its edits were reverted; the turn then reads that back. Turns that
+					changed nothing, and turns already undone, do not offer it.
+				</dd>
 				<dt>Plain text transcript</dt>
 				<dd>Open the whole conversation as plain text, including tool activity.</dd>
 				<dt>Who said what</dt>

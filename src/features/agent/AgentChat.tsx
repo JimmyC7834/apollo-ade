@@ -15,9 +15,10 @@ import { pressure } from '../../agent/compaction';
 import { activateProfile, activeProfile, listProfiles, type Profile } from '../../agent/profile';
 import { loadProfileFiles, profileSources } from '../../agent/profileFiles';
 import { delegable } from '../../agent/subagent';
+import { undoNote } from '../../agent/undo';
 import { allSkills, permittedSkills, skillList } from '../../agent/skills';
 import { userTools } from '../../agent/userTools';
-import { Icon, Overlay } from '../../ui';
+import { Confirm, Icon, Overlay } from '../../ui';
 import { OTHER } from '../../agent/ask';
 import { thinkingUnavailable } from '../../agent/models';
 import { liveStatus, type SessionStatus } from '../../sessions';
@@ -34,6 +35,8 @@ import {
 	approvalLabel,
 	asPlainText,
 	canAnswer,
+	canUndo,
+	markUndone,
 	questionLabel,
 	queuedLabel,
 	resolveApproval,
@@ -312,6 +315,22 @@ function PartView({
 		);
 	}
 
+	/*
+	 * The undo, shown where it happened — after the edits it reversed.
+	 *
+	 * Not a chip: a chip is collapsed by default, and this is the one thing in a
+	 * turn that changes what everything above it means. It says the same sentence
+	 * the model was given, so the transcript and the context cannot drift.
+	 */
+	if (part.kind === 'undone') {
+		return (
+			<p className="ide-agent-undone">
+				<Icon name="discard" />
+				<span>{part.note}</span>
+			</p>
+		);
+	}
+
 	if (part.kind === 'question') {
 		return <QuestionView part={part} turn={turn} onAnswer={onAnswer} />;
 	}
@@ -410,6 +429,14 @@ export function AgentChat({
 	 * condition it names has changed.
 	 */
 	const [notice, setNotice] = useState<string>();
+	/**
+	 * The turn whose undo is being confirmed — ticket 28.
+	 *
+	 * The turn rather than its id or its sha, because the dialog is the one place
+	 * that needs all three and the turn is where they already live together.
+	 * `undefined` closes it, which is the same shape every other dialog here uses.
+	 */
+	const [undoing, setUndoing] = useState<Turn>();
 	/** Which completion is selected, and whether Escape has closed the menu. */
 	const [picked, setPicked] = useState(0);
 	const [menuOpen, setMenuOpen] = useState(true);
@@ -521,6 +548,50 @@ export function AgentChat({
 		},
 		[onAnnounce]
 	);
+
+	/**
+	 * Undo the turn the dialog is holding — ticket 28.
+	 *
+	 * The dialog closes first and unconditionally. The restore is a native round
+	 * trip, and leaving a modal up across it would either freeze on a dialog that
+	 * cannot be cancelled or invite a second click that restores the same sha
+	 * twice.
+	 *
+	 * **The note is rebuilt here from the outcome, with the same `undoNote` the
+	 * provider gave the model.** Not passed back from the provider: one function
+	 * called twice cannot drift, whereas a second sentence written here is exactly
+	 * how the transcript and the context come to say different things.
+	 */
+	const undoTurn = useCallback(() => {
+		const turn = undoing;
+		setUndoing(undefined);
+		if (!turn?.checkpoint) {
+			return;
+		}
+		void provider
+			.undo(turn.checkpoint)
+			.then((outcome) => {
+				const note = undoNote(outcome);
+				setTurns((current) =>
+					current.map((item) => (item.id === turn.id ? markUndone(item, note) : item))
+				);
+				onAnnounce?.(note);
+			})
+			.catch((cause: unknown) => {
+				/*
+				 * **Only refusals reach here** — a turn still running, a checkpoint
+				 * the repository no longer has, no repository at all — and every one
+				 * of them means nothing moved, so the turn stays undoable and a
+				 * composer notice is the whole response.
+				 *
+				 * A restore that succeeded never rejects, even if the model could
+				 * not be told: that case resolves with `told: false` and is written
+				 * into the transcript above, because files gone with nothing
+				 * recording it is the one end state ticket 28 forbids.
+				 */
+				say(cause instanceof Error ? cause.message : String(cause));
+			});
+	}, [undoing, provider, onAnnounce, say]);
 
 	/*
 	 * The completion menu — ticket 21.
@@ -953,22 +1024,24 @@ export function AgentChat({
 							<p className="ide-agent-status">Stopped.</p>
 						) : null}
 						{/*
-						 * Turn undo — the affordance only, per ticket 41.
+						 * Turn undo — ticket 28, replacing ticket 41's placeholder.
 						 *
 						 * The Guide says activating Undo "removes the corresponding change
-						 * event from the transcript", and that sentence describes what the
-						 * mock did rather than what this app can do: pi's session is
-						 * append-only JSONL. Ticket 28 owns the behaviour and it is
-						 * deferred, so this button says so rather than pretending.
+						 * event from the transcript". It does not, and cannot: pi's session
+						 * is append-only, and a transcript that dropped the turn would be a
+						 * transcript that disagrees with the model's context. What it does
+						 * instead is put the *tree* back and say so, in both places.
+						 *
+						 * Absent rather than disabled when there is nothing to undo — a
+						 * turn with no checkpoint and an already-undone turn are not
+						 * temporarily unavailable, they are permanently not offers.
 						 */}
-						{turn.status === 'complete' ? (
+						{canUndo(turn) ? (
 							<div className="ide-agent-turn-actions">
 								<button
 									type="button"
 									className="ide-agent-undo"
-									onClick={() =>
-										say('Undoing a turn is not decided yet — the session is append-only.')
-									}
+									onClick={() => setUndoing(turn)}
 								>
 									<Icon name="discard" />
 									Undo
@@ -1188,6 +1261,28 @@ export function AgentChat({
 				profile={editing?.profile}
 				onClose={() => setEditing(undefined)}
 				onAnnounce={onAnnounce}
+			/>
+
+			{/*
+			 * The third consumer ticket 25 extracted `Confirm` for, and the reason
+			 * it was worth extracting before this one was written rather than after.
+			 *
+			 * The message states what happens to hand-edited work rather than
+			 * warning about it in the abstract: it is stashed, and `git stash list`
+			 * is where it will be. That is the ticket's "state what happens to it,
+			 * and confirm before discarding" — both halves in one sentence.
+			 */}
+			<Confirm
+				open={undoing !== undefined}
+				title="Undo this turn"
+				message={
+					'Restore the files to how they were before this turn ran? Anything you edited ' +
+					'by hand since then is stashed first, so it stays recoverable from git stash ' +
+					'list. Files the agent created but never added to git are left alone. The ' +
+					'conversation is kept, and the agent is told its edits were reverted.'
+				}
+				onCancel={() => setUndoing(undefined)}
+				actions={[{ label: 'Undo turn', danger: true, run: undoTurn }]}
 			/>
 
 			<Overlay

@@ -45,6 +45,7 @@ import { mapEvent } from './events';
 import { installRustFetch } from './rustFetch';
 import { cannedProvider, FIXTURE_FILES, FIXTURE_PROFILES } from './canned';
 import { createGate } from './gate';
+import { undoNote, type UndoOutcome } from './undo';
 import { isTauri } from '../native';
 import { allTemplates, onTemplatesChange, useTemplateSource } from './promptTemplates';
 import { createAskTool, createAsker } from './ask';
@@ -94,12 +95,53 @@ async function resolveShell(): Promise<string | undefined> {
  * checkpoint is a safety net, not a precondition — failing the turn because the
  * net could not be hung would be worse than running without it.
  */
-async function checkpoint(prompt: string): Promise<void> {
+async function checkpoint(prompt: string): Promise<string | undefined> {
 	try {
 		const { invoke } = await import('@tauri-apps/api/core');
-		await invoke('git_checkpoint', { label: `agent: ${prompt.slice(0, 60)}` });
+		return (
+			(await invoke<string | null>('git_checkpoint', {
+				label: `agent: ${prompt.slice(0, 60)}`,
+			})) ?? undefined
+		);
 	} catch {
 		// Not a git repository, or git is not installed.
+		return undefined;
+	}
+}
+
+/**
+ * Put the tree back, and record the reversal where the model will read it.
+ *
+ * **Order matters and is not symmetrical.** The restore goes first, because a
+ * note about a rewind that never ran is worse than no note. It therefore rejects
+ * on its own failure, and nothing has happened — the caller reports it and the
+ * turn stays undoable, which is correct.
+ *
+ * The note comes second and **cannot be allowed to reject**. By the time it
+ * runs the tree is already back, so throwing here would leave the files gone,
+ * the model's context untouched, and the transcript recording neither — the
+ * exact state ticket 28 says must not be reachable. Instead the failure is
+ * carried out in `told`, so the transcript always records the undo and says
+ * plainly that the model was not informed.
+ */
+async function restore(session: Session, sha: string): Promise<UndoOutcome> {
+	const { invoke } = await import('@tauri-apps/api/core');
+	const restored = await invoke<Omit<UndoOutcome, 'told'>>('git_restore_checkpoint', { sha });
+	const outcome = { ...restored, told: true };
+	/*
+	 * pi's own way of putting something into the context that nobody said.
+	 *
+	 * **Verified in `dist`, not assumed** — the thing ticket 15 is entirely about.
+	 * `convertToLlm` maps a `custom_message` to a `role: "user"` message, so this
+	 * really does reach the model on the next turn. `display` is a hint to pi's
+	 * own renderer and does not gate that; it is `false` because the transcript
+	 * this app shows renders its own note on the undone turn.
+	 */
+	try {
+		await session.appendCustomMessageEntry('undo', undoNote(outcome), false, outcome);
+		return outcome;
+	} catch {
+		return { ...outcome, told: false };
 	}
 }
 
@@ -674,6 +716,9 @@ function createRunner(
 	 * whenever someone types while a compaction is running, which they cannot
 	 * see and cannot stop.
 	 */
+	/** Turns in flight. Only `undo` reads it, and only to refuse. */
+	let live = 0;
+
 	let queue: Promise<unknown> = Promise.resolve();
 	function enqueue<T>(work: () => Promise<T>): Promise<T> {
 		const next = queue.then(work, work);
@@ -824,6 +869,10 @@ function createRunner(
 		// abandoned here rather than answered by this turn's user.
 		asker.begin(onEvent);
 
+		// One more turn in flight. `release` is idempotent — see `released` — so
+		// this is incremented once and decremented once per turn.
+		live += 1;
+
 		let released = false;
 		let stopped = false;
 		let running: AgentHarness<ToolContext> | undefined;
@@ -843,6 +892,7 @@ function createRunner(
 				return;
 			}
 			released = true;
+			live -= 1;
 			dispose?.();
 		}
 
@@ -913,7 +963,12 @@ function createRunner(
 					}
 					running = harness;
 					attach(harness);
-					await checkpoint(label);
+					const sha = await checkpoint(label);
+					if (sha) {
+						// Before the turn's own output, because that is when it was
+						// taken — and because a turn that fails still has one.
+						onEvent({ kind: 'checkpoint', sha });
+					}
 					await run(harness);
 					// Deliberately after `prompt()` resolves rather than inside the
 					// event handler: `compact()` refuses a harness that is not idle,
@@ -1088,7 +1143,23 @@ function createRunner(
 			.finally(() => onEvent({ kind: 'complete' }));
 	}
 
-	return { start, skill, template, compact };
+	/**
+	 * Undo, **through the same queue every other harness operation goes through.**
+	 *
+	 * That is what implements "refused while a turn is running" — not a flag the
+	 * UI could forget to check. A running turn holds the queue, so an undo that
+	 * arrived mid-turn would land after it and rewind a turn the user is watching
+	 * finish. The queue makes ordering safe; the explicit refusal below makes it
+	 * *visible*, which is what the ticket asked for.
+	 */
+	async function undo(sha: string): Promise<UndoOutcome> {
+		if (live > 0) {
+			throw new Error('The agent is still running. Stop it first.');
+		}
+		return await enqueue(async () => restore(await sessions.own, sha));
+	}
+
+	return { start, skill, template, compact, undo };
 }
 
 export function createAgentProvider(): AgentProvider {
@@ -1144,5 +1215,11 @@ export function createAgentProvider(): AgentProvider {
 		// or the script's own failure, which is the honest browser-mode answer
 		// rather than a fake summary the real path would never produce.
 		compact: runner.compact,
+		// Reachable only through a checkpoint sha, and browser mode never emits
+		// one — there is no repository and `git_checkpoint` is a Rust command. So
+		// this is dead by construction rather than by a flag, and `runner.undo`
+		// would fail on the missing `invoke` anyway. Passed through so the two
+		// providers stay the same shape.
+		undo: runner.undo,
 	};
 }
