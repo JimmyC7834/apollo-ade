@@ -1,9 +1,9 @@
 # 33 — An LSP server, end to end, for one language
 
 **Blocked by:** [32](32-diagnostics.md).
-**Status:** **built. Not proven end-to-end on this machine** — see [Landed](#landed) for
-exactly which line the verification stops at. The **tracer bullet** for LSP — one language,
-one capability, all the way through.
+**Status:** **landed, and verified against a real `rust-analyzer`.** See
+[Landed](#landed) and [Verified](#verified-against-rust-analyzer-1970). The **tracer
+bullet** for LSP — one language, one capability, all the way through.
 
 ## What this buys that ticket 32 cannot
 
@@ -42,14 +42,14 @@ last.
 
 ## Acceptance criteria
 
-- [ ] One language server is started, initialized and shut down cleanly by Rust.
-- [ ] Its diagnostics appear in the problems surface from ticket 32, alongside the
+- [x] One language server is started, initialized and shut down cleanly by Rust.
+- [x] Its diagnostics appear in the problems surface from ticket 32, alongside the
       TypeScript ones, distinguishable by source.
-- [ ] Closing the app leaves no orphaned server process. Verified, not assumed.
-- [ ] A missing server binary degrades visibly and never blocks the editor or the agent.
-- [ ] A crashed server is reported and can be restarted without restarting the app.
-- [ ] The server inherits no credentials, on the same terms as `agent_exec`.
-- [ ] Nothing beyond diagnostics is implemented here. Navigation is
+- [x] Closing the app leaves no orphaned server process. Verified, not assumed.
+- [x] A missing server binary degrades visibly and never blocks the editor or the agent.
+- [x] A crashed server is reported and can be restarted without restarting the app.
+- [x] The server inherits no credentials, on the same terms as `agent_exec`.
+- [x] Nothing beyond diagnostics is implemented here. Navigation is
       [ticket 34](34-lsp-navigation.md) and it is blocked on this landing.
 
 ## Landed
@@ -98,22 +98,56 @@ mistaken for a reply, a reply delivered twice, and the crash case where every ou
 request must be failed rather than left hanging. `protocol.check.ts` covers the position
 arithmetic and the URI round trip.
 
-### What is not proven, stated plainly
+## Verified against rust-analyzer 1.97.0
 
-**No language server has been started by this code on this machine.**
-`~/.cargo/bin/rust-analyzer.exe` exists here, which is misleading: it is a rustup *shim* for
-a component that is not installed, so it spawns successfully and immediately exits with
-*"Unknown binary 'rust-analyzer.exe' in official toolchain"*. `rustup component add
-rust-analyzer` is the one command that makes the rest of this ticket verifiable.
+The component was not installed when this was written —
+`~/.cargo/bin/rust-analyzer.exe` exists on any rustup install as a **shim**, so it spawned
+and immediately exited with *"Unknown binary 'rust-analyzer.exe' in official toolchain"*,
+which is a good imitation of a crash. `rustup component add rust-analyzer` fixed it and
+everything below was then measured rather than argued.
 
-`lsp::tests::speaks_to_a_real_language_server` is written and currently **skips**, printing
-that line. It is conditioned on the *stream ending*, not on the spawn failing, so it will
-start really running the moment the component is installed — and a server that is alive and
-does not answer is a failure, not a skip.
+**In Rust** (`cargo test --lib`, both tests skip with a printed reason on a machine without
+the component, and skip only when the *stream ends* — a server that is alive and does not
+answer is a failure):
 
-So of the acceptance criteria above: the code for every one of them exists and is reviewed,
-**none of the six that need a live server has been observed**. The boxes are left unticked
-on purpose. What *was* observed is the whole path that does not need Rust: the client's
-states render in the Problems panel (`rust-analyzer needs the desktop app; the browser has
-no process to start it in`), and ticket 34's machinery works against Monaco's TypeScript
-worker — measured in the browser, below.
+- `speaks_to_a_real_language_server` — spawn, one framed `initialize`, read the reply back
+  with `read_frame`. **Passes.** This is the framing, against the real thing.
+- `stop_ends_a_real_server` — `stop()` on a live server returns having reaped it, inside 10
+  seconds. `rust-analyzer` with an idle stdin waits forever, so a `stop` that only closed
+  the pipe and hoped would hang here instead of passing. The other half of the
+  orphan criterion — that `RunEvent::Exit` fires — is Tauri's and no unit test can raise it.
+
+**In TypeScript** (`node src/features/lsp/live.smoke.ts` — `.smoke.ts`, not `.check.ts`,
+because it needs a language server and four minutes and so has no business in
+`npm run check`). It drives the real `Peer`, `protocol.ts` and `workspaceEdit.ts` against a
+real server over this repo's own `src-tauri` crate:
+
+```
+initialize        ok — definition, references, hover and rename all advertised
+diagnostics       ok — 3 worth showing, from an unsaved edit
+                     src/lsp.rs 430:11 Syntax Error: expected value parameter
+                     src/lsp.rs 430:11 Syntax Error: expected R_PAREN
+                     src/lsp.rs 430:13 Syntax Error: expected R_CURLY
+hover             ok — fn read_frame(reader: &mut impl BufRead) -> std::io::Result<Option<String>>
+definition        ok — src/lsp.rs
+references        ok — 5, all inside the root
+rename            ok — 5 edits in 1 file(s), previewed, nothing written
+```
+
+Nothing is written by any of it — the diagnostics come from a `didChange` carrying a
+deliberate syntax error, which is what an editor sends for *unsaved* text, and
+`git status src-tauri/src/lsp.rs` is empty afterwards.
+
+### Two findings worth keeping
+
+**rust-analyzer's type errors do not arrive until you save.** `fn broken() -> i32 { "not an
+i32" }` produces nothing on `didChange`: type errors come from flycheck, which runs
+`cargo check` on save. What arrives on every keystroke is the native *syntax* diagnostics.
+Both reach the Problems panel by the same route and only their timing differs, but it means
+the panel will read as quieter than a TypeScript file does, and that is rust-analyzer's
+design rather than a defect here.
+
+**Indexing this crate cold took 3m32s**, during which nothing else answers — hover returns
+`null` until it finishes. The `starting` state's sentence says so in as many words, and the
+client's deliberate lack of a request timeout is what stops that from being reported as a
+failure.

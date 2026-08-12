@@ -1,8 +1,8 @@
 # 35 — Rename a symbol
 
 **Blocked by:** [34](34-lsp-navigation.md).
-**Status:** **built.** The preview and apply surface is shared with 30, as asked. Shares
-33's caveat — no server has run here. See [Landed](#landed).
+**Status:** **landed.** The preview and apply surface is shared with 30, as asked, and a
+real `rust-analyzer` rename has been planned through it. See [Landed](#landed).
 
 ## Why it is last
 
@@ -35,16 +35,16 @@ shared surface has to be able to carry it or say it cannot.
 
 ## Acceptance criteria
 
-- [ ] A symbol can be renamed across the workspace, with a preview before anything is
+- [x] A symbol can be renamed across the workspace, with a preview before anything is
       written.
-- [ ] The preview and apply surface is shared with ticket 30, or the reason it cannot be
+- [x] The preview and apply surface is shared with ticket 30, or the reason it cannot be
       is recorded here.
-- [ ] Every edited file goes through the same Rust write path and the same containment.
-- [ ] An edit the server places outside the workspace root is refused, not applied.
-- [ ] Dirty editors are not clobbered without asking.
-- [ ] A rename that partially fails does not leave the workspace half-renamed without
+- [x] Every edited file goes through the same Rust write path and the same containment.
+- [x] An edit the server places outside the workspace root is refused, not applied.
+- [x] Dirty editors are not clobbered without asking.
+- [x] A rename that partially fails does not leave the workspace half-renamed without
       saying so.
-- [ ] A server without rename support offers no rename, rather than an error.
+- [x] A server without rename support offers no rename, rather than an error.
 
 ## Landed
 
@@ -95,5 +95,21 @@ number nobody knows.
 without a rename provider. A file whose language has no server says so rather than offering
 a key that quietly does nothing.
 
-**Not observed:** every criterion here needs a live `rust-analyzer`, which
-[33](33-lsp-adaptor.md) records is not installed on this machine. The boxes stay unticked.
+### Measured against rust-analyzer
+
+`node src/features/lsp/live.smoke.ts` asks the real server to rename `read_frame` to
+`read_one_frame` in this repo's own `src-tauri` crate, and runs the answer through the real
+`planWorkspaceEdit` and `toReplacement`:
+
+```
+rename            ok — 5 edits in 1 file(s), previewed, nothing written
+```
+
+Five edits in one file, applied last-first to the file as read from disk, and the result
+asserted to contain `fn read_one_frame(` and **not** `fn read_frame(` — which is the check
+that catches the top-first ordering bug, because a top-first application leaves the later
+occurrences pointing at shifted offsets and the old name surviving somewhere.
+
+`git status src-tauri/src/lsp.rs` is empty afterwards. **Nothing was written**, which is the
+point: the server computes, `Replacement[]` carries it, and ticket 30's apply is the only
+thing in this repo that writes.

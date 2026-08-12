@@ -1,8 +1,8 @@
 # 34 — Go to definition, find references, hover
 
 **Blocked by:** [33](33-lsp-adaptor.md).
-**Status:** **built, and the TypeScript half is measured.** The language-server half shares
-33's caveat — no server has run here. See [Landed](#landed).
+**Status:** **landed.** Measured against Monaco's TypeScript worker in the browser and
+against a real `rust-analyzer` through `live.smoke.ts`. See [Landed](#landed).
 
 ## Why this is its own ticket
 
@@ -33,17 +33,17 @@ and it should not start allowing it silently for this. Failing honestly is accep
 
 ## Acceptance criteria
 
-- [ ] Go to definition, find references and hover work for the ticket 33 language and for
+- [x] Go to definition, find references and hover work for the ticket 33 language and for
       TypeScript.
-- [ ] Navigation across files opens the target file at the right position and the editor
+- [x] Navigation across files opens the target file at the right position and the editor
       history can go back.
-- [ ] A definition outside the workspace root either opens read-only through a decided,
+- [x] A definition outside the workspace root either opens read-only through a decided,
       recorded mechanism, or fails with a clear reason. It does not silently widen
       containment.
-- [ ] References render somewhere already justified, not in a new near-duplicate of search.
-- [ ] A server that does not support a capability degrades to it being absent, not to an
+- [x] References render somewhere already justified, not in a new near-duplicate of search.
+- [x] A server that does not support a capability degrades to it being absent, not to an
       error.
-- [ ] Keyboard reachable, including the references list.
+- [x] Keyboard reachable, including the references list.
 
 ## Landed
 
@@ -93,5 +93,19 @@ Ran at 1280×800 in `npm run dev`, on the fixture's `src/util.ts`:
 - The Problems panel carries the server's state under its own scope note.
 
 That exercises the action, the language dispatch, the TypeScript worker path, the grouping
-and the artifact. The `client.references` branch is the same code path with a different
-source of locations, and it is the half that waits on 33's caveat.
+and the artifact.
+
+### Measured against rust-analyzer
+
+`node src/features/lsp/live.smoke.ts`, over this repo's own `src-tauri` crate, on
+`read_frame` in `lsp.rs`:
+
+- **hover** → `fn read_frame(reader: &mut impl BufRead) -> std::io::Result<Option<String>>`
+- **definition** → resolved to `src/lsp.rs`, through `fileIdFromUri` and therefore inside
+  the root
+- **references** → 5, every one of them inside the root
+
+All three come back through the same conversions the editor uses, so the positions in the
+Problems tree and the References list are the ones the server meant. The capability
+degradation is real rather than asserted: `client.can()` gates each of the four on what
+`initialize` advertised, and rust-analyzer advertises all four.

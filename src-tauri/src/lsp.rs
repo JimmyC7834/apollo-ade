@@ -300,7 +300,7 @@ fn read_frame(reader: &mut impl BufRead) -> std::io::Result<Option<String>> {
 
 #[cfg(test)]
 mod tests {
-    use super::read_frame;
+    use super::{read_frame, stop, Reaper, Server};
     use std::io::BufReader;
 
     fn frames(input: &str) -> Vec<String> {
@@ -423,6 +423,53 @@ mod tests {
         assert!(
             reply.contains("capabilities"),
             "the reply should advertise capabilities: {reply}"
+        );
+    }
+
+    /// `stop` ends a real server, and does not hang doing it.
+    ///
+    /// The criterion this stands in for is *"closing the app leaves no orphaned
+    /// server process"*. What it proves is the half that is this module's:
+    /// `shutdown_all` calls `stop`, and `stop` returns having reaped the child.
+    /// The other half — that `RunEvent::Exit` fires — is Tauri's, and a unit
+    /// test cannot raise it.
+    ///
+    /// A language server is exactly the right subject: `rust-analyzer` with an
+    /// idle stdin waits forever, so a `stop` that only closed the pipe and
+    /// hoped would hang here rather than pass.
+    #[test]
+    fn stop_ends_a_real_server() {
+        use std::process::{Command, Stdio};
+        use std::time::Instant;
+
+        let Ok(mut child) = Command::new("rust-analyzer")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+        else {
+            eprintln!("SKIPPED: rust-analyzer is not on PATH");
+            return;
+        };
+
+        let Some(mut reaper) = Reaper::new() else {
+            panic!("could not create a process job");
+        };
+        reaper.adopt(child.id());
+        let stdin = child.stdin.take().expect("stdin");
+
+        let started = Instant::now();
+        stop(Server {
+            stdin,
+            child,
+            reaper,
+        });
+        // `stop` waits on the child, so returning at all is the assertion. The
+        // bound catches a wait that only *eventually* completes.
+        assert!(
+            started.elapsed().as_secs() < 10,
+            "stop should not block: took {:?}",
+            started.elapsed()
         );
     }
 }

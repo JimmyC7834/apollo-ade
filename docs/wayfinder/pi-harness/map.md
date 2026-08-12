@@ -639,14 +639,16 @@ subsystem, and turned out to be joins between parts that already existed. **25, 
 question recorded at the dev's direction rather than work.
 
 [33](tickets/33-lsp-adaptor.md), [34](tickets/34-lsp-navigation.md) and
-[35](tickets/35-lsp-rename.md) landed together. **They are marked *built* rather than
-*landed*, and the distinction is real:** `rust-analyzer` is not installed on the dev's
-machine — `~/.cargo/bin/rust-analyzer.exe` is a rustup shim for a missing component — so no
-language server has been started by this code. Everything that does not need one *was*
-measured: the client's states render in the Problems panel, and ticket 34's whole mechanism
-works against Monaco's TypeScript worker. `rustup component add rust-analyzer` is the one
-command that turns the rest from reviewed into observed, and a Rust test is already written
-and skipping until it is.
+[35](tickets/35-lsp-rename.md) landed together, and all three are **verified against
+rust-analyzer 1.97.0** — diagnostics, hover, definition, references and a planned rename,
+plus two Rust tests that prove the framing and that stopping a live server actually ends it.
+`node src/features/lsp/live.smoke.ts` re-runs the whole thing; it is a `.smoke.ts` rather
+than a `.check.ts` because it needs a language server and four minutes.
+
+Two findings from doing it, both in ticket 33: rust-analyzer's **type** errors only arrive
+on save (flycheck runs `cargo check`; what streams on every keystroke is syntax errors), and
+indexing this crate cold takes **3m32s**, during which nothing else answers — which is why
+the client has no request timeout.
 
 Twelve tickets for nine items, because three things came out of slicing them:
 
