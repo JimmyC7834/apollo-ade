@@ -154,3 +154,44 @@ to support.
 The guard's job is unchanged and now more precisely stateable: fail on `node:` builtins,
 and fail if an API implementation ever appears *in the main chunk* rather than as its own
 asset — that, not provider count, is the regression that would hurt.
+
+## Measured — the native binary, 2026-08-11
+
+This ticket only ever asked about the JavaScript. The shipped artifact is one executable,
+because `frontendDist: "../dist"` embeds the web assets into it, so the number a user
+downloads is the binary and not the bundle. Recorded here because this is where the cost
+question lives, not because the ticket asked for it.
+
+`cargo build --release` → **13.5 MiB**, `src-tauri/target/release/tauri-ade-prototype.exe`.
+14 MiB of `dist/` goes in and the whole thing comes out at 13.5, compressed. WebView2 is
+not in there — Tauri renders through the system webview, which is most of the difference
+between this and an Electron build.
+
+`cargo bloat --release --crates` attributes the **9.4 MiB `.text` section**, which is 69.7%
+of the file; the rest is the embedded frontend, resources and headers.
+
+| Crate | `.text` | share |
+|---|---|---|
+| `tauri` | 2.0 MiB | 21.1% |
+| `std` | 1.6 MiB | 17.2% |
+| **`tauri_ade_prototype_lib`** | **851.6 KiB** | **8.8%** |
+| `tokio` | 798.1 KiB | 8.3% |
+| `reqwest` | 588.7 KiB | 6.1% |
+| `rustls` | 517.2 KiB | 5.4% |
+| `serde_json` | 265.6 KiB | 2.8% |
+| `aws_lc_sys` | 198.7 KiB | 2.1% |
+
+**Our own code is third, behind the framework and the standard library.** That is the
+reading worth keeping: nothing we have added dominates, and the two crates above us are
+not removable.
+
+**`reqwest` + `rustls` + `aws_lc_sys` is ~1.3 MiB of TLS**, and it is there because
+[ticket 06](06-credentials-and-http.md) put the HTTPS call in Rust so the API key never
+enters JavaScript. That is the price of that decision, stated plainly. It is not a
+regression and it is not up for trimming without reopening ticket 06.
+
+`trash` — the one dependency [ticket 29](29-explorer-file-operations.md) added — does not
+appear in the top 30 at all.
+
+**cargo-bloat's own caveat applies:** *"numbers above are a result of guesswork"*. Treat
+these as proportions, not audit figures.

@@ -1,8 +1,10 @@
 # 42 — The composer, and the Context Explorer
 
 **Blocked by:** [37](37-shell-tokens-and-stack.md), [40](40-pinned-workbench.md).
-**Status:** ready-for-agent once both land. **Carries one deferred decision** — read the
-location rail section before starting.
+**Status:** **landed in `336c307`, record not yet written.** The criteria below are
+untouched because nobody has checked them against the code — they say nothing about
+whether the work is done. Do not read an unticked box here as work remaining. The
+deferred location-rail decision is still deferred.
 
 ## The composer
 

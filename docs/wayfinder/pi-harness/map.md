@@ -605,7 +605,8 @@ JSONL cannot do, so ticket 28 keeps the decision and ticket 41 builds the afford
 and **approval modes**, where the dev chose the Guide's Ask/Auto/Bypass over the existing
 two after hearing the objection to Bypass.
 
-The sequence, each slice demoable:
+The sequence, each slice demoable. **All eight have landed** — 37–40 together, then 41,
+42, 43 and 44 one commit each:
 
 | | | |
 |---|---|---|
@@ -630,11 +631,15 @@ Nine items, accepted as a batch, now written up as **tickets 25–36**. They are
 *next*.
 
 **26, 27 and 30 landed in Slice 39** — the three that were unblocked, needed no new
-subsystem, and turned out to be joins between parts that already existed. Six remain, of
-which 29 is the only one still gated (on 25) and 36 is still a question rather than work.
-**[31](tickets/31-workspace-switching.md) has since been absorbed into
+subsystem, and turned out to be joins between parts that already existed. **25, 28, 29 and
+32 have since landed too**, and **[31](tickets/31-workspace-switching.md) was absorbed into
 [39](tickets/39-session-navigator.md)** — it is the only real functionality in that slice.
-The rest now wait behind the shell migration above.
+
+**What is left of this batch is the LSP chain and one question.**
+[33](tickets/33-lsp-adaptor.md) is the only one that can start: 32 was its blocker and 32
+has landed. [34](tickets/34-lsp-navigation.md) waits on 33,
+[35](tickets/35-lsp-rename.md) on 34, and [36](tickets/36-acp-direction.md) is a question
+recorded at the dev's direction rather than work.
 
 Twelve tickets for nine items, because three things came out of slicing them:
 

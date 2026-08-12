@@ -1,7 +1,10 @@
 # 43 — The profile modal, its subpages, and a third gate policy
 
 **Blocked by:** [37](37-shell-tokens-and-stack.md).
-**Status:** ready-for-agent once 37 lands.
+**Status:** **landed in `1bbd413`, with `6dfbb89` folding the three gate-policy
+declarations into one; record not yet written.** The criteria below are untouched because
+nobody has checked them against the code — they say nothing about whether the work is
+done. Do not read an unticked box here as work remaining.
 
 ## What a Profile is here
 

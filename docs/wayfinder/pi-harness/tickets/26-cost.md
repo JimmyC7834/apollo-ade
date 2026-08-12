@@ -1,7 +1,7 @@
 # 26 — What the turn cost
 
 **Blocked by:** none — can start immediately.
-**Status:** ready-for-agent.
+**Status:** **landed.** See [Landed](#landed).
 
 ## The whole ticket is one discarded field
 

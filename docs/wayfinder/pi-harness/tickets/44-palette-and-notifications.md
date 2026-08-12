@@ -2,7 +2,10 @@
 
 **Blocked by:** [39](39-session-navigator.md), [40](40-pinned-workbench.md) — it searches
 sessions and opens artifacts.
-**Status:** ready-for-agent once both land. **Last of the shell sequence.**
+**Status:** **landed in `e93bff2`, record not yet written.** Last of the shell sequence.
+The criteria below are untouched because nobody has checked them against the code — they
+say nothing about whether the work is done. Do not read an unticked box here as work
+remaining.
 
 ## Global Search
 

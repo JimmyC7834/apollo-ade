@@ -1,7 +1,7 @@
 # 30 — Replace, not just find
 
 **Blocked by:** none — can start immediately.
-**Status:** ready-for-agent.
+**Status:** **landed.** See [Landed](#landed).
 
 ## What exists
 

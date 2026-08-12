@@ -2,7 +2,9 @@
 
 **Blocked by:** [37](37-shell-tokens-and-stack.md), [40](40-pinned-workbench.md) — a
 reference has to have somewhere to open.
-**Status:** ready-for-agent once both land.
+**Status:** **landed in `55a9e9b`, record not yet written.** The criteria below are
+untouched because nobody has checked them against the code — they say nothing about
+whether the work is done. Do not read an unticked box here as work remaining.
 
 ## What to build
 

@@ -1,7 +1,7 @@
 # 27 — `@` a file into the prompt
 
 **Blocked by:** none — can start immediately.
-**Status:** ready-for-agent.
+**Status:** **landed.** See [Landed](#landed).
 
 ## Both halves are built and have never met
 

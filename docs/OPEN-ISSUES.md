@@ -6,7 +6,7 @@ Close an item by deleting it and recording the fix in the dev log.
 Last updated after **Slices 37–40**, the shell migration. What is left is the
 unverified surface, which is the larger half of this file and always was.
 
-## The shell has now been seen, and three layout bugs were found
+## The shell has now been seen, and four layout bugs were found
 
 Slices 37–40 landed unverified because the browser pane served no frames. It has
 since been looked at, at 630×1758 and at 1280×800, in both themes. **Confirmed by
@@ -15,7 +15,7 @@ measurement:** 42px titlebar and 42px window controls, navigator 32px collapsed 
 reflowing it, dock right at 34% in landscape and full-width below in portrait,
 and the light theme readable on every surface that exists today.
 
-Three bugs were found and fixed in the process — all three were things only
+Four bugs were found and fixed in the process — all four were things only
 looking could have caught:
 
 - `.ide-body-right` and `.ide-body-bottom` were referenced and never written, so
@@ -26,6 +26,16 @@ looking could have caught:
   height instead of the Chat Workbench's.
 - Nothing reserved the navigator's 32px, so chat's first column of text and the
   left edge of the composer sat underneath the status markers.
+- **Every overlay in the workbench was pinned to the top-left corner.** A modal
+  `<dialog>` is centred by the UA's `margin: auto` against `inset: 0`, and
+  Tailwind's preflight — which slice 37 brought in — resets `margin` to 0 on
+  every element, `dialog` included. All nine dialogs were affected: the profile
+  modal, the command palette, both confirms, the prompt, the editor overlay and
+  the keyboard help. Fixed with `margin: auto` on `.ide-overlay`, restoring the
+  UA behaviour rather than reimplementing it with transforms, plus an explicit
+  `margin-bottom: auto` on the quick pick so its deliberate 12vh top anchor
+  survives. Measured at 1280×800: all nine now have `left === right`, and
+  `top === bottom` on the eight that should be centred.
 
 **Still unseen:** Monaco and the diff editor in the light theme (no file has been
 opened since the theme landed), `resize: both` and the two-pane split on the

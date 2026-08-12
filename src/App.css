@@ -784,6 +784,17 @@ body {
 /* Dialog */
 
 .ide-overlay {
+	/*
+	 * Centring, which the browser used to do for free. A modal `<dialog>` is laid
+	 * out against `inset: 0` and centred by the UA's `margin: auto` — but
+	 * Tailwind's preflight resets `margin` to 0 on every element, `dialog`
+	 * included, which pins every overlay in the workbench to the top-left corner.
+	 * Slice 37 installed Tailwind and slices 37–40 landed unseen, which is why
+	 * nobody caught it. Restoring `auto` here restores the UA behaviour rather
+	 * than reimplementing it with transforms, so `max-height` and small viewports
+	 * keep working the way the platform intends.
+	 */
+	margin: auto;
 	min-width: 320px;
 	max-width: 480px;
 	padding: var(--space-5);
@@ -871,8 +882,10 @@ body {
 	width: min(600px, 90vw);
 	max-width: none;
 	padding: var(--space-2);
-	/* Anchored near the top, like a command palette, not centred. */
+	/* Anchored near the top, like a command palette, not centred — horizontally
+	   still centred, which is the `auto` inherited from `.ide-overlay`. */
 	margin-top: 12vh;
+	margin-bottom: auto;
 }
 
 .ide-quickpick-input {
