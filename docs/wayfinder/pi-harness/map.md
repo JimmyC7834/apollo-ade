@@ -645,8 +645,20 @@ plus two Rust tests that prove the framing and that stopping a live server actua
 `node src/features/lsp/live.smoke.ts` re-runs the whole thing; it is a `.smoke.ts` rather
 than a `.check.ts` because it needs a language server and four minutes.
 
-Two findings from doing it, both in ticket 33: rust-analyzer's **type** errors only arrive
-on save (flycheck runs `cargo check`; what streams on every keystroke is syntax errors), and
+It also ran **in the real Tauri window**: the handshake completes, `Shift`+`F12` on a symbol
+in `lsp.rs` returns three references with real positions, and closing the window leaves no
+server behind — the tree is `app → rustup shim → rust-analyzer`, two deep, which is what the
+`Reaper` exists for.
+
+**That last step found three bugs the protocol tests could not**, all in the Rust/renderer
+seam: a blocking pipe write holding the state mutex (the window would not close), event
+listeners registered asynchronously while `initialize` was already in flight (a healthy
+server stuck in `starting` forever), and `lsp_start` treating "already running" as success
+so a reload sent a second `initialize`. All fixed, all recorded in ticket 33 — along with
+the stderr logging whose absence is why the third took so long.
+
+Two findings about rust-analyzer itself, also in ticket 33: **type** errors only arrive on
+save (flycheck runs `cargo check`; what streams on every keystroke is syntax errors), and
 indexing this crate cold takes **3m32s**, during which nothing else answers — which is why
 the client has no request timeout.
 

@@ -23,9 +23,10 @@
 //! command results. `exec.rs` is not: it spawns, captures and exits.
 
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Read, Write};
-use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::{Arc, Mutex};
+use std::io::{BufRead, BufReader, Write};
+use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{mpsc, Arc, Mutex};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
@@ -57,7 +58,18 @@ fn argv_for(language: &str) -> Option<&'static [&'static str]> {
 }
 
 struct Server {
-    stdin: ChildStdin,
+    /// Outbound messages, drained by this server's writer thread.
+    ///
+    /// **A channel rather than the pipe itself, and this is not a refinement.**
+    /// `ChildStdin::write_all` blocks when the pipe is full, and a language
+    /// server that is busy indexing a large crate does stop draining it. Writing
+    /// from the command thread meant blocking with `LspState`'s mutex held —
+    /// after which every later send, every stop, and `shutdown_all` on the way
+    /// out blocked forever behind it. The window would not close.
+    ///
+    /// Sending on an unbounded channel cannot block, so the lock is now only
+    /// ever held for a move.
+    outbox: mpsc::Sender<String>,
     child: Child,
     /// The server's whole process tree. `rust-analyzer` runs `cargo` and
     /// `rustc` while it indexes, so killing only the direct child leaves a
@@ -68,10 +80,24 @@ struct Server {
 #[derive(Default)]
 pub struct LspState(Mutex<HashMap<String, Server>>);
 
+/// Which *instance* of a server an event belongs to.
+///
+/// A language is not enough to address one. Replacing a running server — which
+/// `lsp_start` now does on every page load — ends the old one, and its reader
+/// thread emits an exit as it goes. That exit arrives at the client that just
+/// asked for the *new* server and, addressed only by language, is
+/// indistinguishable from its own server dying: the panel reported a healthy,
+/// indexing server as stopped, every time.
+///
+/// So each start takes a number, and events carry it. The client keeps the one
+/// `lsp_start` returned and ignores the rest.
+static NEXT_EPOCH: AtomicU64 = AtomicU64::new(1);
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Message {
     language: String,
+    epoch: u64,
     /// One JSON-RPC message, still as text. Rust does not parse it.
     body: String,
 }
@@ -80,6 +106,7 @@ struct Message {
 #[serde(rename_all = "camelCase")]
 struct Exit {
     language: String,
+    epoch: u64,
     /// Absent when the server was stopped on purpose, or when the exit status
     /// could not be read. The frontend distinguishes the two by whether it
     /// asked.
@@ -88,19 +115,29 @@ struct Exit {
 
 /// Start a language server for `language`, or say why not.
 ///
-/// Starting one that is already running is not an error and does not restart
-/// it; the frontend restarts by stopping first, which keeps "is it up" a
-/// question with one answer.
+/// **Starting one that is already running replaces it**, and the reason is the
+/// handshake. `initialize` is valid exactly once per server, and the process
+/// outlives the page: reload the window and the fresh client — which has no
+/// idea a conversation ever happened — sends a second one. rust-analyzer
+/// answers `unknown request: initialize` and the client reports a healthy
+/// server as crashed.
+///
+/// Treating "already running" as success looked idempotent and was the bug. A
+/// server's lifetime belongs to the client that shook hands with it, and in this
+/// app the client is the page, so a new page gets a new server. The cost is
+/// re-indexing on reload; the alternative is a conversation with a server that
+/// remembers a client that is gone.
 #[tauri::command]
 pub fn lsp_start(
     language: String,
     app: AppHandle,
     state: tauri::State<'_, LspState>,
     workspace: tauri::State<'_, crate::workspace::WorkspaceState>,
-) -> Result<(), String> {
+) -> Result<u64, String> {
     let argv = argv_for(&language).ok_or_else(|| format!("no language server for {language}"))?;
-    if state.0.lock().unwrap().contains_key(&language) {
-        return Ok(());
+    let epoch = NEXT_EPOCH.fetch_add(1, Ordering::Relaxed);
+    if let Some(previous) = state.0.lock().unwrap().remove(&language) {
+        stop(previous);
     }
 
     // The root comes from Rust's own state, never from the renderer — same rule
@@ -143,17 +180,43 @@ pub fn lsp_start(
     })?;
     reaper.adopt(child.id());
 
-    let stdin = child.stdin.take().ok_or("no stdin")?;
+    let mut stdin = child.stdin.take().ok_or("no stdin")?;
     let stdout = child.stdout.take().ok_or("no stdout")?;
     let stderr = child.stderr.take().ok_or("no stderr")?;
 
-    // Two blocking reader threads, because both pipes have to be drained.
-    // Nothing reads the server's log, but a full stderr pipe blocks the server
-    // itself — rust-analyzer is chatty enough to fill one during indexing.
+    // The writer thread. Blocking here is harmless — it is this thread's whole
+    // job — where blocking on the command thread wedged the app. It ends when
+    // the sender is dropped, which is what `stop` does, and dropping `stdin` on
+    // the way out is the EOF a well-behaved server leaves on.
+    let (outbox, outgoing) = mpsc::channel::<String>();
     std::thread::spawn(move || {
-        let mut sink = [0u8; 4096];
-        let mut stderr = stderr;
-        while matches!(stderr.read(&mut sink), Ok(n) if n > 0) {}
+        while let Ok(body) = outgoing.recv() {
+            // Content-Length counts bytes, not characters. `body.len()` is the
+            // byte length of a Rust string, which is what the header wants — a
+            // `chars()` count would truncate every message containing a
+            // non-ASCII identifier.
+            if write!(stdin, "Content-Length: {}\r\n\r\n", body.len()).is_err()
+                || stdin.write_all(body.as_bytes()).is_err()
+                || stdin.flush().is_err()
+            {
+                break; // The server is gone; the reader thread reports it.
+            }
+        }
+    });
+
+    // Two blocking reader threads, because both pipes have to be drained: a
+    // full stderr pipe blocks the server itself, and rust-analyzer is chatty
+    // enough during indexing to fill one.
+    //
+    // It is *logged* rather than discarded, which it was until a server started
+    // dying in the real app and there was nothing anywhere saying why. A
+    // language server's stderr is its only explanation of itself; throwing it
+    // away costs nothing until the one time it costs an afternoon.
+    let log_language = language.clone();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+            eprintln!("[lsp {log_language}] {line}");
+        }
     });
 
     let pump = Arc::new(app);
@@ -168,6 +231,7 @@ pub fn lsp_start(
                             MESSAGE_EVENT,
                             Message {
                                 language: pump_language.clone(),
+                                epoch,
                                 body,
                             },
                         )
@@ -185,6 +249,7 @@ pub fn lsp_start(
             EXIT_EVENT,
             Exit {
                 language: pump_language,
+                epoch,
                 code: None,
             },
         );
@@ -193,34 +258,31 @@ pub fn lsp_start(
     state.0.lock().unwrap().insert(
         language,
         Server {
-            stdin,
+            outbox,
             child,
             reaper,
         },
     );
-    Ok(())
+    Ok(epoch)
 }
 
-/// Send one JSON-RPC message, framed. `body` is written verbatim.
+/// Queue one JSON-RPC message. `body` is written verbatim, by the writer thread.
+///
+/// This returns as soon as the message is queued, not when it is written. That
+/// is the point: a `didChange` per keystroke must not be able to block the
+/// renderer behind a server that has stopped reading.
 #[tauri::command]
 pub fn lsp_send(
     language: String,
     body: String,
     state: tauri::State<'_, LspState>,
 ) -> Result<(), String> {
-    let mut servers = state.0.lock().unwrap();
-    let server = servers
-        .get_mut(&language)
-        .ok_or("no language server running")?;
-    // Content-Length counts bytes, not characters. `body.len()` is the byte
-    // length of a Rust string, which is what the header wants — a `chars()`
-    // count would truncate every message containing a non-ASCII identifier.
-    write!(server.stdin, "Content-Length: {}\r\n\r\n", body.len()).map_err(|e| e.to_string())?;
+    let servers = state.0.lock().unwrap();
+    let server = servers.get(&language).ok_or("no language server running")?;
     server
-        .stdin
-        .write_all(body.as_bytes())
-        .map_err(|e| e.to_string())?;
-    server.stdin.flush().map_err(|e| e.to_string())
+        .outbox
+        .send(body)
+        .map_err(|_| "the language server stopped".to_string())
 }
 
 /// Stop a server and forget it. Stopping one that is not running is not an
@@ -234,11 +296,12 @@ pub fn lsp_stop(language: String, state: tauri::State<'_, LspState>) -> Result<(
 }
 
 fn stop(mut server: Server) {
-    // Closing stdin first is what a well-behaved client does after `exit`: the
-    // server sees EOF and leaves on its own. The reaper is the guarantee, not
-    // the mechanism — it takes the tree whether or not the server cooperates.
-    drop(server.stdin);
+    // Dropping the sender ends the writer thread, which drops `stdin` and gives
+    // the server the EOF a well-behaved client leaves on. The reaper is the
+    // guarantee, not the mechanism — it takes the tree whether or not the
+    // server cooperates, and it runs first so a wedged write cannot delay it.
     server.reaper.kill();
+    drop(server.outbox);
     let _ = server.child.kill();
     let _ = server.child.wait();
 }
@@ -442,7 +505,7 @@ mod tests {
         use std::process::{Command, Stdio};
         use std::time::Instant;
 
-        let Ok(mut child) = Command::new("rust-analyzer")
+        let Ok(child) = Command::new("rust-analyzer")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -456,11 +519,14 @@ mod tests {
             panic!("could not create a process job");
         };
         reaper.adopt(child.id());
-        let stdin = child.stdin.take().expect("stdin");
+        // A sender with nothing draining it, which is the shape `stop` has to
+        // survive: no writer thread here, so the drop inside it is the only
+        // thing closing the channel.
+        let (outbox, _outgoing) = std::sync::mpsc::channel::<String>();
 
         let started = Instant::now();
         stop(Server {
-            stdin,
+            outbox,
             child,
             reaper,
         });

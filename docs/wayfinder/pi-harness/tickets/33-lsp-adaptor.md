@@ -138,6 +138,62 @@ Nothing is written by any of it — the diagnostics come from a `didChange` carr
 deliberate syntax error, which is what an editor sends for *unsaved* text, and
 `git status src-tauri/src/lsp.rs` is empty afterwards.
 
+## In the real window
+
+The above is the protocol against a real server. The app itself is a different
+question, and running it found **three bugs that no amount of reading would have**
+— every one of them in the seam between Rust and the renderer, which is exactly the
+part `live.smoke.ts` cannot reach.
+
+1. **`lsp_send` blocked the app.** It wrote to the child's stdin *while holding
+   `LspState`'s mutex*. `write_all` blocks when the pipe is full, and a server busy
+   indexing does stop draining — after which every later send, every stop, and
+   `shutdown_all` on the way out queued behind it and the window would not close.
+   Each server now has a writer thread fed by a channel; sending cannot block, so
+   the lock is only ever held for a move.
+2. **The event listeners were registered asynchronously and `initialize` was sent
+   immediately after.** `listen` needs a round trip to Rust; rust-analyzer answers
+   in milliseconds. The reply arrived with nobody listening, the promise never
+   settled, and the client sat in `starting` forever next to a perfectly healthy
+   server. Listening is now awaited, and happens before the process exists.
+3. **`lsp_start` treated "already running" as success.** That looked idempotent
+   and was wrong: the process outlives the page, so a reload sent a *second*
+   `initialize` — `ERROR unknown request: initialize`, and a healthy server
+   reported as crashed. A start now replaces any running server, because a
+   server's lifetime belongs to the client that shook hands with it and here the
+   client is the page. That fix then exposed a fourth: killing the old server
+   emits an exit event, which the new client could not tell from its own server
+   dying. Events now carry an **epoch** and the client ignores any that is not its
+   own.
+
+Bug 3 is only visible because bug 1's diagnosis added **stderr logging**. The
+server's stderr had been discarded; a language server's stderr is its only
+explanation of itself, and `ERROR unknown request: initialize` is the entire
+answer sitting in a pipe nobody read.
+
+### Measured in the app, at the end
+
+Workspace set to this repo, `src-tauri/src/lsp.rs` open in the Modal Workbench,
+Problems pinned:
+
+- **`rust-analyzer is running, so rust files are checked too.`** — the handshake,
+  through Tauri's IPC, in the real WebView.
+- Cursor placed on `reader` with a real mouse click, `Shift`+`F12` →
+  **`3 references in 1 file to reader.`**, listing `fn read_frame(reader: …)` at
+  327:15, `reader.read_line(…)` at 332:12 and `reader.read_exact(…)` at 358:5.
+  Real positions, real preview lines, in the References artifact.
+- **Closing the window left nothing behind.** The process tree was
+  `tauri-ade-prototype.exe → rustup.exe → rust-analyzer.exe` — **two deep**,
+  because `rust-analyzer` on PATH is a rustup shim that spawns the real binary.
+  `child.kill()` would have killed the shim and orphaned the server. After a real
+  window close: none of the three running. That is the criterion, verified rather
+  than assumed, and it is the clearest possible argument for the `Reaper`.
+
+**Hover was not observed through the window.** The widget needs a genuine pointer
+dwell, and `Input.dispatchMouseEvent` does not reliably produce one — the same
+class of limit `docs/OPEN-ISSUES.md` already records for Monaco and CDP. Hover
+itself is proven by `live.smoke.ts`; only this surface for checking it is missing.
+
 ### Two findings worth keeping
 
 **rust-analyzer's type errors do not arrive until you save.** `fn broken() -> i32 { "not an

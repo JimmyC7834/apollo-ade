@@ -106,6 +106,13 @@ and the artifact.
 - **references** → 5, every one of them inside the root
 
 All three come back through the same conversions the editor uses, so the positions in the
-Problems tree and the References list are the ones the server meant. The capability
+Problems tree and the References list are the ones the server meant.
+
+**And in the real window**, not only through the protocol: cursor placed on `reader` in
+`src-tauri/src/lsp.rs` with a real mouse click, `Shift`+`F12` → **`3 references in 1 file to
+reader.`**, with `fn read_frame(reader: …)` at 327:15, `reader.read_line(…)` at 332:12 and
+`reader.read_exact(…)` at 358:5. The keybinding, the language dispatch, the LSP round trip,
+the grouping and the artifact, all of it through Tauri's IPC. See ticket 33's *In the real
+window* for the three bugs that had to be fixed before this worked. The capability
 degradation is real rather than asserted: `client.can()` gates each of the four on what
 `initialize` advertised, and rust-analyzer advertises all four.

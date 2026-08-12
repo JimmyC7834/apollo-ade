@@ -95,22 +95,22 @@ function truthy(value: unknown): boolean {
 	return value === true || (typeof value === 'object' && value !== null);
 }
 
-/** Same shape as `terminal.ts`'s: subscribe now, resolve the handle later. */
-function subscribe<T>(event: string, handler: (payload: T) => void): () => void {
-	let cancelled = false;
-	let unlisten: (() => void) | undefined;
-	void import('@tauri-apps/api/event').then(async ({ listen }) => {
-		const stop = await listen<T>(event, (message) => handler(message.payload));
-		if (cancelled) {
-			stop();
-		} else {
-			unlisten = stop;
-		}
-	});
-	return () => {
-		cancelled = true;
-		unlisten?.();
-	};
+/**
+ * Subscribe, and **wait until the listener is really attached**.
+ *
+ * `terminal.ts` has the fire-and-forget version of this — subscribe now,
+ * resolve the handle later — and it is right there, because a shell produces
+ * nothing until it is written to. A language server is not like that. It
+ * answers `initialize` in single-digit milliseconds, and `listen` needs a round
+ * trip to Rust to register: sending the request before this resolved meant the
+ * reply arrived with nobody listening, the promise never settled, and the
+ * client sat in `starting` forever with a perfectly healthy server attached.
+ *
+ * Found by running the real app, which is the only place it can happen.
+ */
+async function subscribe<T>(event: string, handler: (payload: T) => void): Promise<() => void> {
+	const { listen } = await import('@tauri-apps/api/event');
+	return await listen<T>(event, (message) => handler(message.payload));
 }
 
 export class LanguageClient {
@@ -119,6 +119,8 @@ export class LanguageClient {
 
 	private root: string | undefined;
 	private peer: Peer | undefined;
+	/** Which server instance this client is talking to. See `start`. */
+	private epoch = 0;
 	private state: LspState = isTauri() ? 'off' : 'unavailable';
 	private detail: string | undefined = isTauri()
 		? undefined
@@ -183,28 +185,30 @@ export class LanguageClient {
 		this.setState('starting');
 
 		const { invoke } = await import('@tauri-apps/api/core');
-		try {
-			await invoke('lsp_start', { language: this.language });
-		} catch (error) {
-			const message = String(error);
-			// The one failure told apart from the rest, because "you have not
-			// installed it" and "it fell over" call for different actions.
-			this.setState(/not installed/.test(message) ? 'missing' : 'crashed', message);
-			return;
-		}
 
 		this.peer = new Peer(
 			(body) => void invoke('lsp_send', { language: this.language, body }),
 			(method, params) => this.handleNotification(method, params)
 		);
-		this.unlisten = [
-			subscribe<{ language: string; body: string }>(MESSAGE_EVENT, (payload) => {
-				if (payload.language === this.language) {
+		// Listening comes first, and is awaited. Both of these have to be
+		// attached before the process exists, never mind before it is spoken to
+		// — see `subscribe`.
+		this.unlisten = await Promise.all([
+			subscribe<{ language: string; epoch: number; body: string }>(MESSAGE_EVENT, (payload) => {
+				if (payload.language === this.language && payload.epoch === this.epoch) {
 					this.peer?.receive(payload.body);
 				}
 			}),
-			subscribe<{ language: string }>(EXIT_EVENT, (payload) => {
-				if (payload.language !== this.language) {
+			subscribe<{ language: string; epoch: number }>(EXIT_EVENT, (payload) => {
+				/*
+				 * The epoch, not just the language. Starting a server replaces
+				 * any previous one, and killing that one emits an exit — which
+				 * lands on this listener, for this language, milliseconds after
+				 * asking for a *new* server. Without the epoch it is the same
+				 * event as one's own server dying, and the panel reported a
+				 * healthy indexing server as stopped every single time.
+				 */
+				if (payload.language !== this.language || payload.epoch !== this.epoch) {
 					return;
 				}
 				// Only a state change, never a restart. A server that crashes on
@@ -213,7 +217,21 @@ export class LanguageClient {
 				this.teardown();
 				this.setState('crashed', `${this.server} stopped. Restart it to try again.`);
 			}),
-		];
+		]);
+
+		try {
+			// The instance number this start produced. Every event carries one,
+			// and anything with a different one belongs to a server this client
+			// never asked for.
+			this.epoch = (await invoke('lsp_start', { language: this.language })) as number;
+		} catch (error) {
+			const message = String(error);
+			// The one failure told apart from the rest, because "you have not
+			// installed it" and "it fell over" call for different actions.
+			this.teardown();
+			this.setState(/not installed/.test(message) ? 'missing' : 'crashed', message);
+			return;
+		}
 
 		try {
 			const result = (await this.peer.request('initialize', {
