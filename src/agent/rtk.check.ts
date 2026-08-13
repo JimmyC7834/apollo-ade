@@ -21,19 +21,62 @@ const CACHED = 'C:\\Users\\dev\\AppData\\Roaming\\ade\\rtk\\v0.45.0\\rtk.exe';
 assert.equal(rtkCommand('cargo build', RTK), 'rtk cargo build');
 assert.equal(rtkCommand('  git status  ', RTK), 'rtk git status', 'and it is trimmed');
 
-// --- compound lines are left alone ------------------------------------------
+// --- chains are split, and each side decided on its own ---------------------
 
 {
-	// The one that would actually hurt: `rtk cd src` runs under rtk and then
-	// `npm run build` runs bare, in the wrong directory.
-	assert.equal(rtkCommand('cd src && npm run build', RTK), undefined, 'a chain is left alone');
+	// The shape a model writes constantly. `cd` must stay bare: it is a builtin,
+	// and `rtk cd src` asks rtk to spawn a binary that does not exist — which on
+	// a chain would take `npm run build` down with it.
+	assert.equal(
+		rtkCommand('cd src && npm run build', RTK),
+		'cd src && rtk npm run build',
+		'the builtin is left, the program is wrapped'
+	);
+	assert.equal(rtkCommand('cd src', RTK), undefined, 'and a builtin alone is not wrapped');
+	assert.equal(rtkCommand('a; b', RTK), 'rtk a; rtk b', 'a sequence is two commands');
+	assert.equal(rtkCommand('cargo build || cargo clean', RTK), 'rtk cargo build || rtk cargo clean');
+	assert.equal(
+		rtkCommand('cargo fmt && ls | head', RTK),
+		'rtk cargo fmt && ls | head',
+		'a pipeline segment is copied through rather than sinking the line'
+	);
+	assert.equal(
+		rtkCommand('cd src&&npm run build', RTK),
+		'cd src && rtk npm run build',
+		'spacing around the separator is normalised'
+	);
+}
+
+// --- what is still left entirely alone --------------------------------------
+
+{
+	// Not a parsing limit: rtk reformats what it captures, so `head` would read
+	// rtk's rendering instead of the command's output.
 	assert.equal(rtkCommand('ls | head', RTK), undefined, 'a pipeline is left alone');
 	assert.equal(rtkCommand('echo hi > out.txt', RTK), undefined, 'a redirection is left alone');
-	assert.equal(rtkCommand('a; b', RTK), undefined, 'a sequence is left alone');
+	assert.equal(rtkCommand('cargo build &', RTK), undefined, 'a background job is left alone');
+	// These nest or span lines, which is where a scanner this size stops being
+	// honest about what it is reading.
 	assert.equal(rtkCommand('echo $(date)', RTK), undefined, 'a substitution is left alone');
 	assert.equal(rtkCommand('echo `date`', RTK), undefined, 'the old substitution too');
+	assert.equal(rtkCommand('(cd src && ls)', RTK), undefined, 'a subshell is left alone');
 	assert.equal(rtkCommand('one\ntwo', RTK), undefined, 'a two-line script is left alone');
-	assert.equal(rtkCommand('cargo build &', RTK), undefined, 'a background job is left alone');
+}
+
+// --- quoting, which is what makes the split safe ----------------------------
+
+{
+	assert.equal(
+		rtkCommand('git commit -m "a && b"', RTK),
+		'rtk git commit -m "a && b"',
+		'a separator inside quotes is not a separator'
+	);
+	assert.equal(
+		rtkCommand("grep ';' file && ls", RTK),
+		"rtk grep ';' file && rtk ls",
+		'and the real one after it still is'
+	);
+	assert.equal(rtkCommand('echo "unbalanced', RTK), undefined, 'an unbalanced quote is not guessed at');
 }
 
 {
@@ -46,6 +89,8 @@ assert.equal(rtkCommand('  git status  ', RTK), 'rtk git status', 'and it is tri
 {
 	assert.equal(rtkCommand('', RTK), undefined, 'nothing to run');
 	assert.equal(rtkCommand('   ', RTK), undefined);
+	assert.equal(rtkCommand('cargo build;', RTK), undefined, 'an empty side is not guessed at');
+	assert.equal(rtkCommand('&& cargo build', RTK), undefined);
 }
 
 // --- never twice ------------------------------------------------------------
@@ -54,6 +99,11 @@ assert.equal(rtkCommand('  git status  ', RTK), 'rtk git status', 'and it is tri
 	assert.equal(rtkCommand('rtk cargo build', RTK), undefined, 'already wrapped');
 	assert.equal(rtkCommand('rtk.exe cargo build', RTK), undefined);
 	assert.equal(rtkCommand("'C:/x/rtk.exe' cargo build", CACHED), undefined, 'the cached one too');
+	assert.equal(
+		rtkCommand('rtk cargo fmt && cargo build', RTK),
+		'rtk cargo fmt && rtk cargo build',
+		'per segment, so a half-wrapped chain is completed rather than doubled'
+	);
 }
 
 // --- quoting the cached path ------------------------------------------------

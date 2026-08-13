@@ -888,3 +888,31 @@ fetching the binary instead of reimplementing its filters. `cargo --version` is
 network, and run deliberately it downloads v0.45.0, matches the recorded digest,
 unpacks the zip and confirms the extracted binary answers `gain` as v0.45.0.
 A path that only ever runs on a stranger's machine is a path nobody has run.
+
+## Amendment 8 — the compound ceiling, mostly lifted
+
+Amendment 7 recorded "compound lines are refused" as a real ceiling. It was two
+refusals wearing one coat, and only one of them had a reason.
+
+`rtkCommand` now scans the line once, quote-aware, splits it at top-level `&&`,
+`||` and `;`, and decides each segment independently:
+
+```
+cd src && npm run build   →   cd src && rtk npm run build
+cargo fmt && ls | head    →   rtk cargo fmt && ls | head
+git commit -m "a && b"    →   rtk git commit -m "a && b"
+```
+
+The refusals that remain are the ones with reasons behind them. A **pipeline or
+redirection** segment is left bare because rtk reformats what it captures, so a
+downstream `head` or `> file` would consume rtk's rendering instead of the
+command's — semantic, not syntactic, and permanent. Anything that **nests or
+spans lines** returns "do not touch the line": `$( )`, backticks, a subshell, a
+newline, an unbalanced quote. That is where a 40-line scanner stops being honest
+about what it is reading, and a shell parser is still a much larger thing than
+this ticket.
+
+**One latent bug came out of it.** `rtk cd src` asks rtk to spawn a binary called
+`cd`, and `cd` is a shell builtin. The original code produced exactly that for a
+bare `cd src`, and on a chain it would have taken every following command down
+with it. A short `BUILTINS` set now leaves those segments alone.

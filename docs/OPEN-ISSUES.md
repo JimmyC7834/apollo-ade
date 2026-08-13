@@ -202,23 +202,28 @@ still fine there.
 
 ## Open defects
 
-### rtk filters one command at a time, and agents rarely write one command
+### rtk still leaves pipelines and redirections alone
 
-**Ticket 11 shipped with a ceiling that is deliberate and worth stating.** rtk
-takes a program and its arguments, so `src/agent/rtk.ts` refuses to rewrite any
-line containing `| & ; < > \` newline` or `$(`, or a leading `VAR=value`
-assignment — `rtk cd src && npm run build` would run `cd src` under rtk and then
-`npm run build` bare, in the wrong directory.
+The larger half of this — chains — **is fixed**: `src/agent/rtk.ts` now splits a
+line at top-level `&&` / `||` / `;`, quote-aware, and decides each side on its
+own, so `cd src && npm run build` becomes `cd src && rtk npm run build`. See the
+dev log's *the compound ceiling, mostly lifted*.
 
-Every one of those lines therefore runs **unfiltered**, and a model writes
-compound lines constantly. So the savings measured on a single command are the
-best case rather than the typical one. Removing the ceiling means parsing shell,
-which is a much larger thing than this ticket. Quoting is not parsed either: an
-`&&` inside a quoted string costs that line its rewrite and nothing else.
+What is left is deliberate and is not going to change:
 
-Both errors fall towards running what the model wrote, which is the safe
-direction — but "rtk is on" and "rtk did anything" are not the same claim, and
-only the transcript's byte counts tell them apart.
+- **A pipeline or a redirection segment is copied through untouched.** rtk
+  reformats what it captures, so `cargo build | head` under rtk would feed
+  `head` rtk's rendering rather than cargo's output. The rest of the line is
+  still filtered.
+- **Anything that nests or spans lines returns "do not touch"** — `$( )`,
+  backticks, a subshell, a newline, an unbalanced quote. A 40-line scanner is
+  honest up to that point and no further.
+- **A leading `VAR=value` assignment**, and any word in the `BUILTINS` set,
+  stays bare. `rtk cd src` would ask rtk to spawn a binary that does not exist.
+
+Every one of those errors falls towards running what the model wrote, which is
+the safe direction — but "rtk is on" and "rtk did anything" are still not the
+same claim, and only the transcript's byte counts tell them apart.
 
 ### rtk's fetch is proven; its three other platforms are not
 

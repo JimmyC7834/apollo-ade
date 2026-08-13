@@ -74,35 +74,138 @@ export function resolveRtk(): Promise<RtkStatus> {
 }
 
 /**
- * Shell syntax rtk must not be put in front of.
+ * Words that are the shell rather than a program.
  *
- * `rtk cd src && npm run build` runs `cd src` under rtk and then `npm run
- * build` bare, which is not what anybody asked for — and for a redirection or a
- * pipeline it is worse than useless. A model writes compound lines constantly,
- * so this is the common case rather than the exotic one, and the honest answer
- * for all of them is to leave the line alone.
- *
- * Two omissions worth knowing: a leading `VAR=value` assignment is caught
- * separately below, and quoting is not parsed at all — an `&&` inside a quoted
- * string costs the line its rewrite and nothing else. Both errors fall the safe
- * way, which is towards running what the model wrote.
+ * `rtk cd src` asks rtk to spawn a binary called `cd`, and there isn't one — it
+ * is a builtin, and on a chain that failure takes the whole line with it. The
+ * list is short on purpose: it covers what a model writes before an `&&`, and
+ * anything missed merely fails one command loudly rather than silently doing
+ * the wrong thing.
  */
-const COMPOUND = /[|&;<>`\n]|\$\(/;
+const BUILTINS = new Set([
+	'cd',
+	'export',
+	'source',
+	'.',
+	'set',
+	'unset',
+	'eval',
+	'exec',
+	'alias',
+	'unalias',
+	'pushd',
+	'popd',
+	'shift',
+	'trap',
+	'wait',
+	'read',
+	'local',
+	'return',
+	'exit',
+	'true',
+	'false',
+	':',
+	'[',
+	'test',
+]);
+
+/** One side of a chain, and whether rtk may be put in front of it. */
+interface Segment {
+	readonly text: string;
+	/**
+	 * No unquoted `|`, `&`, `<` or `>` in it.
+	 *
+	 * A pipeline or a redirection is a semantic limit rather than a parsing one:
+	 * rtk reformats what it captures, so `cargo build | head` under rtk would
+	 * feed `head` rtk's rendering instead of cargo's output. Leaving those alone
+	 * is the right answer and stays the right answer.
+	 *
+	 * The scanner decides this rather than a regex over the text, because only
+	 * the scanner knows which characters were inside quotes — and `git commit -m
+	 * "a && b"` is a command rtk can filter perfectly well.
+	 */
+	readonly simple: boolean;
+}
 
 /**
- * The command, through rtk — or `undefined` when it must be left alone.
+ * Top-level `&&` / `||` / `;` boundaries, quote-aware.
  *
- * Pure, and the reason this file is checkable without a shell.
+ * `undefined` means *do not touch this line at all*: anything that nests or
+ * spans lines — a substitution, a subshell, a heredoc — is where a scanner this
+ * size stops being honest, and an unbalanced quote means the reading is already
+ * wrong. Both fall towards running what the model wrote.
+ *
+ * `parts.length === seps.length + 1`, always.
  */
-export function rtkCommand(command: string, program: string): string | undefined {
-	const trimmed = command.trim();
-	if (trimmed === '' || COMPOUND.test(trimmed)) {
+function segments(line: string): { parts: Segment[]; seps: string[] } | undefined {
+	const parts: Segment[] = [];
+	const seps: string[] = [];
+	let start = 0;
+	let simple = true;
+	let quote: string | undefined;
+	const cut = (end: number, sep: string) => {
+		parts.push({ text: line.slice(start, end), simple });
+		seps.push(sep);
+		simple = true;
+	};
+	for (let i = 0; i < line.length; i++) {
+		const c = line[i];
+		if (quote !== undefined) {
+			if (c === quote) {
+				quote = undefined;
+			}
+			continue;
+		}
+		if (c === "'" || c === '"') {
+			quote = c;
+			continue;
+		}
+		if (c === '`' || c === '(' || c === ')' || c === '\n') {
+			return undefined;
+		}
+		if (c === '$' && line[i + 1] === '(') {
+			return undefined;
+		}
+		const two = line.slice(i, i + 2);
+		if (two === '&&' || two === '||') {
+			cut(i, two);
+			i += 1;
+			start = i + 1;
+			continue;
+		}
+		if (c === ';') {
+			cut(i, ';');
+			start = i + 1;
+			continue;
+		}
+		if (c === '|' || c === '&' || c === '<' || c === '>') {
+			simple = false;
+		}
+	}
+	if (quote !== undefined) {
+		return undefined;
+	}
+	parts.push({ text: line.slice(start), simple });
+	// A trailing `;` or a doubled separator leaves an empty side. Valid shell in
+	// one of those cases and not in the others, and not worth telling apart.
+	if (parts.some((part) => part.text.trim() === '')) {
+		return undefined;
+	}
+	return { parts, seps };
+}
+
+/**
+ * One simple command, through rtk — or `undefined` to leave it as written.
+ */
+function wrapSegment(segment: Segment, program: string): string | undefined {
+	const trimmed = segment.text.trim();
+	if (!segment.simple) {
 		return undefined;
 	}
 	// `FOO=bar cmd` is a shell feature, not a program, and rtk would try to run
 	// it as one.
 	const first = trimmed.split(/\s+/)[0] ?? '';
-	if (first.includes('=')) {
+	if (first.includes('=') || BUILTINS.has(first)) {
 		return undefined;
 	}
 	// Already wrapped — by a hook that ran twice, or by a model that has seen
@@ -114,6 +217,43 @@ export function rtkCommand(command: string, program: string): string | undefined
 	}
 	const quoted = quoteProgram(program);
 	return quoted === undefined ? undefined : `${quoted} ${trimmed}`;
+}
+
+/**
+ * The command, through rtk — or `undefined` when it must be left alone.
+ *
+ * Each side of a chain is decided separately, so `cd src && npm run build`
+ * becomes `cd src && rtk npm run build`: the shape a model writes constantly,
+ * and the one that used to cost the whole line its rewrite. A segment rtk
+ * cannot help with is copied through untouched rather than sinking the line.
+ *
+ * Whitespace around the separators is normalised, because rejoining is simpler
+ * than preserving it and the gate shows the user exactly what will run either
+ * way. Pure, and the reason this file is checkable without a shell.
+ */
+export function rtkCommand(command: string, program: string): string | undefined {
+	const split = segments(command);
+	if (split === undefined) {
+		return undefined;
+	}
+	let changed = false;
+	const out = split.parts.map((part) => {
+		const wrapped = wrapSegment(part, program);
+		if (wrapped === undefined) {
+			return part.text.trim();
+		}
+		changed = true;
+		return wrapped;
+	});
+	if (!changed) {
+		return undefined;
+	}
+	let line = out[0] ?? '';
+	for (let i = 1; i < out.length; i++) {
+		const sep = split.seps[i - 1];
+		line += (sep === ';' ? '; ' : ` ${sep} `) + out[i];
+	}
+	return line;
 }
 
 /** Is this word rtk already — bare, or as either platform's path? */

@@ -4172,3 +4172,50 @@ confirms the extracted binary answers `rtk gain` reporting v0.45.0. Passing.
 - **ARM Windows has no asset** and takes the unavailable path permanently.
 - The **compound-command ceiling** below is a deliberate limit, not a gap, but
   it means most real agent command lines go unfiltered.
+
+## Ticket 11, follow-up — the compound ceiling, mostly lifted
+
+The ceiling shipped with ticket 11 was that a line containing `&&`, `||`, `;`,
+a pipe or a redirection was left alone entirely, so `cd src && npm run build` —
+the shape a model writes constantly — ran unfiltered. That was one refusal doing
+two different jobs, and only one of them was load-bearing.
+
+**Chains are now split and each side decided separately.** `rtkCommand` scans
+the line once, quote-aware, for top-level `&&` / `||` / `;`, and puts rtk in
+front of each segment that qualifies on its own:
+
+```
+cd src && npm run build   →   cd src && rtk npm run build
+cargo fmt && ls | head    →   rtk cargo fmt && ls | head
+```
+
+Three things the scanner is deliberately not:
+
+- **Not a shell parser.** A substitution, a subshell, a backtick or a newline
+  returns "do not touch this line", and so does an unbalanced quote. That is
+  where a 40-line scanner stops being honest about what it is reading, and every
+  one of those errors falls towards running what the model wrote.
+- **Not quote-blind, which is the whole reason it is a scanner and not a
+  regex.** `git commit -m "a && b"` is one ordinary command and is now filtered;
+  under the old regex the quoted `&&` cost it its rewrite.
+- **Not willing to touch a pipeline or a redirection**, and that limit stays.
+  It is semantic rather than syntactic: rtk *reformats* what it captures, so
+  `cargo build | head` under rtk would feed `head` rtk's rendering instead of
+  cargo's output. A segment like that is copied through untouched rather than
+  sinking the rest of the line.
+
+**A latent bug fell out of it.** `rtk cd src` asks rtk to spawn a binary called
+`cd`, and there isn't one — it is a shell builtin. The old code would happily
+produce that for a bare `cd src`; on a chain it would have taken every following
+command with it. There is now a short `BUILTINS` set, and a builtin segment is
+left bare. The list covers what a model writes before an `&&`; anything missed
+fails one command loudly rather than silently doing the wrong thing.
+
+### Validation performed
+
+`node src/agent/rtk.check.ts`, typecheck, and the full check suite, all green.
+The check file gained the chain cases, the builtin cases, the quoting cases
+(separator inside quotes, real separator after a quoted one, unbalanced quote),
+the empty-side cases, and one that a half-wrapped chain is completed rather than
+doubled. Not re-measured in the native window — this is pure string policy and
+the seam it feeds was proven when the ticket landed.
