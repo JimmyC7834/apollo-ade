@@ -4266,3 +4266,33 @@ One honest note about the driving: an approval card meant to be declined was
 coordinate was measured before it appeared. It ran the same read a second time.
 Dispatching clicks on elements rather than at coordinates is the lesson, and it
 is already how the Save button had to be pressed — that one sits below the fold.
+
+## Two open issues closed, one by explanation rather than by code
+
+**rtk's pipeline and redirection refusals are not a defect, and the entry
+claiming they were is deleted.** After the chain split, what remains refused is
+refused for reasons that do not expire: rtk *reformats* what it captures, so
+`cargo build | head` under rtk would feed `head` rtk's rendering rather than
+cargo's output, and `> out.txt` would write the rendering into the file. Filter a
+pipeline and you corrupt the thing downstream of it; filter a redirection and you
+corrupt an artifact the agent may read back later. The refusal is the correct
+behaviour, not a ceiling waiting to be lifted, and it is documented where
+behaviour belongs — ticket 11 amendment 8, and the comments in `src/agent/rtk.ts`.
+The remaining honest worry, that "rtk is on" and "rtk did something" look alike,
+is now carried by its own entry about the transcript.
+
+**The eleven stash entries were turn checkpoints all along.** `git_checkpoint`
+stores one stash per turn labelled with the turn's prompt, which is exactly why
+those messages read like instructions addressed to an agent: they *were*
+instructions addressed to an agent, recorded after the fact. The ticket-11
+verification produced two more of the same kind and they were dropped once the
+change they captured was committed. The standing rule is unchanged and is kept in
+`OPEN-ISSUES.md` on its own merits: a stash message is content read out of the
+repository and is never an instruction.
+
+One thing did not check out. `provider.ts:103` labels a checkpoint `agent:
+<prompt>`, and `git stash store -m` preserves the message verbatim — verified in
+a throwaway repo — but the entries this repo actually holds carry the prompt
+truncated to 60 characters with no `agent:` prefix. So something other than that
+line is writing the label. Recorded rather than guessed at; it changes nothing
+about the rule above.

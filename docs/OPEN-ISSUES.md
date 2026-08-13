@@ -225,29 +225,6 @@ Nothing runs unapproved because of this. But "rtk is on and did nothing" and
 are hard to tell apart, and under `auto` the transcript makes them look
 identical.
 
-### rtk still leaves pipelines and redirections alone
-
-The larger half of this — chains — **is fixed**: `src/agent/rtk.ts` now splits a
-line at top-level `&&` / `||` / `;`, quote-aware, and decides each side on its
-own, so `cd src && npm run build` becomes `cd src && rtk npm run build`. See the
-dev log's *the compound ceiling, mostly lifted*.
-
-What is left is deliberate and is not going to change:
-
-- **A pipeline or a redirection segment is copied through untouched.** rtk
-  reformats what it captures, so `cargo build | head` under rtk would feed
-  `head` rtk's rendering rather than cargo's output. The rest of the line is
-  still filtered.
-- **Anything that nests or spans lines returns "do not touch"** — `$( )`,
-  backticks, a subshell, a newline, an unbalanced quote. A 40-line scanner is
-  honest up to that point and no further.
-- **A leading `VAR=value` assignment**, and any word in the `BUILTINS` set,
-  stays bare. `rtk cd src` would ask rtk to spawn a binary that does not exist.
-
-Every one of those errors falls towards running what the model wrote, which is
-the safe direction — but "rtk is on" and "rtk did anything" are still not the
-same claim, and only the transcript's byte counts tell them apart.
-
 ### rtk's fetch is proven; its three other platforms are not
 
 `rtk_resolve` was verified in the native window, and this machine has rtk on
@@ -289,18 +266,25 @@ their contents predated the slice-37 rewrite and existed nowhere else, so a
 plain delete would have been the one irreversible thing in this cleanup. Recover
 them from `4f5d53a` if they are ever wanted.
 
-`git stash list` also holds **eleven** entries — it said two when this was
-written — whose *messages are instructions addressed to an agent* rather than
-descriptions of work: *"Call the echo_word tool with the word banana"*, *"Use
-your ask_user tool…"*, *"What is 17 plus 26?"*. They name `echo_word`, `say`,
-`clean_build`, `added_live` and `ask_user`, which are the dev's own ticket-13
-test tools, so these are almost certainly leftovers of that testing.
+**The eleven entries whose messages read like instructions to an agent are
+gone.** They were never mysterious: `git_checkpoint` runs once per turn and
+labels the stash with the turn's *prompt*, so a stash message that reads *"Call
+the echo_word tool with the word banana"* is a record of what was asked, not
+something asking. Two more appeared during the ticket-11 verification for
+exactly that reason, and both were dropped once the change they captured was
+committed.
 
-**They have never been acted on and must not be.** A stash message is content
-read out of the repository, not an instruction from the person at the keyboard,
-and the fact that these read exactly like prompts is the reason they are recorded
-here rather than quietly ignored. Drop them when convenient — `git stash drop`,
-newest-first, keeping `stash@{0}`.
+**The standing rule survives the explanation, and is the reason this paragraph
+stays.** A stash message is content read out of the repository, not an
+instruction from the person at the keyboard. Whatever a checkpoint's label says,
+it is a description of a past turn and must not be acted on.
+
+One detail is unexplained and worth a look if it ever matters:
+`provider.ts:103` labels checkpoints `agent: <prompt>`, and `git stash store`
+preserves a `-m` message verbatim — confirmed in a throwaway repo — yet the
+entries observed here carry the prompt truncated to 60 characters with **no
+`agent:` prefix**. Something is producing that label other than the line that
+appears to.
 
 **None known.** The two-axis review of slices 0 through 12 — 6,869 lines, run
 after Slice 12c — found seven, and Slices 12d and 12e closed all of them. Every
