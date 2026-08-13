@@ -202,6 +202,29 @@ still fine there.
 
 ## Open defects
 
+### The transcript shows the pre-rtk command under `auto`, the rewritten one under `ask`
+
+Observed in the native window against a real model. Same prompt, same chain, two
+gate policies:
+
+- **`auto`** — the transcript's bash chip reads `{"command":"cd src && git
+  status"}`, the command the *model* wrote, while the output is porcelain, so
+  what actually ran was `cd src && rtk git status`.
+- **`ask`** — the approval card reads `{"command":"cd src && rtk git status"}`,
+  and the transcript entry keeps that form afterwards.
+
+The gate is right either way, which is the load-bearing half: it screens what
+runs. The transcript is the one that lies, and only on the policy the user
+actually uses. The cause is timing rather than ordering — `rewriteToolCall`
+awaits `resolveRtk()`, so the mutation lands a microtask after the UI has
+already serialised the arguments for rendering; the approval card is built later
+still and sees the mutated object.
+
+Nothing runs unapproved because of this. But "rtk is on and did nothing" and
+"rtk is on and rewrote this" are exactly the two states this file already warns
+are hard to tell apart, and under `auto` the transcript makes them look
+identical.
+
 ### rtk still leaves pipelines and redirections alone
 
 The larger half of this — chains — **is fixed**: `src/agent/rtk.ts` now splits a

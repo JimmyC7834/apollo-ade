@@ -4219,3 +4219,50 @@ The check file gained the chain cases, the builtin cases, the quoting cases
 the empty-side cases, and one that a half-wrapped chain is completed rather than
 doubled. Not re-measured in the native window — this is pure string policy and
 the seam it feeds was proven when the ticket landed.
+
+## Ticket 11, follow-up two — the hook, observed, and a Save button that never worked
+
+The chain-splitting change was unit-checked and hand-checked in a shell, which
+proved the strings and nothing about how they get there. The path from "a model
+emits a bash call" to "the rewritten command reaches the shell" had never been
+watched. It has now, in the native window against `deepseek-chat`.
+
+**Getting there needed a bug fixed first.** Turning the profile toggle on and
+pressing Save failed with `could not write ade.profiles.json: not found` — every
+time, for everyone, since the modal was written. `write_file` is documented as
+unable to create (`workspace.rs`: *"`resolve` requires the target to already
+exist… this cannot create files"*), and `saveProfile` had no other path. So the
+project profile file could only ever be produced by hand, which is why
+`OPEN-ISSUES.md` has been saying no `profiles.json` exists on this machine — it
+was not a gap in testing, it was unreachable. `saveProfile` now `stat_path`s and
+calls `create_file` when the file is absent. `create_file` is `create_new`, so
+it cannot truncate a file another window just wrote.
+
+**What the run showed.** Prompt: *run exactly this shell command and show me its
+output: `cd src && git status`*. The transcript came back in **porcelain** form —
+`* master`, ` M src/agent/profileFiles.ts`, `?? ade.profiles.json` — which is
+`git status --porcelain -b` and therefore rtk's class (b) rewrite. Three things
+that proves at once: the `tool_call` hook fires on a real model's bash call, the
+chain was split rather than refused, and `cd` was left bare — under the old code
+`rtk cd src` would have exited 127 and taken the rest of the line with it.
+
+Then the same chain under `ask`, to test the claim the whole ordering exists for:
+the approval card read `{"command":"cd src && rtk git status"}`. **The gate
+screens what runs.** That was previously a reading of pi's loop; it is now an
+observation.
+
+**And a discrepancy that came free with it.** Under `auto` the transcript
+displays the *pre-rewrite* command while running the rewritten one — the UI
+serialises the arguments before the hook's `await` resolves. Recorded in
+`OPEN-ISSUES.md`; the gate is unaffected, the transcript is what misleads.
+
+### Validation performed
+
+Typecheck. The live run above, twice, under both gate policies, against a real
+model and a real shell. Every command executed was `git status` — two reads.
+
+One honest note about the driving: an approval card meant to be declined was
+**approved by a mis-aimed click**, because the card shifts the layout and the
+coordinate was measured before it appeared. It ran the same read a second time.
+Dispatching clicks on elements rather than at coordinates is the lesson, and it
+is already how the Save button had to be pressed — that one sits below the fold.

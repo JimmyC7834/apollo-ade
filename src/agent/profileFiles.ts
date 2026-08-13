@@ -296,6 +296,20 @@ export async function saveProfile(definition: Record<string, unknown>): Promise<
 
 	const { invoke } = await import('@tauri-apps/api/core');
 	try {
+		/*
+		 * `write_file` overwrites and cannot create — `resolve` requires the target
+		 * to exist, deliberately, so the editor cannot bring files into being by
+		 * saving. That made the *first* save from this modal fail with "not found"
+		 * every time, which is why no `ade.profiles.json` had ever existed: the
+		 * only way to get one was to write it by hand.
+		 *
+		 * `create_file` is `create_new`, so this cannot truncate a file another
+		 * window just wrote, and a failure here is left to the write below to
+		 * report — if the file does exist, creating it was never needed.
+		 */
+		if ((await invoke<unknown>('stat_path', { id: PROJECT_FILE })) === null) {
+			await invoke('create_file', { id: PROJECT_FILE }).catch(() => undefined);
+		}
 		await invoke('write_file', {
 			id: PROJECT_FILE,
 			// Two spaces and a trailing newline, because this file is meant to be
