@@ -319,9 +319,9 @@ something was accountable for making.
 thing, and listing them flat hides which ones need him. Group them three ways when
 reporting them:
 
-- **Deferred, not now** — decided in principle, and the work waits. `rtk`, the OS
-  keychain, subagents, worker-hosted user scripts. Do not re-ask these. Report them as
-  one group and move on.
+- **Deferred, not now** — decided in principle, and the work waits. The OS keychain,
+  subagents, worker-hosted user scripts. Do not re-ask these. Report them as one group
+  and move on. (**`rtk` has left this group** — see *Not decided* below.)
 - **Not decided** — the answer is genuinely open and blocks the work. These are the ones
   worth a grill.
 - **Closed, kept for the record** — struck through, so that a settled answer does not
@@ -490,9 +490,24 @@ reporting them:
   entries, every number but DeepSeek's copied from pi's own catalog data rather than
   remembered. An unlisted model still has an *unknown* window, which is the answer that
   keeps auto-compaction from firing against a fabricated denominator.
-- **How rtk is obtained, and which seam it applies at.** **Deferred, not now** — the
-  grill offered vendoring the filter data or removing the field, and the dev chose to
-  defer both. `rtk: boolean` stays on the profile and stays inert. Deferred with the
+- **How rtk is obtained, and which seam it applies at.** **Reopened — this is now a
+  live question, and it moved out of "deferred, not now" on the dev's word:** *"we want
+  that feature for an ADE, not for my project."* Everything below was scored by what rtk
+  saves on **this repository**, which is the wrong yardstick for an editor that opens
+  whatever the user opens — the filters that never fire here are the ones someone else's
+  project runs. **Amendment 5** on
+  [the ticket](tickets/11-rtk-in-profile.md) carries the reopening and its consequence:
+  reimplementation tops out near **68 of ~141 command handlers (~48%)**, and the excluded
+  27 carry the headline savings, so **shipping the binary beats reimplementing it** once
+  the whole feature is the goal. The decision that unblocks either route is the
+  **approval mismatch** — gate on the *rewritten* argv, and show the user what will
+  actually run. Still to settle before shipping: rtk's default `[tracking] enabled = true`,
+  Apache-2.0 attribution, and the crates.io name collision on any PATH lookup.
+  The reasoning that preceded the reopening is kept below, because it is still correct
+  about what it measured.
+
+  Previously: **deferred, not now** — the grill offered vendoring the filter data or
+  removing the field, and the dev chose to defer both. `rtk: boolean` stays on the profile and stays inert. Deferred with the
   evidence gathered — see the amendment on
   [How rtk becomes a profile setting](tickets/11-rtk-in-profile.md). Five routes, priced:
   PATH lookup, bundled sidecar, library dependency (**ruled out — no lib target, and the

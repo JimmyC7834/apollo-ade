@@ -4,7 +4,7 @@ title: How rtk becomes a profile setting
 parent: ../map.md
 blocked-by: [02-exec-not-terminal.md, 04-profile-data-model.md]
 assignee: jc4649
-status: closed
+status: open
 ---
 
 # How rtk becomes a profile setting
@@ -505,3 +505,111 @@ The `console.debug` in the call site is what makes that possible, and it is now
 the most valuable line in the seam.
 
 `rtk: boolean` remains inert, and nothing here changes that.
+
+---
+
+## Amendment 5 — reopened. The yardstick was wrong, and it changes the route
+
+**Reopened at the dev's direction.** Everything below Amendment 4 was argued
+against the wrong measuring stick, and he said so plainly: *"we want that feature
+for an ADE, not for my project."*
+
+Amendment 4 and the research note both scored rtk by what it does for **this
+repository** — a Tauri/React/Rust tree running `cargo`, `npm`, `tsc`, `git`,
+`vite`. Against that, zero of the 63 TOML filters fire and the one transcribed
+rule returned 0.3%, so the conclusion was *measure our own output before porting
+another filter*. That reasoning is sound and it answers a question nobody asked.
+**An ADE opens whatever the user opens.** The filters that do not fire here are
+`ansible-playbook`, `basedpyright`, `biome`, `brew`, `bundle`, `composer`,
+`dotnet build`, `df`, `du` — every one of them a command someone's project runs.
+Scoring a general-purpose editor's feature against one repository is the same
+error as tuning a language server for the file that happens to be open.
+
+### The finding that decides the route: reimplementation has a ceiling, and it is low
+
+rtk's surface is roughly **141 command handlers** — 63 TOML filters plus 78
+Rust-routed commands. Splitting them by what can actually be ported:
+
+| | Count | Portable? |
+|---|---|---|
+| 63 TOML filters — all class (a), pure post-filters | 63 | Yes, mechanically |
+| (a) Rust-routed, drop/truncate only | 5 | Yes, expressible as TOML today |
+| (a′) Rust-routed, bespoke renderer — groups, counts, summarises | ~34 | Only by copying each parser |
+| (b) Different argv — injected flags, forced JSON, side-files | ~27 | No — see the mismatch below |
+| (c) rtk never spawns the tool; reimplemented in Rust | 5 | No |
+
+So **route E/G tops out near 68 of 141, about 48%** — and the excluded 27 are
+where the headline percentages live (`--porcelain`, `--format json`,
+`--reporter=json`, and for `dotnet` an MSBuild binary log plus a `.trx` file
+written to disk and parsed back).
+
+**And "adding the rules" understates the work, because there is no engine to add
+them to.** `src/agent/crop.ts` implements **three** of the eight documented
+stages — `strip_ansi`, `strip_lines`, `on_empty`. What the filters actually
+lean on is missing: **`max_lines` appears in 54 of the 63**,
+`truncate_lines_at` in 22, `match_output` in 11, plus `tail_lines`,
+`keep_lines_matching`, `unless`, `replace`, `head_lines`, and the caller-side
+`filter_stderr` pre-stage. Rules without the engine do nothing at all.
+
+**Therefore: if the whole feature is the goal, shipping rtk beats reimplementing
+it.** Reimplementation asymptotes below half at a cost that keeps climbing;
+the binary is 100% on day one and stays current with upstream for free. That
+inverts Amendment 2's preference for route E, and it inverts it on the goal
+rather than on any new fact about rtk.
+
+### Weight and platforms — the question the dev asked, answered
+
+- **Per-platform GitHub release binaries: five targets** — macOS x86_64 and
+  aarch64, Linux x86_64 and aarch64, Windows. No npm, scoop or winget.
+- **You do not pay 5×.** A Tauri `externalBin` sidecar resolves per
+  target-triple, so each installer carries **one** binary. A Windows user
+  downloads **+3.9 MB compressed**, not 19.5 MB. The 5× is paid in CI artifacts
+  and release storage, where it costs nothing anyone notices.
+- Measured on this machine: **8.9 MB on disk** (v0.43.0 at `~/.local/bin/rtk`),
+  3.9 MB gzipped — against **3.1 MB gzipped** for this app's entire frontend,
+  Monaco and pi and every provider included. It is still the single heaviest
+  thing that would be in the bundle, and that is a fact about rtk rather than an
+  argument against it.
+
+### The enabling decision, which is the real question in this ticket
+
+Class (b) is not blocked by effort. It is blocked by **the approval mismatch**:
+rtk rewrites the command, so the user approves `git status` while
+`git status --porcelain -b` runs. Three honest answers, and this is what a grill
+should settle:
+
+1. **Gate on the rewritten argv.** Resolve the rewrite *first*, then gate, and
+   show the user the command that will actually run. The mismatch disappears
+   rather than being tolerated, and it costs an ordering change in `gate.ts`.
+   **This is the recommendation.**
+2. **Keep rtk, disable class (b) under `careful`.** Preserves the full feature on
+   `auto` — which is the only policy the dev runs — and degrades to class (a) when
+   someone is watching each call. Cheap, and slightly two-faced.
+3. **Accept it.** The rewrite is a read-only reformulation by a trusted tool.
+   Defensible, and it makes the gate's promise weaker than its wording.
+
+Note that (1) is worth doing **whatever route is chosen**: it is the thing that
+makes a rewriting filter honest, and without it route E's class-(b) half is
+permanently unreachable too.
+
+### Still open, and each blocks shipping rather than deciding
+
+- **Telemetry.** The binary references `docs/TELEMETRY.md` and its default config
+  carries `[tracking] enabled = true, history_days = 90`. That is *probably* the
+  local history behind `rtk gain`, but "probably" is not good enough to put
+  inside someone else's installer. **Read it before route B or D is chosen.**
+- **Licence.** Apache-2.0 attribution alongside pi's MIT, for the binary or for
+  the vendored filter data alike.
+- **The crates.io name collision** stays a live hazard for route A: `rtk` there
+  is an unrelated project, so a PATH lookup can find the wrong binary. Route A
+  needs a `rtk gain` probe to confirm identity, not just a `which`.
+
+### What Amendment 4 still gets right, and keeps
+
+The escape strip stays regardless of route. **5,083 of 13,323 bytes — 38.2% — of
+`npm run build`'s stdout were ANSI escapes**, and rtk has no such stage because
+it re-runs most tools and formats the result itself, while we hand the tool's own
+bytes to a model that pays for every one. That stage is ours, it pays more than
+any ported rule measured so far, and it is free.
+
+`rtk: boolean` remains inert until this is settled.
