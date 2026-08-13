@@ -21,6 +21,7 @@
 // to name it are authored side by side, which is what the opt-in rule makes
 // necessary.
 
+import { FIXTURE_PROFILES } from './canned';
 import { installProfiles, listProfiles } from './profile';
 import { isTauri } from '../native';
 import { reloadTemplates, templateWarnings } from './promptTemplates';
@@ -154,8 +155,20 @@ export function profileSources(): ProfileSources {
 export async function loadProfileFiles(): Promise<ProfileLoad> {
 	const problems: string[] = [];
 	if (!isTauri()) {
-		// Browser mode has no config directory and no root. The built-ins are
-		// the whole set there, which is what `npm run dev` has always shown.
+		/*
+		 * Browser mode has no config directory and no root, so its one extra
+		 * profile is a fixture rather than a file — see `FIXTURE_PROFILES`, which
+		 * exists because without a delegable profile the `task` tool can only ever
+		 * answer that it has nobody to delegate to.
+		 *
+		 * It is installed *here* rather than in `createAgentProvider`, and the
+		 * reason is React: that function runs inside a `useMemo` during
+		 * `WorkbenchController`'s render, and installing notifies
+		 * `onProfileChange` — whose subscriber is `ComposerBar`. Updating one
+		 * component while rendering another is the warning that produced, and a
+		 * store mutation belongs on the effect path this function is already on.
+		 */
+		installProfiles(FIXTURE_PROFILES, problems);
 		return { problems };
 	}
 

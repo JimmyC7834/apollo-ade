@@ -3,8 +3,9 @@
 Living document — **edit it**, unlike `DEVLOG.md`, which is append-only history.
 Close an item by deleting it and recording the fix in the dev log.
 
-Last updated after **Slices 37–40**, the shell migration. What is left is the
-unverified surface, which is the larger half of this file and always was.
+Last updated after **tickets 33–35** (the LSP chain) and the verification pass
+that followed them. What is left is the unverified surface, which is the larger
+half of this file and always was.
 
 ## The shell has now been seen, and four layout bugs were found
 
@@ -73,59 +74,38 @@ Escape, focus containment and focus restoration are `Overlay`'s and were not
 re-verified here — this change did not touch them. Nothing in this file has been
 heard by a screen reader, and that has not changed.
 
-## Five more Rust commands are compiled and never called
+## Problems is scoped to open files for TypeScript, and no longer for Rust
 
-`create_file`, `create_folder`, `rename_entry`, `delete_plan` and `delete_entry`
-(slice 46, ticket 29). Their containment is unit-tested through `existing` and
-`creatable`, which is every path any of them takes to a path, and the whole
-feature was exercised end to end **against the browser fixture** — create,
-rename with the open editor following it, delete with the confirmation and the
-tab closing. None of that touched a disk.
+The panel (ticket 32) reports only on files that have been opened **when the
+diagnostics come from Monaco's TypeScript worker**, because that worker only
+knows about models that exist. This is stated in the panel's first line rather
+than left implicit, and the reasoning is in the ticket. It is listed here because
+it is the kind of thing that reads as a bug later: an empty Problems list means
+nothing is wrong *in what you have opened*.
 
-Three things are therefore unproven and are the ones to check first in the
-native window:
-
-- **`trash::delete` on Windows.** It is a new dependency, it is what makes the
-  ticket's "recoverable beats confirmed" true, and it has never run. Confirm the
-  entry actually lands in the Recycle Bin and can be restored from it, for a
-  file *and* for a directory.
-- **The case-only rename.** `Foo.ts` → `foo.ts` is distinguished from a real
-  collision by canonicalising the destination and comparing it to the source.
-  That reasoning is about NTFS behaviour and was written from knowledge of it,
-  not from a run.
-- **`delete_plan`'s count against a large directory.** `MAX_COUNT` caps the
-  walk at 10,000 and the dialog then says "more than", but no directory that big
-  has been counted.
-
-## Problems is scoped to open files, on purpose
-
-The panel (ticket 32) reports only on files that have been opened, because
-Monaco's TypeScript worker only knows about models that exist. This is stated in
-the panel's first line rather than left implicit, and the reasoning is in the
-ticket. It is listed here because it is the kind of thing that reads as a bug
-later: an empty Problems list means nothing is wrong *in what you have opened*.
-[Ticket 33](wayfinder/pi-harness/tickets/33-lsp-adaptor.md) is what widens it.
+[Ticket 33](wayfinder/pi-harness/tickets/33-lsp-adaptor.md) widened it, and has
+landed: `rust-analyzer` indexes the whole crate and pushes diagnostics for files
+nobody has opened. So the scope now differs by language, which is a second thing
+that reads as a bug — and a third: **rust-analyzer's type errors only arrive on
+save**, because they come from flycheck running `cargo check`. Syntax errors
+stream on every keystroke. A Rust file will therefore look quieter while being
+edited than a TypeScript one does.
 
 Its accessibility is structural like everything else here: `role="tree"` with
 labelled rows, keyboard activation through `WorkbenchTree`, verified in the DOM.
 Not heard.
 
-## A pre-existing React warning, seen but not introduced
+## The workspace switch is proven; its two refusals are not
 
-The browser console logs *"Cannot update a component (`ComposerBar`) while
-rendering a different component (`WorkbenchController`)"* on load. It is recorded
-here because it was observed during slice 46's verification, **not** because that
-slice caused it: it fires on first paint, before anything from ticket 29 or 32 is
-mounted — no explorer artifact, no problems panel, no models. Worth chasing on
-its own; the likely culprit is the profile store notifying during render.
+`git_branch`, `recent_workspaces` and `switch_workspace` have now been run
+against real folders — see the dev log's *eight compiled-and-never-called
+commands* note. What is still unexercised is `switchWorkspace`'s **refusals**,
+which are in the renderer rather than in Rust: it declines while an editor is
+dirty and while a turn is running.
 
-## Three Rust commands are compiled and never called
-
-`git_branch`, `recent_workspaces` and `switch_workspace` (slices 38–39) build and
-are registered, and nothing has invoked them. Browser mode answers with the
-fixture, so a real branch name and a real workspace switch are both unproven.
-`switch_workspace` in particular has a refusal path (dirty editors, a running
-turn) that has never fired.
+Neither has fired. Making an editor dirty needs typing into Monaco, which is the
+EditContext limit recorded below, and a running turn needs a real model. Both
+paths are one `announce()` each, so the risk is small and the gap is real.
 
 **This file had been stale since Slice 12e** — nineteen slices, the whole of the
 agent — and it said the agent chat had never run in the native window while every
@@ -168,6 +148,11 @@ Two things that cost time when this was first set up:
   keeps running, and it looks exactly like the command under test deadlocking.
   A whole PTY investigation came out of that. To watch events, drive the UI and
   read the DOM instead.
+- **Never mutate DOM that React owns.** Clearing an `aria-live` node's
+  `textContent` between steps — to see which announcement a click produced — is
+  enough to make React throw on the next commit, and an error with no boundary
+  unmounts the whole tree. The window goes blank and it looks exactly like the
+  feature under test destroying itself. Read those nodes; never write them.
 - **The dev watcher restarts the app.** Editing anything under `src-tauri`
   mid-probe rebuilds and relaunches it, so a probe can be measuring one build
   and reporting on another. Finish the edit, wait for the relaunch, then probe.
@@ -342,6 +327,27 @@ absence made the file misleading.
 - **Skills**: the `<available_skills>` listing, `/skill <name>`, the collision
   rule, and a global skill read through the mount together with its own relative
   `references/note.md`.
+
+### Verified in the native window (tickets 29, 33–35, and the pass after them)
+
+- **The language server, end to end.** `rust-analyzer is running, so rust files
+  are checked too.` in the Problems panel, and `Shift`+`F12` on a real symbol
+  returning three real references with their preview lines. Closing the window
+  left **nothing** behind — the tree is `app → rustup.exe → rust-analyzer.exe`,
+  two deep, so this is the `Reaper` earning its place rather than a formality.
+  Running it found three bugs in the Rust/renderer seam; ticket 33 records them.
+- **All eight commands that had only ever been compiled.** `create_file`,
+  `create_folder`, `rename_entry`, `delete_plan`, `delete_entry`, `git_branch`,
+  `recent_workspaces`, `switch_workspace` — against a throwaway root, with their
+  refusals. Including the three items this file had flagged as reasoned rather
+  than measured: `trash::delete` reaching the Recycle Bin **and restoring from
+  it**, for a file and a directory; the case-only rename `Foo.ts` → `foo.ts`; and
+  `delete_plan` against 10,001 entries, which caps at `10000` and sets `capped`.
+
+**Hover is the one LSP surface not observed through the window.** It needs a
+genuine pointer dwell and `Input.dispatchMouseEvent` does not reliably produce
+one — the same class of limit recorded below for Monaco. Hover itself is proven
+by `src/features/lsp/live.smoke.ts`.
 
 ### Never exercised in the native window
 

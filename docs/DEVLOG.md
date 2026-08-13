@@ -3997,3 +3997,71 @@ extra workspace group, every one carrying a visible "fixture" chip and the words
 "prototype fixture" in its accessible name, and `sessions.check.ts` asserts that
 exactly one session is `live`. Clicking a fixture announces that it is one and
 starts no harness.
+
+---
+
+## Verification note — the eight compiled-and-never-called commands, and one real warning
+
+**User outcome:** Nothing visible changed, except that a React warning stopped
+being logged. What changed is what is *known*: eight Rust commands that had only
+ever been compiled have now been run against a real disk, and the three claims
+`OPEN-ISSUES.md` singled out as reasoned-not-measured are measured.
+
+**The warning was real, and it was not what the file said it was.** The record
+claimed *"Cannot update a component (`ComposerBar`) while rendering a different
+component (`WorkbenchController`)"* fires on load. It does not: two cold loads at
+HEAD produced nothing. It fires on the **HMR re-render** — which is why it kept
+appearing during verification sessions and not in a fresh window.
+
+The cause was `createAgentProvider()`, which runs inside a `useMemo` during
+`WorkbenchController`'s render and called `installProfiles(FIXTURE_PROFILES)`.
+Installing profiles notifies `onProfileChange`, and `ComposerBar` subscribes to
+it through `useSyncExternalStore` — so a store mutation during one component's
+render scheduled an update on another. The stack confirmed it rather than the
+reading: `installProfiles → forceStoreRerender → scheduleUpdateOnFiber`, under
+`updateMemo`. The fixture install moved to `loadProfileFiles`'s browser branch,
+which is on the effect path and is already where browser mode's "profiles come
+from somewhere" answer lives.
+
+**Measured as an A/B**, the way `OPEN-ISSUES.md` says to: identical probe (append
+a line to `provider.ts`, let HMR run), warning at HEAD, no warning with the fix,
+same session, same page.
+
+**The eight commands, against a throwaway root.** Every one of them is
+root-confined, so pointing the root at a scratch directory bounds the blast
+radius to that directory — which is how this was made safe to run at all.
+
+- `create_file` / `create_folder` — created; a second create refused with
+  *"something with that name is already there"*; `../escaped.ts` refused with
+  *"invalid path"* and no such file exists on disk.
+- `rename_entry` — **the case-only rename works.** `src/Foo.ts` → `src/foo.ts`
+  left `foo.ts` on disk, and the file then opened in the editor under its new
+  name. This was the item written from knowledge of NTFS rather than from a run.
+  A genuine collision and an empty name are still refused.
+- `delete_plan` — a file plans as `entries: 0`; 3 entries counted as 3; 120 as
+  120; and **10,001 entries reported `entries: 10000, capped: true`**, so
+  `MAX_COUNT` and the "more than" wording are exercised rather than assumed.
+- `delete_entry` — **`trash::delete` reaches the Windows Recycle Bin**, for a
+  file *and* for a directory, both listed with their correct original location.
+  Both were then **restored from the bin** and came back with their contents
+  intact. Ticket 29's *recoverable beats confirmed* is now true rather than
+  argued.
+- `git_branch` — returned `probe-branch` from a real repository, and the
+  breadcrumb read `ws-a/probe-branch`. Its `None` branch is exercised too: the
+  non-repository workspace shows a breadcrumb with no branch at all.
+- `recent_workspaces` / `switch_workspace` — two roots, ordered most-recent
+  first; a switch driven **from the Session Navigator's own control** moved the
+  breadcrumb from `ws-a/probe-branch` to `ws-b`, and Rust's own record agreed.
+  An out-of-range index refused with *"no such recent workspace"*.
+
+**One probe artifact worth recording, because it looked exactly like a bug.**
+An earlier run left the window blank — `#root` empty after the switch. That run
+had cleared the `aria-live` nodes' `textContent` by hand, which is enough on its
+own to make React throw on the next commit. Re-run without touching
+React-owned DOM, the switch is clean and `window.__errors` is empty. **Do not
+mutate DOM React owns from a probe**, and do not trust a run that did.
+
+**Still not exercised:** `switchWorkspace`'s two refusals — a dirty editor and a
+running turn. The first needs a dirty editor, and making one needs typing into
+Monaco, which is the EditContext limit `OPEN-ISSUES.md` already records; the
+second needs a real turn. Neither is a Rust command, and both stay listed.
