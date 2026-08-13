@@ -1,0 +1,17 @@
+{
+  "profiles": [
+    {
+      "name": "auto",
+      "model": {
+        "provider": "deepseek",
+        "id": "deepseek-chat"
+      },
+      "thinkingLevel": "medium",
+      "gatePolicy": "auto",
+      "tools": {},
+      "skills": [],
+      "rtk": true
+    }
+  ],
+  "tools": []
+}
