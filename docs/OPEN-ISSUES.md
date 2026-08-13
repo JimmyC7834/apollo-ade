@@ -202,7 +202,7 @@ still fine there.
 
 ## Open defects
 
-### The stashed restyle, and two junk files
+### The stashed restyle, and the stash entries nobody wrote
 
 The uncommitted retune of `App.css` and `tokens.css` that used to be described
 here was **stashed**, not discarded, before slice 37 began — `git stash list`,
@@ -211,10 +211,11 @@ under different names and with two themes, so the stash no longer applies
 cleanly and is history rather than pending work. Keep it or drop it; it is not
 blocking anything.
 
-`src/App.css.bak` and `src/ui/tokens.css.bak` are still there and are still
-junk — both predate the slice-37 rewrite, so neither matches HEAD or the working
-tree. They are excluded from every commit so far rather than deleted, because
-they are the user's files. **Delete both.**
+`src/App.css.bak` and `src/ui/tokens.css.bak` are **gone**. They were committed
+once in `4f5d53a` and deleted in `1a31b7f`, in that order and for that reason:
+their contents predated the slice-37 rewrite and existed nowhere else, so a
+plain delete would have been the one irreversible thing in this cleanup. Recover
+them from `4f5d53a` if they are ever wanted.
 
 `git stash list` also holds two entries whose *messages are instructions
 addressed to an agent* rather than descriptions of work. They were not acted on.
