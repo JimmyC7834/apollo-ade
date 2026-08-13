@@ -594,10 +594,11 @@ permanently unreachable too.
 
 ### Still open, and each blocks shipping rather than deciding
 
-- **Telemetry.** The binary references `docs/TELEMETRY.md` and its default config
-  carries `[tracking] enabled = true, history_days = 90`. That is *probably* the
-  local history behind `rtk gain`, but "probably" is not good enough to put
-  inside someone else's installer. **Read it before route B or D is chosen.**
+- ~~**Telemetry.**~~ **Struck — this was already answered and Amendment 5 re-raised
+  it by reading Amendment 1 without its correction.** *The telemetry worry is
+  cleared* above settled it, and Amendment 6's research re-confirmed it
+  independently against upstream's own `docs/TELEMETRY.md` and this machine's
+  `config.toml`. It blocks nothing.
 - **Licence.** Apache-2.0 attribution alongside pi's MIT, for the binary or for
   the vendored filter data alike.
 - **The crates.io name collision** stays a live hazard for route A: `rtk` there
@@ -613,3 +614,152 @@ bytes to a model that pays for every one. That stage is ours, it pays more than
 any ported rule measured so far, and it is free.
 
 `rtk: boolean` remains inert until this is settled.
+
+---
+
+## Amendment 6 — decided: route D, on these terms
+
+**Settled in a grill, with the facts researched rather than assumed.** The route
+is **D — fetch the pinned release on first need**. Not built yet; every decision
+below is the dev's, and the open question this ticket has carried since
+Amendment 1 is closed.
+
+### The design, end to end
+
+**Acquisition.** `rtk: true` on the active profile and nothing usable on `PATH`
+→ the app downloads the pinned release asset, verifies a **SHA-256 hardcoded in
+our source beside the version**, and caches it under the app data directory.
+**No confirmation dialog** — the dev weighed the "this app has never reached the
+network for executable code" objection and judged the weight trivial against a
+feature the user opted into by name.
+
+**The digest is ours, not upstream's.** `checksums.txt` is published per release
+(plain `sha256sum`) and is **deliberately not fetched**: it is served from the
+same origin, over the same connection, from the same account as the asset, so
+anything able to substitute the binary can substitute the digest beside it. It
+detects the corruption HTTPS already detects and nothing more. We record the hash
+at the moment we choose the version, having looked at it. With **no upstream
+signatures of any kind** — no GPG, minisign or cosign anywhere in their release
+workflow — that recorded hash is the only trust anchor available, which is
+exactly why it must not arrive in the same fetch.
+
+**The pin is a version we bump**, surfaced in the profile modal so staleness is
+visible rather than silent. Upstream cut **47 stable releases in six months**
+(v0.19.0 → v0.45.0), plus hundreds of `dev-*-rc` prereleases, so a pin is
+permanently a little behind. That is the price of being able to say what the app
+will execute: resolving `latest` at fetch time makes a pinned digest impossible
+by construction, since you cannot hash an artifact that does not exist yet.
+
+**PATH wins when it is there**, confirmed by running **`rtk gain`** rather than
+`which` — the crates.io `rtk` is an unrelated project (Rust Type Kit) and finding
+it is a live hazard no path lookup can detect. The resolved version is recorded
+in the session so a bug report names the binary that answered. A dev tool that
+ignores the dev's own installed toolchain is the wrong instinct.
+
+**Extraction is Rust** — `zip` on Windows, `flate2` + `tar` elsewhere, since
+upstream ships archives rather than bare binaries. **The archive's digest is
+verified before anything is unpacked**, never the extracted binary afterwards:
+an attacker-controlled archive is a zip-slip the moment it is opened. Shelling
+out to `tar` or `Expand-Archive` is refused on this app's standing rule that Rust
+owns process spawning deliberately — and unpacking is the one step that runs
+before verification has finished mattering.
+
+**Timing.** The fetch **blocks the tool call that triggered it**, with a timeout,
+after which the command runs unfiltered and says so. The model has no clock, a
+tool call taking a second longer is invisible, and there is no partial state to
+reason about. The same code fires **eagerly at app open and on profile switch**,
+so the blocking path is the correctness and almost never the experience.
+
+### The pipeline, one ordering, no exceptions
+
+```
+resolve → rtk rewrites → deny list → gate → run → stripControl
+```
+
+**This ordering is the decision that makes route D worth 100% rather than ~48%.**
+rtk's class (b) — 27 commands — replaces the command: `git status` becomes
+`git status --porcelain -b`. Gating on what the model asked for would leave the
+approval card describing something other than what runs, and would put the
+rewrite *after* the deny list that screens resolved argv, reopening the hole the
+argv-not-shell-string fix closed. Rewriting first means there is exactly one argv
+in the system and everything reasons about the same bytes.
+
+**Scope: every command the agent runs** — `bash` and user-authored tools alike.
+**Never the integrated terminal**: a human reads that, a human can alias it, and
+the saving this feature exists for is tokens.
+
+**Failure is visible, never silent.** rtk unavailable — offline, proxied, timed
+out, no asset for the platform — and the command runs raw while the transcript
+says why, the same shape as the LSP `missing` state. This matters more here than
+elsewhere: rtk's whole job is to make output shorter, so "rtk silently did
+nothing" and "rtk worked" look identical to a reader and differ only in the bill.
+**A digest mismatch is not a degradation, it is a refusal** — bytes that do not
+match the pin never execute.
+
+**The child is held to the same rules as every other child this app starts:**
+`CREDENTIAL_VARS` stripped, adopted into the `Reaper`.
+
+### `crop.ts` loses its rules and keeps its strip
+
+**The rule table goes.** One transcribed npm filter worth **0.3%**, genuinely
+redundant once rtk is running, and a hand-maintained filter set drifting against
+upstream is the thing Amendment 4 warned about. `RULES`, `ruleFor`, `CropRule`,
+the never-worse guard and `crop.check.ts`'s rule cases — roughly 80 lines and one
+concept deleted.
+
+**`stripControl` stays**, running *after* rtk on whatever came back. rtk's
+`strip_ansi` lives inside per-command TOML filters — 58 of the 63 carry it — but
+**zero of the 63 fire on `cargo`, `npm`, `tsc`, `git`, `vite`, `rustc`, `clippy`
+or `node`**, and npm's Rust module is four `continue`s with no ANSI handling. So
+with rtk fully enabled and working, `npm run build` still hands the model its
+escape bytes. Double-stripping is a no-op, so the composition is safe either way.
+
+### The ANSI measurement, corrected — it is one tool, not a general rate
+
+Amendment 4's single **38.2%** figure was quoted as though it characterised the
+stage. It characterises **vite**. Measured on piped stdout — no TTY, exactly how
+`exec.rs` captures it:
+
+| command | bytes | escapes | share |
+|---|---|---|---|
+| `npm run build` | 13,323 | 5,083 | **38.2%** |
+| `npx vite build` | 13,267 | 5,083 | **38.3%** |
+| `npm run check` | 2,192 | 0 | 0.0% |
+| `cargo test --lib` | 1,200 | 0 | 0.0% |
+| `cargo build` | 0 | 0 | — |
+| `npx tsc --noEmit` | 0 | 0 | — |
+| `git status` | 55 | 0 | 0.0% |
+| `git log --oneline -20` | 1,236 | 0 | 0.0% |
+
+The two vite rows carrying **identical** escape counts is the giveaway: vite
+colours even when its output is a pipe, and everything else detects the non-TTY
+and emits nothing. So the honest case for the strip is **free, unconditional and
+occasionally enormous** — not a headline rate. For an ADE that is still the right
+shape of argument, because the tools that colour-when-piped are exactly the ones
+nobody predicted. On a project that is all cargo and tsc it earns nothing, which
+is acceptable for a stage costing one regex.
+
+### Facts that fall out, and are not decisions
+
+- **There is no ARM Windows asset.** Five targets ship: macOS x86_64 and aarch64,
+  Linux x86_64 (musl) and aarch64 (gnu), Windows x86_64. An ADE on ARM Windows
+  takes the "unavailable" path permanently. That is the degrade-visibly rule
+  working rather than a defect, but it will be reported as one.
+- **macOS argues *for* D, not against it.** Upstream ships **unsigned and
+  unnotarized** macOS binaries — no `codesign`, no `notarytool` in their release
+  workflow. Bundling one as a sidecar makes it *our* notarization problem, while
+  a binary the app fetches never receives the `com.apple.quarantine` xattr, since
+  that is set by browsers rather than by HTTP clients, so Gatekeeper's assessment
+  never fires. **This reverses what Amendment 5 assumed.**
+- **Licence.** Apache-2.0, notice preservation only, no UI attribution required.
+  Whether a separate top-level `NOTICE` file exists upstream was not confirmed —
+  check before shipping; it is a file copy either way.
+- **`reqwest` with rustls is already in `Cargo.lock`**, so the download costs no
+  new dependency. `sha2`, `zip`, `flate2` and `tar` are the additions.
+
+### What this closes
+
+`rtk: boolean` stops being inert once this is built. The question this ticket has
+carried since Amendment 1 — *how rtk is obtained, and at which seam it applies* —
+is answered: **fetched, pinned, verified against our own digest, applied to every
+command the agent runs, ahead of the deny list and the gate.**

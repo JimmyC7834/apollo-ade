@@ -501,10 +501,21 @@ reporting them:
   27 carry the headline savings, so **shipping the binary beats reimplementing it** once
   the whole feature is the goal. The decision that unblocks either route is the
   **approval mismatch** — gate on the *rewritten* argv, and show the user what will
-  actually run. Still to settle before shipping: rtk's default `[tracking] enabled = true`,
-  Apache-2.0 attribution, and the crates.io name collision on any PATH lookup.
-  The reasoning that preceded the reopening is kept below, because it is still correct
-  about what it measured.
+  actually run.
+
+  **Now decided — Amendment 6 settles it as route D**, in a grill against researched
+  facts: fetch the pinned release on first need when nothing usable is on `PATH`, verify
+  a **SHA-256 hardcoded beside the version** (never `checksums.txt`, which ships from the
+  same origin as the asset and so proves nothing), extract in Rust with the archive
+  verified *before* unpacking, and apply it to **every command the agent runs** — tools
+  included, the integrated terminal never. One ordering:
+  `resolve → rtk rewrites → deny list → gate → run → stripControl`. `crop.ts` loses its
+  rule table and keeps its escape strip. **Not built**; `rtk: boolean` stays inert until
+  it is. Two corrections went in with it: the telemetry worry was already cleared in
+  Amendment 3 and should never have been re-raised, and macOS argues *for* fetching
+  rather than bundling, because upstream ships unsigned binaries and a fetched file never
+  gets the quarantine xattr. The reasoning that preceded all this is kept below, because
+  it is still correct about what it measured.
 
   Previously: **deferred, not now** — the grill offered vendoring the filter data or
   removing the field, and the dev chose to defer both. `rtk: boolean` stays on the profile and stays inert. Deferred with the
