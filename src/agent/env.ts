@@ -19,7 +19,7 @@ import {
 	type Result,
 } from '@earendil-works/pi-agent-core';
 
-import { crop, cropNote } from './crop';
+import { stripControl, stripNote } from './strip';
 
 /*
  * The path namespace is workspace-root-relative, rooted at "/". The renderer
@@ -309,26 +309,29 @@ export function createTauriEnv(): ExecutionEnv {
 				});
 
 				/*
-				 * The crop goes here, and the position is the decision.
+				 * The strip goes here, and the position is the decision. It is
+				 * also the last stage of ticket 11's pipeline —
+				 * `resolve → rtk rewrites → deny list → gate → run → stripControl`
+				 * — so by now the command has already been through rtk, whose
+				 * filters leave these bytes alone for every tool this repo runs.
 				 *
 				 * Above it, `onStdout` has already streamed the raw chunks to the
 				 * UI, so the human sees everything and only the model sees less —
 				 * which is the asymmetry worth having. Below it, pi's bash tool
 				 * applies its own 2000-line / 50 KB cap. Semantic first, then
-				 * positional: crop the noise and the cap rarely fires, cap first
+				 * positional: drop the noise and the cap rarely fires, cap first
 				 * and the interesting last thirty lines are already gone.
 				 */
-				const cropped = crop(command, outcome.stdout);
-				const note = cropNote(outcome.stdout, cropped);
+				const stripped = stripControl(outcome.stdout);
+				const note = stripNote(outcome.stdout, stripped);
 				if (note) {
-					// The measurement, and the only one there is. Every crop leaves
-					// its numbers somewhere a person can read them, so which rule to
-					// write next stops being an argument. See ticket 11.
-					console.debug(`crop ${JSON.stringify(command)} ${note}`);
+					// The measurement, and the only one there is: every strip
+					// leaves its numbers somewhere a person can read them.
+					console.debug(`strip ${JSON.stringify(command)} ${note}`);
 				}
 
 				return ok({
-					stdout: cropped.text,
+					stdout: stripped,
 					// Both said out loud rather than left as a silent short read:
 					// the model has to know its output stops early or arrives
 					// filtered, or it will draw conclusions from a partial log.

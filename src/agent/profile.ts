@@ -52,7 +52,13 @@ export interface Profile {
 	/** Appended to the system prompt, never substituted for it. Ticket 17. */
 	readonly instructions?: string;
 	readonly skills: readonly string[];
-	/** Route shell commands through rtk. Ticket 11; not yet applied. */
+	/**
+	 * Route every command this profile's agent runs through rtk.
+	 *
+	 * Ticket 11, and it is applied: `src/agent/rtk.ts` rewrites the command
+	 * ahead of the deny list and the gate, and fetches the binary on first need
+	 * if the machine has none. The integrated terminal is never touched.
+	 */
 	readonly rtk: boolean;
 	readonly gatePolicy: GatePolicy;
 	/**

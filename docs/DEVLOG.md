@@ -4065,3 +4065,110 @@ mutate DOM React owns from a probe**, and do not trust a run that did.
 running turn. The first needs a dirty editor, and making one needs typing into
 Monaco, which is the EditContext limit `OPEN-ISSUES.md` already records; the
 second needs a real turn. Neither is a Rust command, and both stay listed.
+
+## Ticket 11 — rtk, fetched rather than reimplemented
+
+**The feature the dev asked for by name, finally built, and built the opposite
+way round from how this ticket first resolved it.** `rtk: boolean` has sat inert
+on the profile since ticket 04. It is live now: the binary is acquired, the
+command is rewritten, and the rewrite happens **before** the deny list and the
+gate rather than after them.
+
+### What shipped
+
+- **`src-tauri/src/rtk.rs`** — acquisition. `rtk gain` on `PATH` first (`gain`
+  rather than `--version`, because the crates.io `rtk` is an unrelated project
+  and answers `--version` happily); else a cached binary under the app data
+  directory, versioned; else download the pinned v0.45.0 asset, verify a
+  SHA-256 held in that file, and unpack. `rtk_resolve` never fails — unavailable
+  is an answer, not an error.
+- **`src/agent/rtk.ts`** — policy. Memoised resolution, the command rewrite, the
+  argv rewrite for user tools, and the once-per-run notice when rtk is missing.
+- **The wiring** — a `tool_call` hook registered ahead of the gate's, in both
+  the parent's `attach` and the subagent path, plus the user-tool `execute`.
+- **`crop.ts` became `strip.ts`**, 183 lines down to 74. Its one transcribed rtk
+  filter is redundant now that the real rtk runs; the escape strip stays,
+  because rtk cannot do it for any tool this repo runs.
+
+### The ordering is the whole thing
+
+`resolve → rtk rewrites → deny list → gate → run → stripControl`.
+
+The original resolution put the rewrite in the bash tool's `prepare`, which runs
+inside `execute` — *after* `beforeToolCall` has returned. That leaves the
+approval card describing something other than what runs, and it puts the rewrite
+after the deny list that screens resolved argv.
+
+What makes the right order available is a detail of pi's loop: `prepareToolCall`
+validates the arguments once and hands **that object** to the `tool_call` hook
+and then to `execute`, and `emitHook` walks handlers in registration order
+keeping only the last non-undefined result. So a hook registered before the
+gate's can mutate `event.input.command` in place, return `undefined`, and leave
+the gate to decide about the rewritten command. `rewriteToolCall` is typed
+`Promise<undefined>` rather than `Promise<void>` for exactly that reason.
+
+### Security boundary
+
+- **The digest is ours.** `checksums.txt` exists and is deliberately never
+  fetched: same origin, same connection, same account as the asset, so it
+  detects only the corruption HTTPS already detects. Upstream signs nothing —
+  no GPG, minisign or cosign anywhere in its release workflow — so a hash
+  somebody looked at when choosing the version is the only anchor available, and
+  it has to travel by a different road than the bytes it describes. The Windows
+  asset was downloaded and hashed independently; it matches.
+- **The archive is verified before it is opened**, not the binary afterwards. An
+  attacker-controlled archive is a zip-slip the moment it is unpacked. The
+  extraction never uses the entry's own path either — it matches on file name
+  and writes where we chose.
+- **A mismatch is a refusal**, not a degradation.
+- **The probe children obey the same rules as every other child this app
+  starts**: `CREDENTIAL_VARS` stripped, adopted into a `Reaper`, and killed
+  after ten seconds. That last one is not hypothetical — acquisition blocks the
+  tool call that triggered it, so a hung binary would otherwise block that call
+  forever.
+- **Not a security control.** rtk is an optimisation applied ahead of the gate;
+  the gate and Rust's confinement remain the only things that stop a command.
+
+### Adapters and dependencies
+
+`sha2` unconditionally; `zip` on Windows and `flate2` + `tar` elsewhere, as
+target dependencies, because upstream's archive format splits on exactly that
+line. `reqwest`/rustls was already present for the provider proxy.
+
+### Validation performed
+
+Typecheck, the full check suite (two new files: `rtk.check.ts`, and
+`strip.check.ts` replacing `crop.check.ts`), `cargo test --lib` at 23 passing.
+
+**In the native window, over CDP, with the repo as the root:**
+
+- `rtk_resolve` → `{ source: "path", path: "rtk", version: "rtk 0.43.0" }`. The
+  PATH branch, the `gain` discriminator and the timeout-guarded probe are all
+  exercised, and the version returned is the machine's rather than the pin —
+  which is the point of reporting it.
+- `git status` through `agent_exec`: **1,089 bytes raw, 541 through rtk** — a
+  50% saving, and the output came back in porcelain form. That is a class (b)
+  rewrite, the class `crop.ts` could never reach, which is the whole argument
+  for fetching the binary rather than reimplementing its filters.
+- `cargo --version`: 36 bytes either way. Pass-through leaves an unknown command
+  alone, so "on" cannot silently degrade something rtk has no opinion about.
+
+**The fetch, against the real release.** This machine has rtk on `PATH`, so the
+app never reaches its own download — a path that only runs on a stranger's
+machine is a path nobody has run. So it is reached by a test instead:
+`fetches_and_unpacks_the_pinned_asset`, `#[ignore]`d because it uses the network
+and run deliberately with `cargo test --lib -- --ignored fetches_and_unpacks`.
+It downloads v0.45.0, **matches the recorded SHA-256**, unpacks the zip, and
+confirms the extracted binary answers `rtk gain` reporting v0.45.0. Passing.
+
+### Not validated
+
+- **macOS and Linux never ran** — the `flate2`/`tar` extractor has never
+  executed, and neither has the `0o755` permission set. The ignored test above
+  would close both, and the three remaining digests with them, if run once on
+  each.
+- **The cached branch** needs a second launch after a fetch, which has not
+  happened here for the same reason the fetch has not.
+- **ARM Windows has no asset** and takes the unavailable path permanently.
+- The **compound-command ceiling** below is a deliberate limit, not a gap, but
+  it means most real agent command lines go unfiltered.

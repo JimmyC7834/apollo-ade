@@ -202,6 +202,50 @@ still fine there.
 
 ## Open defects
 
+### rtk filters one command at a time, and agents rarely write one command
+
+**Ticket 11 shipped with a ceiling that is deliberate and worth stating.** rtk
+takes a program and its arguments, so `src/agent/rtk.ts` refuses to rewrite any
+line containing `| & ; < > \` newline` or `$(`, or a leading `VAR=value`
+assignment — `rtk cd src && npm run build` would run `cd src` under rtk and then
+`npm run build` bare, in the wrong directory.
+
+Every one of those lines therefore runs **unfiltered**, and a model writes
+compound lines constantly. So the savings measured on a single command are the
+best case rather than the typical one. Removing the ceiling means parsing shell,
+which is a much larger thing than this ticket. Quoting is not parsed either: an
+`&&` inside a quoted string costs that line its rewrite and nothing else.
+
+Both errors fall towards running what the model wrote, which is the safe
+direction — but "rtk is on" and "rtk did anything" are not the same claim, and
+only the transcript's byte counts tell them apart.
+
+### rtk's fetch is proven; its three other platforms are not
+
+`rtk_resolve` was verified in the native window, and this machine has rtk on
+`PATH`, so **branch one always wins here and the fetch is never reached in the
+app**. It is reached by a test instead: `fetches_and_unpacks_the_pinned_asset` in
+`src-tauri/src/rtk.rs` is `#[ignore]`d because it uses the network, and run
+deliberately it downloads the real v0.45.0 asset, matches the recorded SHA-256,
+unpacks it, and confirms the extracted binary answers `rtk gain` as v0.45.0.
+
+```bash
+cargo test --lib -- --ignored --nocapture fetches_and_unpacks
+```
+
+What that leaves genuinely unrun:
+
+- **The `flate2`/`tar` extractor and the `0o755` permission set**, because macOS
+  and Linux have never run this app. The Windows `zip` half is now proven; its
+  counterpart is not.
+- **The four non-Windows digests**, which are checked for shape only. The test
+  above verifies whichever platform it runs on, so running it once on a Mac and
+  once on Linux would close this and the item above together.
+- **The cached branch**, which needs a second launch after a fetch.
+- **ARM Windows has no upstream asset** and takes the unavailable path
+  permanently. That is the degrade-visibly rule working rather than a defect,
+  and it will be reported as one.
+
 ### The stashed restyle, and the stash entries nobody wrote
 
 The uncommitted retune of `App.css` and `tokens.css` that used to be described

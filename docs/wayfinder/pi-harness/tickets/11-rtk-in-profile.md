@@ -4,7 +4,7 @@ title: How rtk becomes a profile setting
 parent: ../map.md
 blocked-by: [02-exec-not-terminal.md, 04-profile-data-model.md]
 assignee: jc4649
-status: open
+status: closed
 ---
 
 # How rtk becomes a profile setting
@@ -763,3 +763,128 @@ is acceptable for a stage costing one regex.
 carried since Amendment 1 — *how rtk is obtained, and at which seam it applies* —
 is answered: **fetched, pinned, verified against our own digest, applied to every
 command the agent runs, ahead of the deny list and the gate.**
+
+---
+
+## Amendment 7 — built, and the one thing built differently
+
+Route D shipped. What follows is what is in the tree, and it is worth reading
+against Amendment 6 rather than instead of it: the design survived contact
+almost intact, and the one place it did not is the load-bearing one.
+
+### The seam is the `tool_call` hook, not `prepare`
+
+**The resolution at the top of this ticket said `prepare`, and Amendment 6 said
+the rewrite must precede the deny list. Both cannot be true.** `prepare` runs
+inside the tool's `execute`, which is *after* `beforeToolCall` has already
+returned — so a rewrite there is a rewrite the gate never saw, which is exactly
+the ordering Amendment 6 reversed.
+
+What makes the correct ordering available is a detail of pi's loop:
+`prepareToolCall` validates the arguments once and passes **that object** to the
+`tool_call` hook and then to `execute` (`agent-loop.js:405-435`), and
+`emitHook` walks handlers in registration order keeping only the last
+non-undefined result (`agent-harness.js:181-198`). So a hook registered *before*
+the gate's can mutate `event.input.command` in place, return `undefined`, and
+leave the gate to decide about the rewritten command. One argv, screened and
+approved and run.
+
+That is why `rewriteToolCall` is typed `Promise<undefined>` rather than
+`Promise<void>`: anything it returned would displace the gate's decision on the
+very call the gate was screening.
+
+### What it refuses to rewrite, which the amendment did not cover
+
+rtk takes a program and its arguments. A model writes **shell lines**, and
+`rtk cd src && npm run build` runs `cd src` under rtk and then `npm run build`
+bare, in the wrong directory. So `rtkCommand` returns `undefined` — leave it
+alone — for any line containing `| & ; < > \` newline` or `$(`, and for a
+leading `VAR=value` assignment, which is a shell feature and not a program.
+Quoting is not parsed: an `&&` inside a quoted string costs that line its
+rewrite and nothing else. **Both errors fall towards running what the model
+wrote**, which is the safe direction.
+
+This is a real ceiling on the feature and it should be stated rather than
+discovered: compound lines are common in agent output, and every one of them
+goes unfiltered. The alternative is a shell parser, which is a much larger thing
+than this ticket.
+
+### The rest, as specified
+
+- **Acquisition** (`src-tauri/src/rtk.rs`): `rtk gain` on `PATH` first; else the
+  cached binary under app data, versioned; else download the pinned asset,
+  verify the digest **before** unpacking, extract by matching the entry's *file
+  name* and writing to a path we chose, stage-then-rename. `rtk_resolve` never
+  fails — unavailable is an answer, and the command runs unfiltered.
+- **The digests are real and were looked at.** The Windows asset was downloaded
+  and hashed independently of `checksums.txt`; the two agree. The other four
+  come from that file, recorded at pin time, which is the "different road" the
+  amendment asked for.
+- **Prefetch at three sites**: app open when the active profile has it on, on
+  profile switch, and when the modal row is ticked. `resolveRtk` memoises the
+  *promise*, so the eager path and a racing tool call share one download.
+  **Failures are memoised too** — a machine offline now is offline in ten
+  seconds, and retrying on every switch turns one readable failure into a
+  stutter. Restarting is the retry.
+- **User tools** take the same rewrite as argv, before `destructive()` reads it.
+  Nothing is joined or quoted there, so none of the shell caveats above apply.
+- **The notice is the parent's.** A subagent gets the rewrite and passes no
+  `warn`: the message is once per app run, and a child would spend it on a
+  transcript nobody is reading.
+- **`crop.ts` is 74 lines**, down from 183: `RULES`, `ruleFor`, `CropRule`,
+  `crop` and the never-worse guard are gone, `stripControl` and a byte-counting
+  note remain. `crop.check.ts` lost the rule cases with them.
+- **The profile modal** grew an *Output* fieldset carrying the toggle and the
+  version that answered — `0.43.0 from your PATH` on this machine, which is not
+  the pin, and saying so is the point.
+
+### Two facts, corrected and confirmed
+
+- **The licence obligation is lighter than Amendment 6 assumed.** Apache-2.0's
+  notice and attribution clauses attach to *redistribution*, and route D
+  redistributes nothing: the user's machine fetches the binary from upstream. No
+  `NOTICE` copy is owed. Bundling would have owed one, which is one more small
+  argument for the route already chosen.
+- **`zip` is Windows-only and `flate2`/`tar` are everywhere-else**, as target
+  dependencies rather than unconditional ones — upstream's archive format splits
+  exactly on that line, so neither needs to exist on the other side.
+
+### Amendment 7, addendum — what the review and the window found
+
+Three things changed after the first pass, and one measurement is worth keeping.
+
+**The probe children were not held to the app's own rules.** `probe` spawned rtk
+twice with the full inherited environment, no `Reaper`, and no timeout — while
+`exec.rs` does all three for every other child. The environment one is a real
+leak (`CREDENTIAL_VARS` reaches a binary we did not write), and the missing
+timeout is worse than it looks: acquisition **blocks the tool call that
+triggered it**, so a binary that hangs blocks that call forever. Now: stripped,
+adopted, and killed after ten seconds. `gain`'s stdout goes to `null` rather
+than a pipe, because an un-drained pipe fills at 64 KB and `rtk gain` prints a
+table.
+
+**The digest table is now a table.** It was a `match` on the running platform,
+so the test that claimed to catch a mistyped digest only ever examined one of
+the five. It walks all five now, and also asserts no two rows share a digest —
+a copy-paste that did would hand one platform another's binary, and the check
+would agree.
+
+**The licence obligation is lighter than Amendment 6 assumed.** Apache-2.0's
+notice and attribution clauses attach to *redistribution*, and route D
+redistributes nothing — the user's machine fetches from upstream. No `NOTICE`
+copy is owed. Bundling would have owed one.
+
+**Measured in the native window, repo as the root:** `rtk_resolve` answers
+`{ source: "path", version: "rtk 0.43.0" }` — not the pin, which is exactly why
+the resolved version is reported rather than assumed. `git status` through
+`agent_exec` came back **1,089 bytes raw against 541 through rtk**, in porcelain
+form. That is a class (b) rewrite: rtk ran a *different command* and rendered the
+result, which is the class `crop.ts` could never reach and the whole argument for
+fetching the binary instead of reimplementing its filters. `cargo --version` is
+36 bytes either way, so pass-through leaves an unknown command alone.
+
+**And the fetch is proven too**, by a test rather than by the app:
+`fetches_and_unpacks_the_pinned_asset` is `#[ignore]`d because it uses the
+network, and run deliberately it downloads v0.45.0, matches the recorded digest,
+unpacks the zip and confirms the extracted binary answers `gain` as v0.45.0.
+A path that only ever runs on a stranger's machine is a path nobody has run.

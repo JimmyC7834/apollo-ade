@@ -45,6 +45,7 @@ import { mapEvent } from './events';
 import { installRustFetch } from './rustFetch';
 import { cannedProvider, FIXTURE_FILES } from './canned';
 import { createGate } from './gate';
+import { resolveRtk, rewriteToolCall } from './rtk';
 import { undoNote, type UndoOutcome } from './undo';
 import { isTauri } from '../native';
 import { allTemplates, onTemplatesChange, useTemplateSource } from './promptTemplates';
@@ -476,6 +477,12 @@ function createRunner(
 		});
 	declare();
 
+	// At app open too, not only on a switch: the profile that is already active
+	// is the one whose first command would otherwise pay for the download.
+	if (activeProfile().rtk) {
+		void resolveRtk();
+	}
+
 	// The stores read through this environment, so they have to be told which one.
 	useSkillSource(env);
 	useTemplateSource(env);
@@ -640,6 +647,10 @@ function createRunner(
 		 * question nothing could ever answer. Four children asking at once is what
 		 * made the gate queue.
 		 */
+		// Ahead of the gate, for the reason `attach` records — and on the child's
+		// own `rtk` flag, since a profile decides this the way it decides its
+		// policy. No `warn`: the notice belongs to the parent's transcript.
+		const offRtk = harness.on('tool_call', (event) => rewriteToolCall(event, profile.rtk));
 		const offGate = harness.on('tool_call', (event) => gate.onToolCall(event, profile.gatePolicy));
 
 		/*
@@ -700,6 +711,7 @@ function createRunner(
 			throw cause;
 		} finally {
 			signal.removeEventListener('abort', stop);
+			offRtk();
 			offGate();
 			off();
 		}
@@ -750,6 +762,18 @@ function createRunner(
 	 * model being switched *to* what it supports rather than the one being left.
 	 */
 	onProfileChange((profile) => {
+		/*
+		 * Fetch rtk before anything wants it.
+		 *
+		 * The hook above *blocks* the tool call that triggers acquisition, which
+		 * is the right correctness answer and a poor experience the one time it
+		 * fires. Doing it here and at construction means it has almost always
+		 * already happened — and `resolveRtk` memoises, so a switch after the
+		 * first is free rather than another download.
+		 */
+		if (profile.rtk) {
+			void resolveRtk();
+		}
 		void ready.then((harness) =>
 			enqueue(async () => {
 				if (modelFollowsProfile && profile.model.id && profile.model.id !== current.id) {
@@ -896,6 +920,19 @@ function createRunner(
 		}
 
 		function attach(harness: AgentHarness<ToolContext>) {
+			/*
+			 * **Registered before the gate, and that is the whole design.**
+			 * `emitHook` walks handlers in registration order and keeps the last
+			 * non-undefined result, so this one rewrites `event.input.command` —
+			 * the same object pi hands to `execute` — and then the gate's deny
+			 * list reads what will actually run. Ticket 11, amendment 6:
+			 * `resolve → rtk rewrites → deny list → gate → run → stripControl`.
+			 */
+			const offRtk = harness.on('tool_call', (event) =>
+				rewriteToolCall(event, activeProfile().rtk, (message) =>
+					onEvent({ kind: 'error', message, code: 'rtk_unavailable' })
+				)
+			);
 			const offHook = harness.on('tool_call', (event) => gate.onToolCall(event));
 			/*
 			 * The extension point for the system prompt
@@ -941,6 +978,7 @@ function createRunner(
 				}
 			});
 			dispose = () => {
+				offRtk();
 				offHook();
 				offPrompt();
 				offEvents();

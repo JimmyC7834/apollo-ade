@@ -267,18 +267,18 @@ something was accountable for making.
   than reconstructing history. `CustomEntry` is confirmed, so custom entries are
   first-class.
 
-- [How rtk becomes a profile setting](tickets/11-rtk-in-profile.md) — **`rtk: boolean`**,
-  applied in the bash tool's `prepare` hook (not `commandPrefix`, which is a preamble
-  line). pi's ordering means **the gate sees the original command and rtk rewrites after
-  approval** — defensible only while rtk is semantically transparent. Absent or failing
-  rtk falls back to the raw command and says so once. **Amended, and the mechanism is
-  deferred**: the field shape stands, but rtk is **binary-only and not on crates.io**
-  (that name is the collision), and it splits into a Rust half that *spawns and
-  reformats* and **97 declarative TOML filters** that only strip noise from output
-  already captured. Five routes are on the ticket with their costs; the one that needs no
-  distribution or security question settled first is **vendoring the filter data and
-  running it in our own exec adapter**, which moves rtk from before the command to after
-  it and dissolves the approval mismatch.
+- [How rtk becomes a profile setting](tickets/11-rtk-in-profile.md) — **built.**
+  **`rtk: boolean`** on the profile, and the binary is **fetched rather than bundled or
+  installed**: nothing usable on `PATH` (confirmed by `rtk gain`, because the crates.io
+  `rtk` is an unrelated project) and `src-tauri/src/rtk.rs` downloads the pinned release,
+  checks a **SHA-256 recorded beside the version** *before* unpacking, and caches it
+  under the app data directory. **The rewrite runs ahead of the deny list and the gate**,
+  reversing what this ticket first recorded: a `tool_call` hook registered before the
+  gate's mutates the same arguments object pi hands to `execute`, so there is one command
+  in the system and the approval card describes what runs. Applies to every command the
+  agent runs, **tools included, the integrated terminal never**. Absent or failing rtk
+  runs the raw command and says so once. `crop.ts` kept only its escape strip, which rtk
+  cannot do for any tool this repo runs. Six amendments; the reasoning is on the ticket.
 
 - [How a user adds their own tool](tickets/13-user-authored-tools.md) — **built.** A
   **declarative manifest** for v1 (schema + argv array), versioned with a `runtime`
@@ -490,8 +490,16 @@ reporting them:
   entries, every number but DeepSeek's copied from pi's own catalog data rather than
   remembered. An unlisted model still has an *unknown* window, which is the answer that
   keeps auto-compaction from firing against a fabricated denominator.
-- **How rtk is obtained, and which seam it applies at.** **Reopened — this is now a
-  live question, and it moved out of "deferred, not now" on the dev's word:** *"we want
+- ~~**How rtk is obtained, and which seam it applies at.**~~ **Answered and built** —
+  route D shipped, as Amendment 6 specified it. `src-tauri/src/rtk.rs` acquires the
+  binary, `src/agent/rtk.ts` owns the rewrite, and the hook that applies it is registered
+  before the gate's so the deny list screens what runs. The one thing built differently
+  from the amendment's wording: the seam is the `tool_call` hook rather than the bash
+  tool's `prepare`, because `prepare` runs *after* the gate and the ordering was the
+  point. Everything below is the reasoning that got there, kept because each amendment is
+  still correct about what it measured.
+
+  Previously — **reopened, and it moved out of "deferred, not now" on the dev's word:** *"we want
   that feature for an ADE, not for my project."* Everything below was scored by what rtk
   saves on **this repository**, which is the wrong yardstick for an editor that opens
   whatever the user opens — the filters that never fire here are the ones someone else's

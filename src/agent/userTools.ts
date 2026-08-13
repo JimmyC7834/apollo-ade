@@ -30,6 +30,8 @@ import {
 import { destructive, type Gate } from './gate.ts';
 import { ASK_TOOL } from './ask.ts';
 import { isTauri } from '../native.ts';
+import { activeProfile } from './profile.ts';
+import { rtkArgvFor } from './rtk.ts';
 
 /** Model-visible tool names travel in the request; keep them boring. */
 const NAME = /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/;
@@ -393,7 +395,25 @@ function createUserTool(tool: UserTool, gate: Gate): AgentHarnessTool<{ env: unk
 		// `callId` rather than `id`: the exec below has an `id` of its own, and it
 		// is a different identifier — pi's tool call versus Rust's process handle.
 		async execute(callId, params, signal, onUpdate) {
-			const argv = resolveArgv(tool, params as Record<string, unknown>);
+			let argv = resolveArgv(tool, params as Record<string, unknown>);
+
+			/*
+			 * rtk first, for the same reason it goes first for `bash`: the deny
+			 * list below screens *resolved* argv, and what it screens has to be
+			 * what runs. Ticket 11's amendment 6 puts every command the agent
+			 * runs through rtk, tools included — a user tool is the agent
+			 * spending tokens on output exactly like a shell command is.
+			 *
+			 * Nothing is quoted or joined, so unlike the `bash` path there is no
+			 * shell syntax that could make this the wrong thing to do.
+			 */
+			// The guard is not an optimisation. Awaiting at all pushes the
+			// approval question below into a later microtask, and a profile with
+			// rtk off should not have its gate timing changed by a feature it
+			// does not use.
+			if (activeProfile().rtk) {
+				argv = [...(await rtkArgvFor(argv))];
+			}
 
 			/*
 			 * The floor, reached through a different door. Ticket 13's decision 4

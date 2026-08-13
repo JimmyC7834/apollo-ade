@@ -17,6 +17,7 @@ import type { ThinkingLevel } from '@earendil-works/pi-agent-core';
 import type { GatePolicy } from '../../agent/gate';
 import { knownCapabilities, PROVIDER_IDS, type Profile, type ProviderId } from '../../agent/profile';
 import { saveProfile } from '../../agent/profileFiles';
+import { resolveRtk, RTK_VERSION, type RtkStatus } from '../../agent/rtk';
 import { Icon, Overlay } from '../../ui';
 
 const THINKING_LEVELS: readonly ThinkingLevel[] = [
@@ -212,6 +213,30 @@ export function ProfileModal({ open, profile, onClose, onAnnounce }: ProfileModa
 		}
 	}, [open, profile]);
 
+	/*
+	 * Which rtk this machine has, asked only once the row is on.
+	 *
+	 * Deliberately *not* on `open`: resolving can mean downloading, and opening
+	 * a settings dialog is not a request to reach the network. Ticking the row
+	 * is, which makes this the third prefetch site after app open and the
+	 * profile switch — and the one where the wait is least noticeable, because
+	 * nobody is blocked on it.
+	 */
+	const [rtk, setRtk] = useState<RtkStatus>();
+	useEffect(() => {
+		if (open && draft.rtk) {
+			void resolveRtk().then(setRtk);
+		}
+	}, [open, draft.rtk]);
+	const rtkSource =
+		rtk === undefined
+			? `pinned at ${RTK_VERSION}`
+			: rtk.source === 'unavailable'
+				? `unavailable, so commands run unfiltered`
+				: rtk.source === 'path'
+					? `${rtk.version} from your PATH`
+					: `${rtk.version}, fetched and cached`;
+
 	const capabilities = knownCapabilities();
 	const optIn = useMemo(() => capabilities.optIn ?? [], [capabilities.optIn]);
 	// The map's third state: not mentioned means on, unless it is a tool someone
@@ -372,6 +397,26 @@ export function ProfileModal({ open, profile, onClose, onAnnounce }: ProfileModa
 								</span>
 							</label>
 						))}
+					</fieldset>
+
+					<fieldset className="ide-fieldset">
+						<legend>Output</legend>
+						{/*
+						 * The pin is on the row on purpose. rtk is fetched at a
+						 * version this app chooses (ticket 11, amendment 6), and
+						 * upstream cuts releases weekly — so what we run is
+						 * permanently a little behind, and the only honest place
+						 * to admit that is where the feature is switched on.
+						 * `rtkSource` says which binary actually answered, which
+						 * is not always the pinned one: a machine with its own
+						 * rtk on PATH keeps it.
+						 */}
+						<SelectionRow
+							label="Route commands through rtk"
+							note={`filters verbose output before the model pays for it — ${rtkSource}`}
+							on={draft.rtk}
+							onToggle={() => setDraft((current) => ({ ...current, rtk: !current.rtk }))}
+						/>
 					</fieldset>
 
 					{/* Navigation rows, each saying how many are on — the number is the

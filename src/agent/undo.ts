@@ -14,7 +14,7 @@
 //
 // The desync the ticket names is real, and this note is the whole answer to it:
 // the last thing in the model's context after an undo says the edits are gone.
-// Same argument as `cropNote` — the model is told what happened to its output
+// Same argument as `stripNote` — the model is told what happened to its output
 // rather than left to infer it.
 
 /** What Rust's `git_restore_checkpoint` did. */

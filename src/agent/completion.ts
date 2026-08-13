@@ -100,7 +100,7 @@ export function complete(
 	 * — but a targeted one, against a path a person chose rather than a path it
 	 * guessed. Inlining the contents was the alternative and it was rejected for
 	 * now: a 40 KB file would become 40 KB of context nobody visibly asked for,
-	 * and this repo already has `crop.ts` devoted to not spending bytes
+	 * and this repo already has `strip.ts` devoted to not spending bytes
 	 * invisibly. Inlining would need the same treatment — a cap, an announcement
 	 * in the transcript, and a number measured on this repo.
 	 *

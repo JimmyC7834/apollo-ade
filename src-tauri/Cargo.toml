@@ -27,6 +27,22 @@ reqwest = { version = "0.13", default-features = false, features = ["stream", "r
 # alternative is `remove_dir_all` — one mis-click away from unrecoverable, in an
 # app whose standing rule is that destructive operations are gated.
 trash = "5.2.6"
+# Ticket 11's route D: rtk is fetched, and a fetched binary is only as
+# trustworthy as the digest it is checked against. `sha2` is that check.
+sha2 = "0.10"
+
+# Unpacking the rtk release, which ships an archive rather than a bare binary.
+# Split by platform because the archive format is: upstream builds a zip for
+# Windows and a gzipped tar everywhere else, so neither dependency needs to
+# exist on the other side.
+[target.'cfg(windows)'.dependencies.zip]
+version = "6"
+default-features = false
+features = ["deflate"]
+
+[target.'cfg(not(windows))'.dependencies]
+flate2 = "1"
+tar = "0.4"
 
 # Job objects, so aborting a command kills everything it started. Enumeration
 # cannot do it: Git Bash's fork emulation orphans grandchildren, leaving them

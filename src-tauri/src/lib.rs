@@ -4,6 +4,7 @@ mod lsp;
 mod profiles;
 mod provider;
 mod reaper;
+mod rtk;
 mod terminal;
 mod workspace;
 
@@ -43,6 +44,7 @@ pub fn run() {
             exec::agent_exec,
             exec::agent_exec_cancel,
             exec::agent_shell,
+            rtk::rtk_resolve,
             terminal::terminal_create,
             terminal::terminal_write,
             terminal::terminal_resize,
