@@ -1,0 +1,1155 @@
+@import './ui/tokens.css';
+@import '@xterm/xterm/css/xterm.css';
+
+* {
+	box-sizing: border-box;
+}
+
+body {
+	margin: 0;
+	height: 100vh;
+	overflow: hidden;
+	background: var(--ide-bg);
+	color: var(--ide-fg);
+	font-family: var(--ide-font-family);
+	font-size: var(--ide-font-size);
+}
+
+:focus-visible {
+	outline: var(--ide-focus-width) solid var(--ide-focus);
+	outline-offset: -1px;
+}
+
+/*
+ * Scrollbars. The WebView is Chromium on every target, so the ::-webkit-*
+ * pseudo-elements are the accurate way to reproduce VS Code's overlay slider:
+ * no track, no arrow buttons, and no space stolen from the content until the
+ * pointer is near it. Monaco draws its own scrollbars and is unaffected.
+ */
+
+::-webkit-scrollbar {
+	width: var(--ide-scrollbar-size);
+	height: var(--ide-scrollbar-size);
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+	background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+	background: var(--ide-scrollbar-slider);
+	/* No radius, like VS Code's slider. */
+	border-radius: 0;
+}
+
+::-webkit-scrollbar-thumb:hover {
+	background: var(--ide-scrollbar-slider-hover);
+}
+
+::-webkit-scrollbar-thumb:active {
+	background: var(--ide-scrollbar-slider-active);
+}
+
+/* Workbench topology */
+
+.ide-workbench {
+	display: flex;
+	flex-direction: column;
+	height: 100vh;
+}
+
+.ide-body {
+	display: flex;
+	flex: 1;
+	min-height: 0;
+}
+
+.ide-center {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	min-width: 0;
+	min-height: 0;
+}
+
+.ide-region {
+	min-width: 0;
+	min-height: 0;
+	overflow: hidden;
+}
+
+/*
+ * Regions keep their stored size but never take the window with them. A panel
+ * height saved in a tall window would otherwise crush the editor to nothing
+ * when the app reopens smaller — the sash clamps against its own min and max,
+ * never against the space actually available.
+ *
+ * Clamping in CSS rather than in the drag handler keeps the stored preference
+ * intact: shrink the window and the region gives way, grow it again and the
+ * user's size comes back. `--ide-region-min` is the same floor the sashes use,
+ * so main is guaranteed the same minimum either way.
+ *
+ * Caveat: with both sidebars open each is capped independently, so together
+ * they can still leave main below the floor on a very narrow window.
+ */
+.ide-region-sidebar {
+	flex: none;
+	max-width: calc(100% - var(--ide-region-min));
+	background: var(--ide-bg-sidebar);
+}
+
+.ide-region-main {
+	flex: 1;
+	background: var(--ide-bg);
+}
+
+.ide-region-main:focus {
+	outline: none;
+}
+
+.ide-region-panel {
+	flex: none;
+	max-height: calc(100% - var(--ide-region-min));
+	background: var(--ide-bg-panel);
+}
+
+/* Titlebar */
+
+.ide-titlebar {
+	display: flex;
+	align-items: center;
+	flex: none;
+	height: var(--ide-titlebar-height);
+	background: var(--ide-bg-titlebar);
+	border-bottom: 1px solid var(--ide-border);
+}
+
+.ide-titlebar-drag {
+	flex: 1;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	height: 100%;
+	min-width: 0;
+}
+
+.ide-titlebar-title {
+	color: var(--ide-fg-muted);
+	font-size: var(--ide-font-size-small);
+	user-select: none;
+}
+
+.ide-titlebar-actions,
+.ide-window-controls {
+	display: flex;
+	align-items: center;
+	flex: none;
+}
+
+.ide-titlebar-actions {
+	gap: var(--ide-space-1);
+	padding: 0 var(--ide-space-3);
+}
+
+/* Controls */
+
+.ide-icon-button {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: var(--ide-control-size);
+	height: var(--ide-control-size);
+	padding: 0;
+	border: none;
+	border-radius: var(--ide-radius);
+	background: transparent;
+	color: var(--ide-fg);
+	cursor: pointer;
+}
+
+.ide-icon-button:hover {
+	background: var(--ide-bg-hover);
+}
+
+.ide-icon-button[aria-pressed='false'] {
+	color: var(--ide-fg-subtle);
+}
+
+.ide-icon-button:disabled {
+	color: var(--ide-fg-subtle);
+	cursor: default;
+}
+
+.ide-icon-button:disabled:hover {
+	background: transparent;
+}
+
+.ide-window-controls .ide-icon-button {
+	width: 46px;
+	height: var(--ide-titlebar-height);
+	border-radius: 0;
+}
+
+.ide-icon-button-danger:hover {
+	background: var(--ide-fg-danger);
+	color: #ffffff;
+}
+
+.ide-button {
+	padding: var(--ide-space-2) var(--ide-space-4);
+	border: 1px solid var(--ide-border-strong);
+	border-radius: var(--ide-radius);
+	background: transparent;
+	color: var(--ide-fg);
+	font: inherit;
+	cursor: pointer;
+}
+
+.ide-button:hover {
+	background: var(--ide-bg-hover);
+}
+
+/* Disabled is a semantic role, so it renders the same wherever a button is. */
+.ide-button:disabled {
+	color: var(--ide-fg-subtle);
+	cursor: default;
+}
+
+.ide-button:disabled:hover {
+	background: transparent;
+}
+
+/* Pane */
+
+.ide-pane {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+}
+
+.ide-pane-header {
+	display: flex;
+	align-items: center;
+	flex: none;
+	gap: var(--ide-space-2);
+	height: var(--ide-pane-header-height);
+	padding: 0 var(--ide-space-3);
+}
+
+.ide-pane-title {
+	flex: 1;
+	margin: 0;
+	color: var(--ide-fg-muted);
+	font-size: var(--ide-font-size-small);
+	font-weight: 400;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.ide-pane-actions {
+	display: flex;
+	flex: none;
+	gap: var(--ide-space-1);
+}
+
+.ide-pane-body {
+	flex: 1;
+	min-height: 0;
+	overflow: auto;
+}
+
+/* Sashes — quiet at rest, visible on hover and focus. */
+
+.ide-sash {
+	flex: none;
+	background: transparent;
+	transition: background 80ms linear;
+}
+
+.ide-sash-vertical {
+	width: var(--ide-sash-size);
+	cursor: col-resize;
+}
+
+.ide-sash-horizontal {
+	height: var(--ide-sash-size);
+	cursor: row-resize;
+}
+
+.ide-sash:hover,
+.ide-sash:focus-visible {
+	background: var(--ide-focus);
+	outline: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.ide-sash {
+		transition: none;
+	}
+}
+
+/* Explorer tree */
+
+.ide-tree {
+	padding: var(--ide-space-1) 0;
+}
+
+.ide-tree-row {
+	display: flex;
+	align-items: center;
+	gap: var(--ide-space-2);
+	height: var(--ide-row-height);
+	padding-right: var(--ide-space-3);
+	white-space: nowrap;
+	cursor: pointer;
+	user-select: none;
+}
+
+.ide-tree-row:hover {
+	background: var(--ide-bg-hover);
+}
+
+.ide-tree-row-active {
+	background: var(--ide-bg-active);
+}
+
+.ide-tree-twistie {
+	display: inline-flex;
+	justify-content: center;
+	width: 16px;
+	flex: none;
+	color: var(--ide-fg-muted);
+}
+
+.ide-tree-label {
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.ide-tree-description {
+	overflow: hidden;
+	color: var(--ide-fg-subtle);
+	font-size: var(--ide-font-size-small);
+	text-overflow: ellipsis;
+}
+
+.ide-tree-accessory {
+	display: inline-flex;
+	flex: none;
+	margin-left: auto;
+	padding-left: var(--ide-space-2);
+}
+
+.ide-tree-empty {
+	margin: 0;
+	padding: var(--ide-space-3);
+	color: var(--ide-fg-muted);
+}
+
+/* Search */
+
+.ide-search {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+}
+
+.ide-search-field {
+	flex: none;
+	padding: var(--ide-space-2) var(--ide-space-3);
+}
+
+.ide-search-input {
+	width: 100%;
+	padding: var(--ide-space-2) var(--ide-space-3);
+	border: 1px solid var(--ide-input-border);
+	border-radius: var(--ide-radius);
+	background: var(--ide-input-bg);
+	color: var(--ide-input-fg);
+	font: inherit;
+}
+
+.ide-search-input::placeholder {
+	color: var(--ide-input-placeholder);
+}
+
+.ide-search-status {
+	flex: none;
+	/* Reserves its line even when empty, so results do not jump on the first
+	   search. */
+	min-height: var(--ide-row-height);
+	margin: 0;
+	padding: 0 var(--ide-space-3);
+	color: var(--ide-fg-muted);
+	font-size: var(--ide-font-size-small);
+}
+
+.ide-search .ide-tree {
+	flex: 1;
+	min-height: 0;
+	overflow: auto;
+}
+
+/* Badge, action bar, context menu */
+
+.ide-badge {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 16px;
+	height: 16px;
+	padding: 0 var(--ide-space-2);
+	border-radius: 8px;
+	background: var(--ide-bg-hover);
+	color: var(--ide-fg-muted);
+	font-size: var(--ide-font-size-small);
+	line-height: 1;
+}
+
+/* Status colours match VS Code's SCM decorations. */
+.ide-badge-added {
+	color: #81b88b;
+}
+
+.ide-badge-modified {
+	color: #e2c08d;
+}
+
+.ide-badge-deleted {
+	color: var(--ide-fg-danger);
+}
+
+.ide-action-bar {
+	display: flex;
+	gap: var(--ide-space-1);
+	padding: var(--ide-space-1) var(--ide-space-3);
+}
+
+.ide-context-menu {
+	position: fixed;
+	z-index: 10;
+	display: flex;
+	flex-direction: column;
+	min-width: 160px;
+	padding: var(--ide-space-1);
+	border: 1px solid var(--ide-border-strong);
+	border-radius: var(--ide-radius);
+	background: var(--ide-bg-overlay);
+	box-shadow: 0 2px 8px rgb(0 0 0 / 40%);
+}
+
+.ide-context-menu-item {
+	padding: var(--ide-space-2) var(--ide-space-3);
+	border: none;
+	border-radius: var(--ide-radius);
+	background: transparent;
+	color: var(--ide-fg);
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.ide-context-menu-item:hover {
+	background: var(--ide-bg-active);
+}
+
+.ide-context-menu-item-danger,
+.ide-button-danger {
+	color: var(--ide-fg-danger);
+}
+
+/* Editor */
+
+.ide-editor-workbench {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+}
+
+.ide-editor {
+	flex: 1;
+	min-height: 0;
+}
+
+.ide-editor-empty {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	height: 100%;
+	color: var(--ide-fg-subtle);
+}
+
+/* Tabs */
+
+.ide-tabs {
+	display: flex;
+	flex: none;
+	overflow-x: auto;
+}
+
+/* Editor strip: boxed tabs on the titlebar surface, VS Code's tab.* colours. */
+.ide-tabs-editor {
+	background: var(--ide-bg-titlebar);
+	border-bottom: 1px solid var(--ide-border);
+}
+
+/*
+ * Panel strip: flat, no boxes, active marked by an underline. This is the
+ * shape VS Code uses inside the bottom panel, where the tabs sit on the same
+ * surface as the content rather than above it.
+ */
+.ide-tabs-panel .ide-tab {
+	height: 30px;
+	border-right: none;
+	border-bottom: 1px solid transparent;
+	padding: 0 var(--ide-space-3);
+}
+
+.ide-tabs-panel .ide-tab-active {
+	background: transparent;
+	border-bottom-color: var(--ide-terminal-tab-active-border);
+}
+
+.ide-tabs-panel .ide-tab:hover {
+	color: var(--ide-fg);
+}
+
+.ide-tab {
+	display: flex;
+	align-items: center;
+	gap: var(--ide-space-2);
+	flex: none;
+	height: var(--ide-pane-header-height);
+	padding: 0 var(--ide-space-3);
+	border-right: 1px solid var(--ide-border);
+	color: var(--ide-fg-muted);
+	cursor: pointer;
+	user-select: none;
+}
+
+.ide-tab-active {
+	background: var(--ide-bg);
+	color: var(--ide-fg);
+}
+
+.ide-tab-label {
+	white-space: nowrap;
+}
+
+.ide-tab-close {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 20px;
+	height: 20px;
+	padding: 0;
+	border: none;
+	border-radius: var(--ide-radius);
+	background: transparent;
+	color: inherit;
+	cursor: pointer;
+	opacity: 0;
+}
+
+.ide-tab:hover .ide-tab-close,
+.ide-tab-active .ide-tab-close,
+.ide-tab-close:focus-visible {
+	opacity: 1;
+}
+
+.ide-tab-close:hover {
+	background: var(--ide-bg-hover);
+}
+
+/* The unsaved marker takes the close button's place until the tab is hovered. */
+.ide-tab-dirty {
+	width: 8px;
+	height: 8px;
+	/* 8px dot + 6px either side = the close button's 20px, so swapping the two
+	   never shifts the tab's width. */
+	margin: 0 6px;
+	border-radius: 50%;
+	background: currentcolor;
+}
+
+/*
+ * Dot and close button occupy the same slot: the dot is the resting state of a
+ * dirty tab, and hovering or focusing it swaps in the close button. The
+ * opacity rules above already reveal the close button; these hide the one that
+ * should not be showing, so the tab never changes width.
+ */
+.ide-tab:hover .ide-tab-dirty,
+.ide-tab:focus-within .ide-tab-dirty {
+	display: none;
+}
+
+.ide-tab:not(:hover):not(:focus-within) .ide-tab-dirty ~ .ide-tab-close {
+	display: none;
+}
+
+/* Terminal */
+
+.ide-terminal-panel {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+}
+
+/* Tab strip and actions share one row; the strip takes the slack. */
+.ide-terminal-bar {
+	display: flex;
+	align-items: center;
+	flex: none;
+	gap: var(--ide-space-2);
+	height: 30px;
+	padding-right: var(--ide-space-3);
+	border-bottom: 1px solid var(--ide-border);
+}
+
+.ide-terminal-title {
+	flex: none;
+	padding-left: var(--ide-space-3);
+}
+
+.ide-terminal-bar .ide-tabs {
+	flex: 1;
+	min-width: 0;
+	/* The bar already draws the rule; a second one would double it. */
+	margin-bottom: -1px;
+}
+
+.ide-terminal-bar .ide-action-bar {
+	margin-left: auto;
+	padding: 0;
+}
+
+.ide-terminal-instance {
+	flex: 1;
+	min-height: 0;
+	/* VS Code leaves a small gutter around the buffer, not a full pane inset. */
+	padding: var(--ide-space-2) 0 0 var(--ide-space-3);
+}
+
+.ide-terminal-empty {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	flex: 1;
+	margin: 0;
+	color: var(--ide-fg-subtle);
+}
+
+/* xterm sizes itself to the host; let it own the full box. */
+.ide-terminal-instance .xterm {
+	height: 100%;
+}
+
+/* `hidden` alone loses to the flex display above. */
+.ide-terminal-instance[hidden] {
+	display: none;
+}
+
+/* Dialog */
+
+.ide-overlay {
+	min-width: 320px;
+	max-width: 480px;
+	padding: var(--ide-space-5);
+	border: 1px solid var(--ide-border-strong);
+	border-radius: var(--ide-radius);
+	background: var(--ide-bg-overlay);
+	color: var(--ide-fg);
+	font-family: var(--ide-font-family);
+	font-size: var(--ide-font-size);
+}
+
+.ide-overlay::backdrop {
+	background: rgb(0 0 0 / 40%);
+}
+
+.ide-overlay-title {
+	margin: 0 0 var(--ide-space-4);
+	font-size: var(--ide-font-size);
+	font-weight: 600;
+}
+
+.ide-dialog-actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: var(--ide-space-3);
+}
+
+.ide-quickpick-row-disabled .ide-quickpick-label {
+	color: var(--ide-fg-subtle);
+}
+
+/* Empty state — a pane with nothing in it yet, offering the way out. */
+
+.ide-empty-state {
+	display: flex;
+	flex-direction: column;
+	align-items: stretch;
+	gap: var(--ide-space-4);
+	padding: var(--ide-space-5) var(--ide-space-4);
+	color: var(--ide-fg-muted);
+}
+
+.ide-empty-state p {
+	margin: 0;
+	line-height: 1.4;
+}
+
+.ide-visually-hidden {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	margin: -1px;
+	padding: 0;
+	overflow: hidden;
+	clip-path: inset(50%);
+	white-space: nowrap;
+}
+
+/* Quick pick */
+
+.ide-quickpick {
+	width: min(600px, 90vw);
+	max-width: none;
+	padding: var(--ide-space-2);
+	/* Anchored near the top, like a command palette, not centred. */
+	margin-top: 12vh;
+}
+
+.ide-quickpick-input {
+	width: 100%;
+	padding: var(--ide-space-3);
+	border: 1px solid var(--ide-focus);
+	border-radius: var(--ide-radius);
+	background: var(--ide-bg);
+	color: var(--ide-fg);
+	font: inherit;
+}
+
+.ide-quickpick-list {
+	max-height: 40vh;
+	margin: var(--ide-space-2) 0 0;
+	padding: 0;
+	overflow-y: auto;
+	list-style: none;
+}
+
+.ide-quickpick-row {
+	display: flex;
+	align-items: center;
+	gap: var(--ide-space-3);
+	padding: var(--ide-space-2) var(--ide-space-3);
+	border-radius: var(--ide-radius);
+	cursor: pointer;
+}
+
+.ide-quickpick-row-active {
+	background: var(--ide-bg-active);
+}
+
+.ide-quickpick-label {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.ide-quickpick-detail {
+	margin-left: auto;
+	color: var(--ide-fg-subtle);
+	font-size: var(--ide-font-size-small);
+	white-space: nowrap;
+}
+
+.ide-quickpick-status {
+	margin: var(--ide-space-2) 0 0;
+	padding: 0 var(--ide-space-3);
+	color: var(--ide-fg-subtle);
+	font-size: var(--ide-font-size-small);
+}
+
+.ide-help-list {
+	display: grid;
+	grid-template-columns: auto 1fr;
+	gap: var(--ide-space-2) var(--ide-space-4);
+	margin: 0 0 var(--ide-space-4);
+}
+
+.ide-help-list dt {
+	color: var(--ide-fg);
+	white-space: nowrap;
+}
+
+.ide-help-list dd {
+	margin: 0;
+	color: var(--ide-fg-muted);
+}
+
+.ide-help-note {
+	margin: 0 0 var(--ide-space-4);
+	color: var(--ide-fg-muted);
+}
+
+/* Agent chat — the primary mode. Chat content leads; tool activity recedes. */
+
+.ide-agent {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+}
+
+.ide-agent-log {
+	flex: 1;
+	min-height: 0;
+	padding: var(--ide-space-5);
+	overflow-y: auto;
+	line-height: var(--ide-line-height);
+}
+
+.ide-agent-log:focus {
+	outline: none;
+}
+
+.ide-agent-placeholder,
+.ide-agent-status {
+	margin: 0;
+	color: var(--ide-fg-muted);
+}
+
+.ide-agent-turn + .ide-agent-turn {
+	margin-top: var(--ide-space-5);
+	padding-top: var(--ide-space-5);
+	border-top: 1px solid var(--ide-border);
+}
+
+.ide-agent-prompt {
+	margin: 0 0 var(--ide-space-4);
+	padding: var(--ide-space-3) var(--ide-space-4);
+	border-radius: var(--ide-radius);
+	background: var(--ide-bg-hover);
+	white-space: pre-wrap;
+}
+
+.ide-agent-text {
+	margin: 0 0 var(--ide-space-3);
+	/* Streamed chunks arrive with their own newlines and spacing. */
+	white-space: pre-wrap;
+}
+
+/* Reasoning is usually noise and always long, so it collapses. The answer
+   should be the thing you read. */
+.ide-agent-thinking {
+	margin: 0 0 var(--ide-space-3);
+	color: var(--ide-fg-muted);
+	font-size: var(--ide-font-size-small);
+}
+
+.ide-agent-thinking > summary {
+	cursor: pointer;
+	color: var(--ide-fg-subtle);
+}
+
+.ide-agent-thinking > p {
+	margin: var(--ide-space-2) 0 0;
+	padding-left: var(--ide-space-3);
+	border-left: 1px solid var(--ide-border);
+	white-space: pre-wrap;
+}
+
+/* A tool call is secondary to the prose: smaller, muted, never emphasised. It
+   updates in place, so its state is carried by the row rather than by adding
+   another one. */
+.ide-agent-tool {
+	margin: 0 0 var(--ide-space-2);
+	font-size: var(--ide-font-size-small);
+}
+
+.ide-agent-tool-head {
+	display: flex;
+	align-items: center;
+	gap: var(--ide-space-2);
+	margin: 0;
+	color: var(--ide-fg-muted);
+}
+
+.ide-agent-tool-name {
+	font-weight: 600;
+}
+
+.ide-agent-tool-input {
+	color: var(--ide-fg-subtle);
+	font-family: var(--ide-font-family-mono);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* Pushed to the end so the varying-width input does not shift it around. */
+.ide-agent-tool-state {
+	margin-left: auto;
+	flex: none;
+	color: var(--ide-fg-subtle);
+}
+
+.ide-agent-tool[data-state='failed'] .ide-agent-tool-state {
+	color: var(--ide-fg-danger);
+}
+
+/* Capped rather than scrolled: a long file would otherwise push the answer off
+   screen, and the answer is the point. */
+.ide-agent-tool-output {
+	margin: var(--ide-space-2) 0 0;
+	padding: var(--ide-space-2) var(--ide-space-3);
+	max-height: 12em;
+	overflow: auto;
+	border-left: 1px solid var(--ide-border);
+	color: var(--ide-fg-subtle);
+	font-family: var(--ide-font-family-mono);
+	font-size: var(--ide-font-size-small);
+	white-space: pre-wrap;
+}
+
+/* A failure the user can act on, so it is not muted like activity is. */
+.ide-agent-error {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--ide-space-2);
+	margin: var(--ide-space-2) 0;
+	padding: var(--ide-space-2) var(--ide-space-3);
+	border-left: 2px solid var(--ide-fg-danger);
+	background: var(--ide-bg-overlay);
+	color: var(--ide-fg);
+}
+
+.ide-agent-compacted,
+.ide-agent-usage {
+	margin: var(--ide-space-2) 0 0;
+	color: var(--ide-fg-subtle);
+	font-size: var(--ide-font-size-small);
+}
+
+/* The summary is what the model still knows. Quiet, but reachable. */
+.ide-agent-compacted > summary {
+	cursor: pointer;
+}
+
+.ide-agent-compacted-summary {
+	margin: var(--ide-space-2) 0 0;
+	padding-left: var(--ide-space-3);
+	border-left: 2px solid var(--ide-border);
+	white-space: pre-wrap;
+}
+
+/* Context pressure is the one number in the footer worth looking at. */
+.ide-agent-usage-warn {
+	color: var(--ide-fg);
+	font-weight: 600;
+}
+
+/* Approval is the one thing in the transcript that stops the user. */
+.ide-agent-approval {
+	margin: var(--ide-space-3) 0;
+	padding: var(--ide-space-4);
+	border: 1px solid var(--ide-border-strong);
+	border-left: 2px solid var(--ide-focus);
+	border-radius: var(--ide-radius);
+	background: var(--ide-bg-overlay);
+}
+
+.ide-agent-approval-title {
+	margin: 0;
+	font-weight: 600;
+}
+
+.ide-agent-approval-detail {
+	margin: var(--ide-space-2) 0 0;
+	color: var(--ide-fg-muted);
+	font-family: var(--ide-font-family-mono);
+	font-size: var(--ide-font-size-small);
+}
+
+.ide-agent-approval-actions {
+	display: flex;
+	gap: var(--ide-space-3);
+	margin-top: var(--ide-space-4);
+}
+
+.ide-agent-approval-state {
+	margin: var(--ide-space-3) 0 0;
+	color: var(--ide-fg-muted);
+	font-size: var(--ide-font-size-small);
+}
+
+/* A question reuses the approval surface: both stop the run, and looking like
+   two different things would teach the reader a distinction that costs them
+   attention without telling them anything. Only the answer controls differ. */
+.ide-agent-question-options {
+	margin: var(--ide-space-3) 0 0;
+	padding: 0;
+	list-style: none;
+	display: flex;
+	flex-direction: column;
+	gap: var(--ide-space-2);
+}
+
+.ide-agent-question-options label,
+.ide-agent-question-other {
+	display: flex;
+	align-items: center;
+	gap: var(--ide-space-2);
+	cursor: pointer;
+}
+
+.ide-agent-question-other {
+	margin-top: var(--ide-space-3);
+	color: var(--ide-fg-muted);
+	font-size: var(--ide-font-size-small);
+}
+
+.ide-agent-question-text {
+	flex: 1;
+	min-width: 0;
+	padding: var(--ide-space-2);
+	border: 1px solid var(--ide-border-strong);
+	border-radius: var(--ide-radius);
+	background: var(--ide-bg-input, var(--ide-bg-overlay));
+	color: inherit;
+	font: inherit;
+}
+
+/* The composer is an elevated outer-tier surface, not part of the transcript. */
+.ide-agent-composer {
+	flex: none;
+	padding: var(--ide-space-4) var(--ide-space-5);
+	border-top: 1px solid var(--ide-border);
+	background: var(--ide-bg-panel);
+}
+
+.ide-agent-input {
+	display: block;
+	width: 100%;
+	padding: var(--ide-space-3);
+	border: 1px solid var(--ide-input-border);
+	border-radius: var(--ide-radius);
+	background: var(--ide-input-bg);
+	color: var(--ide-input-fg);
+	font: inherit;
+	resize: none;
+}
+
+.ide-agent-input::placeholder {
+	color: var(--ide-input-placeholder);
+}
+
+/*
+ * The completion menu. In flow under the textarea rather than floating over the
+ * transcript: it is a few rows at most, the composer is already at the bottom
+ * of the panel, and an absolutely positioned popup would need a stacking rule
+ * of its own for the one case it improves.
+ */
+.ide-agent-completions {
+	max-height: 12rem;
+	margin: var(--ide-space-2) 0 0;
+	padding: 0;
+	overflow-y: auto;
+	border: 1px solid var(--ide-border);
+	border-radius: var(--ide-radius);
+	background: var(--ide-bg-overlay);
+	list-style: none;
+}
+
+.ide-agent-completion {
+	display: flex;
+	justify-content: space-between;
+	gap: var(--ide-space-4);
+	padding: var(--ide-space-2) var(--ide-space-3);
+	cursor: default;
+}
+
+.ide-agent-completion-picked {
+	/* The same highlight the quick pick uses; one selected row, one colour. */
+	background: var(--ide-bg-active);
+}
+
+.ide-agent-completion-value {
+	font-family: var(--ide-font-family-mono);
+}
+
+.ide-agent-completion-summary {
+	color: var(--ide-fg-muted);
+	font-size: var(--ide-font-size-small);
+	text-align: right;
+}
+
+.ide-agent-composer-actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: var(--ide-space-3);
+	margin-top: var(--ide-space-3);
+}
+
+.ide-agent-plain {
+	max-width: 70ch;
+	max-height: 50vh;
+	margin: 0 0 var(--ide-space-4);
+	overflow: auto;
+	font-family: var(--ide-font-family-mono);
+	font-size: var(--ide-font-size-small);
+	white-space: pre-wrap;
+}
+
+/*
+ * The editor modal. An outer-tier surface over the workbench, not a region:
+ * Agent Chat stays visible and legible beneath the backdrop.
+ *
+ * Sized in viewport units with a pixel ceiling so it stays usable at the Tauri
+ * minimum window (900x560): there it becomes 828x482 rather than overflowing.
+ * `max-width` is reset because the shared overlay caps at 480px, which is right
+ * for a confirmation and far too narrow for code.
+ */
+.ide-overlay-editor {
+	width: min(1100px, 92vw);
+	max-width: none;
+	height: min(760px, 86vh);
+	padding: 0;
+}
+
+/*
+ * Only while open. A bare `display: flex` outranks the UA rule that hides a
+ * closed `<dialog>`, which leaves it in the workbench's column at full height
+ * forever — squashing every region above it whether or not it is showing.
+ *
+ * Note there is no `position` here either: the UA gives an open modal
+ * `position: fixed` with auto margins, which is what centres it. Overriding
+ * that drops the dialog back into the flex flow. It still anchors the close
+ * button, since a fixed element is a containing block for absolute children.
+ */
+.ide-overlay-editor[open] {
+	display: flex;
+	flex-direction: column;
+}
+
+.ide-overlay-editor .ide-overlay-title {
+	flex: none;
+	margin: 0;
+	padding: var(--ide-space-3) var(--ide-space-5);
+	border-bottom: 1px solid var(--ide-border);
+}
+
+.ide-overlay-editor .ide-editor-workbench {
+	flex: 1;
+	min-height: 0;
+}
+
+.ide-editor-dialog-close {
+	position: absolute;
+	top: var(--ide-space-2);
+	right: var(--ide-space-3);
+}
