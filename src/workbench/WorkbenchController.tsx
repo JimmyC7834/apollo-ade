@@ -4,7 +4,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 
-import { createAgentProvider, loadProfileFiles } from '../agent';
+import { createAgentProvider, loadProfileFiles, type StoredSession } from '../agent';
 import { TOOL_ARTIFACTS, clampDock, dockSide, isToolArtifact } from '../artifacts';
 import { createChangesProvider } from '../changes';
 import { buildCommands } from '../commands/commandRegistry';
@@ -117,6 +117,8 @@ export function WorkbenchController() {
 		readonly status: SessionStatus;
 		readonly name: string | undefined;
 	}>({ status: 'idle', name: undefined });
+	/** This workspace's stored conversations. Empty until they are read. */
+	const [stored, setStored] = useState<readonly StoredSession[]>([]);
 	const [commandCenterOpen, setCommandCenterOpen] = useState(false);
 	/*
 	 * Notifications — ticket 44. Toasts are a list rather than one slot because
@@ -872,14 +874,21 @@ export function WorkbenchController() {
 	/**
 	 * Selecting a session, from the navigator or from a search result.
 	 *
-	 * One function because it is one decision, and the decision is mostly a
-	 * refusal: a fixture has no harness and must not pretend to have one. The live
-	 * session is already what is on screen, so choosing it only clears unread.
+	 * One function because it is one decision, and the decision is still a
+	 * refusal — but no longer the same one. The rows used to be fixtures with no
+	 * harness behind them; they are now real stored conversations that this build
+	 * cannot *reopen*. Resuming one means stopping the running harness, opening
+	 * another file, and rebuilding the transcript from its entries, which is its
+	 * own slice. Saying so is what stops a row that does nothing from reading as
+	 * a row that failed.
+	 *
+	 * The live session is already what is on screen, so choosing it only clears
+	 * unread.
 	 */
 	const selectSession = useCallback(
 		(picked: Session) => {
 			if (!picked.live) {
-				announce(`${picked.name} is a prototype fixture. Only one session runs in this build.`);
+				announce(`${picked.name} is a stored session. Reopening one is not built yet.`);
 				return;
 			}
 			setUnread(false);
@@ -999,6 +1008,32 @@ export function WorkbenchController() {
 		void provider.recentWorkspaces().then(setRecents);
 	}, [provider, selection]);
 
+	/*
+	 * The workspace's stored conversations.
+	 *
+	 * Keyed on the root and nothing else. It is deliberately *not* re-read when a
+	 * turn ends: a session started in this window is the live row, drawn from
+	 * live state, and re-reading on every status change would mean up to twenty
+	 * file opens four times a turn to learn something already on screen. Stored
+	 * rows change when another window writes or between launches, and both of
+	 * those are covered by reading once per root.
+	 *
+	 * `cancelled` because a switch can land while the previous root's sessions
+	 * are still being read, and the answer to the old question must not overwrite
+	 * the answer to the new one.
+	 */
+	useEffect(() => {
+		let cancelled = false;
+		void agentProvider.listSessions().then((sessions) => {
+			if (!cancelled) {
+				setStored(sessions);
+			}
+		});
+		return () => {
+			cancelled = true;
+		};
+	}, [agentProvider, selection]);
+
 	/**
 	 * Switch roots by index into that list — never by path. See
 	 * `docs/adr/0001-multi-root-confinement.md`.
@@ -1057,8 +1092,9 @@ export function WorkbenchController() {
 				liveName: session.name,
 				liveStatus: session.status,
 				liveUnread: unread,
+				stored,
 			}),
-		[branch, recents, selection, session, unread]
+		[branch, recents, selection, session, stored, unread]
 	);
 
 	/**

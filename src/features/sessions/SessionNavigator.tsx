@@ -100,7 +100,6 @@ export function SessionNavigator({
 								{group.label}
 								{group.branch ? ` · ${group.branch}` : ''}
 							</span>
-							{group.fixture ? <span className="ide-navigator-fixture">fixture</span> : null}
 							{switchTo === undefined ? null : (
 								<span className="ide-visually-hidden">— switch to this workspace</span>
 							)}
@@ -125,17 +124,23 @@ export function SessionNavigator({
 										</span>
 										<span className="ide-navigator-label">{session.name}</span>
 										{/*
-										 * The prototype marking, in the model and on the
-										 * screen. A fixture row must never be mistakable
-										 * for a session with a harness behind it.
+										 * No prototype marking any more, because there is
+										 * nothing left to mark: every row is a real
+										 * conversation, either the live one or one read
+										 * back from `.ade/sessions`. It used to say
+										 * "fixture" on anything with `live: false`, which
+										 * became a lie the moment those rows came off
+										 * disk — and a real session labelled as invented
+										 * is a worse error than the one the marking was
+										 * put there to prevent.
+										 *
+										 * Which one has a harness is still shown: the live
+										 * session's marker is the larger one.
 										 */}
-										{session.live ? null : (
-											<span className="ide-navigator-fixture">fixture</span>
-										)}
 										<span className="ide-visually-hidden">
 											{`— ${STATUS_LABEL[session.status]}${
 												session.unread ? ', unread' : ''
-											}${session.live ? '' : ', prototype fixture'}`}
+											}`}
 										</span>
 										<span className="ide-navigator-action">
 											{session.unread ? <span className="ide-navigator-unread" /> : null}

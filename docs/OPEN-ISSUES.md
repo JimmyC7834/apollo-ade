@@ -202,6 +202,46 @@ still fine there.
 
 ## Open defects
 
+### A profile's model never reaches the provider, and the composer bar says it did
+
+**Found 2026-08-13, while verifying the session list.** With `ade.profiles.json`
+naming `deepseek-chat` and no `.env` present, the native window ran the **canned**
+provider — the same fixture agent browser mode uses. Asked to read a file, it
+answered "Browser mode. Run `npm run tauri dev` to open a real folder", inside a
+real Tauri window with a real workspace open.
+
+Meanwhile the composer bar read `deepseek-chat · medium · 128k`. That is the
+worse half: the UI names a model the agent is not using and cannot use.
+
+The cause is ordering, and both halves of it are deliberate decisions that were
+never put side by side:
+
+- `createAgentProvider()` runs in `useMemo(…, [])` during
+  `WorkbenchController`'s **render** (`WorkbenchController.tsx:213`), and picks
+  the disk-backed provider only when `activeProfile().model.id` is non-empty.
+- `loadProfileFiles()` runs on the **effect** path afterwards
+  (`WorkbenchController.tsx:279`), and `profileFiles.ts` says why in its own
+  comment: installing profiles notifies `ComposerBar`, and updating one component
+  while rendering another is a React warning.
+
+So at the moment the provider is chosen, the only model available is
+`envModel()` — `VITE_AGENT_MODEL`, or empty. A project profile is always too
+late. Setting `VITE_AGENT_MODEL` masks it completely, which is why every earlier
+native verification in this repo passed: they all ran with the env var set.
+
+**Not fixed here, because the fix is a design question rather than a line.**
+Rebuilding the provider once profiles arrive means rebuilding it *mid-session* —
+what happens to `sessionOnce`, to a turn already in flight, and to the transcript
+already on screen. The alternatives are to await profiles before the first render
+or to make the provider late-bound in its model. Neither is a one-liner and
+choosing between them is not a side effect of another slice.
+
+**Workaround until then:** launch with the model in the environment.
+
+```bash
+VITE_AGENT_MODEL=deepseek-chat npm run tauri dev
+```
+
 ### The transcript shows the pre-rtk command under `auto`, the rewritten one under `ask`
 
 Observed in the native window against a real model. Same prompt, same chain, two

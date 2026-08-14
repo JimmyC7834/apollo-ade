@@ -1,11 +1,29 @@
 # 39 — The Session Navigator, and one real workspace switch
 
 **Blocked by:** [37](37-shell-tokens-and-stack.md).
-**Status:** **landed, unseen.** Switching is real and goes through a Rust-owned recent
-list **by index, never by path** — see `docs/adr/0001-multi-root-confinement.md`, which is
-written and unimplemented as required. A switch is refused while anything is dirty or a
-turn is running. `sessions.check.ts` asserts exactly one session is `live`. The geometry is
-written-not-seen.
+**Status:** **landed. Switching is verified against a second real folder; the geometry is
+still written-not-seen.** It goes through a Rust-owned recent list **by index, never by
+path** — see `docs/adr/0001-multi-root-confinement.md`, which is written and unimplemented
+as required. `sessions.check.ts` asserts exactly one session is `live`.
+
+**Verified 2026-08-13**, in the native window over the WebView2 debugging port, with a
+second folder outside the repo. The switch was driven by clicking the navigator's own
+`Switch to …` header, not by calling the command:
+
+- **The confinement root really moves.** A file only in the second folder went `not found`
+  → readable, and `src/App.css` went readable → `not found`, in the same click. That pair
+  is the whole claim: one root at a time, and it is the new one.
+- **No restart**, and the recent list reordered to most-recent-first and persisted. The
+  file on disk still held roots recorded by an *earlier run of the app*, which is the
+  across-restart half.
+- **Open editors are cleared.** An open `ONLY-IN-B.md` with a live Monaco instance was gone
+  after the switch — ids relative to the old root cannot survive, and do not.
+- **The dirty guard refuses.** Typing one character into that editor and clicking the same
+  header again produced "Save your changes before switching workspace." and the root did
+  not move. Nothing was saved; the edit was undone afterwards.
+- **Still unverified:** the mid-turn refusal, which needs a running model. It is the branch
+  three lines above the dirty one in `switchWorkspace` and shares its shape, but sharing a
+  shape is not evidence and it is not claimed here.
 
 ## The largest thing in the Shell Guide, and the least real
 
@@ -73,7 +91,8 @@ that is exactly the kind of decision `context.md` wants recorded rather than dis
 
 - [ ] Collapsed and expanded states match the measurements above. Expanding does not reflow
       chat.
-- [ ] Switching workspaces works for real, without a restart, and the recent list persists.
+- [x] Switching workspaces works for real, without a restart, and the recent list persists.
+      **Verified 2026-08-13 — see the status note above.**
 - [ ] The four session statuses render, and the live session's status is derived from the
       running harness rather than from a fixture.
 - [ ] Additional sessions and additional workspace groups are fixtures, and **the UI says

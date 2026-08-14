@@ -4296,3 +4296,84 @@ a throwaway repo — but the entries this repo actually holds carry the prompt
 truncated to 60 characters with no `agent:` prefix. So something other than that
 line is writing the label. Recorded rather than guessed at; it changes nothing
 about the rule above.
+
+## Workspace switching, verified against a second real folder
+
+Ticket 39 had said "landed, unseen" since it shipped: the code was there and the
+checks passed, but nobody had ever pointed the app at a second folder and
+watched it move. The claim being tested is not "the button calls the command" —
+that is obvious from reading it — but "the confinement root really is somewhere
+else afterwards".
+
+The evidence that settles it is a pair, in one click: a file that exists only in
+the second folder went `not found` → readable, and `src/App.css` went readable →
+`not found`. One root at a time, and it is the new one. Everything else about a
+switch is downstream of that.
+
+Three more held. The recent list reordered and persisted — and the file on disk
+still carried roots recorded by an *earlier run of the app*, which is the
+across-restart half nobody had to arrange. An open editor with a live Monaco
+instance was gone afterwards, because ids relative to the old root cannot
+survive. And the dirty guard refused: one character typed into that editor, the
+same header clicked again, and the answer was "Save your changes before
+switching workspace." with the root unmoved.
+
+The switch was driven by clicking the navigator's own header rather than by
+calling `switch_workspace`, because the command taking an index is exactly the
+part that could be right while the UI passes the wrong one.
+
+**Two notes against the probe rather than the app.** `Input.insertText` does not
+reach Monaco under WebView2 — the editor focuses a `native-edit-context` element
+— so the first attempt at the dirty guard measured nothing and looked like a
+missing feature. Real `Input.dispatchKeyEvent` calls work. And the Context
+Explorer button is a *toggle*, so a probe that leaves it open makes the next
+probe close it and find no files.
+
+**The mid-turn refusal is still unverified.** It needs a running model, it is the
+branch three lines above the dirty one, and sharing a shape is not evidence.
+
+## The navigator's sessions are the workspace's own
+
+The dev asked whether sessions should sit under workspaces. On disk they always
+did — ticket 09 put them in `.ade/sessions` inside each root — but the navigator
+drew three hardcoded rows next to the live one and called them fixtures. The
+capability was there and the UI was what was missing; `provider.ts` had said so
+in a comment for several slices.
+
+So `AgentProvider` gained `listSessions()`, and the rows are now real: newest
+first, capped at twenty, named from the session's own name or failing that the
+first thing the user said in it. The cap is not politeness — naming a session
+means opening it, so an uncapped list would cost one file parse per conversation
+ever had in that workspace. The search for the naming message is bounded too, at
+sixty entries, because a session opens with a dozen tool and model entries before
+the first prompt.
+
+**The active session is dropped from the stored list rather than merged into it.**
+It is already the top row, drawn from live state, and live state is the only
+place its status and unread flag are true. Reading it back off disk as well would
+put one conversation on screen twice, the second copy claiming `done` while it
+runs.
+
+**The prototype marking came off, and that is the part worth writing down.** It
+was keyed off `live`, which used to mean "invented". The moment these rows came
+off disk it started labelling real conversations as fixtures — a worse error than
+the one it was there to prevent. The fixture workspace group went with it, since
+the recent roots draw the grouping for real now, and `WorkspaceGroup.fixture` had
+no producer left.
+
+**Other workspaces still show no sessions, and the reason has changed.** It used
+to be that sessions did not persist. Now they do, per root, and what stops those
+rows being drawn is confinement: `workspace.rs` resolves every read against the
+*current* root. Reaching another root's sessions wants a narrow Rust command that
+lists them by recents index — the same shape as `switch_workspace`, metadata
+only — not multi-root. Recorded, not built.
+
+Selecting a stored row still refuses, but it now refuses the true thing:
+reopening one means stopping the harness, opening another file and rebuilding the
+transcript from its entries. That is its own slice.
+
+**Verified in the native window**, with a second session file placed on disk and
+removed afterwards: the row carried that session's real first message, its marker
+read `done`, and clicking it announced that reopening is not built. A defect
+found on the way — the composer bar naming a model the provider never received —
+is in `OPEN-ISSUES.md` rather than fixed here.

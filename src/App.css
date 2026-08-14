@@ -2262,19 +2262,8 @@ body {
 	background: var(--status-done);
 }
 
-/* The prototype marking. Deliberately plain and deliberately always visible:
-   a fixture that is only distinguishable on hover is not marked. */
-.ide-navigator-fixture {
-	flex: none;
-	margin-right: var(--space-2);
-	padding: 0 var(--space-2);
-	border: 1px solid var(--border-strong);
-	border-radius: var(--radius);
-	color: var(--foreground-subtle);
-	font-size: var(--text-small);
-	text-transform: none;
-	letter-spacing: 0;
-}
+/* The prototype marking is gone with the fixtures it marked — every navigator
+   row is now a real session. See the comment in `sessions.ts`. */
 
 /* Pinned Workbench — slice 40.
 
@@ -2551,5 +2540,233 @@ body {
 	border-radius: var(--radius);
 	background: var(--muted);
 	color: var(--muted-foreground);
+	font-size: var(--text-small);
+}
+
+/*
+ * ── The transcript, skinned as a TUI ─────────────────────────────────────────
+ *
+ * A restyle and nothing else: not one rule below changes what is in the DOM,
+ * only how it reads. The reference is OpenCode's terminal UI, and the three
+ * things that actually make that look what it is are all typographic — one
+ * monospace grid, square corners everywhere, and *markers* where this app used
+ * *surfaces*. So a chip stops being a pill and becomes a dim `* ` line, the
+ * prompt stops being a bubble and becomes a rule-bordered block, and nothing
+ * inside the conversation has a radius.
+ *
+ * Scoped to `.ide-agent` deliberately. The editor, sidebar and panels are a
+ * workbench and go on looking like one; only the conversation reads as a
+ * terminal, because the conversation is the one part of this app that is a
+ * stream of lines rather than a surface you point at.
+ *
+ * These rules sit at the end of the file rather than beside the ones they
+ * override, because that is what makes the skin removable: delete this block
+ * and the workbench styling underneath is untouched and still correct.
+ */
+
+.ide-agent {
+	background: var(--background);
+	font-family: var(--font-mono);
+	/* A TUI has no ligatures — a cell is a cell. */
+	font-variant-ligatures: none;
+}
+
+/*
+ * Square, everywhere, one rule. Stated as a blanket rather than element by
+ * element because the claim really is that broad: inside the conversation
+ * there is no rounded thing, and a list would only be a list of exceptions
+ * waiting to be forgotten when the next part kind is added.
+ *
+ * The dialogs are carved out here rather than overridden below, because there
+ * is no overriding a radius back: `revert` goes to the user-agent value, not to
+ * the author rule this one displaced, so a second rule would have to restate
+ * every radius in the modal by hand and then keep up with them. Never applying
+ * it is the only version that stays true.
+ */
+.ide-agent
+	:is(p, div, pre, code, details, summary, button, textarea, input, li, ul, ol):not(dialog *) {
+	border-radius: 0;
+}
+
+/*
+ * And the dialogs keep the workbench's typeface. They are modal workbench
+ * surfaces that happen to be mounted inside this subtree — a profile editor is
+ * not part of the stream, and setting it in mono would be the skin leaking out
+ * of the thing it is meant to skin.
+ */
+.ide-agent dialog {
+	font-family: var(--font-sans);
+}
+
+.ide-agent-log {
+	padding: var(--space-4) var(--space-5);
+}
+
+/* A rule between turns, not a gap: the eye tracks a line better than space. */
+.ide-agent-turn + .ide-agent-turn {
+	margin-top: var(--space-4);
+	padding-top: var(--space-4);
+}
+
+/*
+ * The prompt: full width, flush left, a solid accent rule down its edge. The
+ * card and the left margin that used to say "the other speaker" are both gone,
+ * because in a terminal the speaker is marked by a gutter, not by geometry.
+ */
+.ide-agent-prompt {
+	margin: 0 0 var(--space-4);
+	padding: var(--space-2) var(--space-4);
+	border-left: 2px solid var(--primary);
+	background: var(--card);
+}
+
+/*
+ * Markdown headings get their own hashes back. They are a `#` in the source and
+ * a `#` on screen in every terminal that has ever rendered Markdown, and it is
+ * the single cheapest thing that makes prose read as a TUI rather than as a
+ * document that happens to be set in Consolas.
+ */
+.ide-agent .ide-md :is(h1, h2, h3, h4)::before {
+	content: '# ';
+	color: var(--foreground-subtle);
+}
+
+.ide-agent .ide-md :is(code, pre) {
+	background: var(--muted);
+}
+
+/*
+ * The chip, de-pilled.
+ *
+ * Everything that made it an object — the filled background, the pill radius,
+ * the fixed row height — comes off, and what is left is a line of text with a
+ * marker in front of it. The truncation rules underneath are kept exactly as
+ * they were: a chip that reflows when a result arrives is still the bug it
+ * always was, skin or no skin.
+ */
+.ide-agent .ide-chip,
+.ide-agent .ide-chip > summary {
+	height: auto;
+	min-height: var(--row-height);
+	padding: 0;
+	background: none;
+	color: var(--foreground-subtle);
+	font-size: var(--text-base);
+}
+
+.ide-agent .ide-chip > summary:hover {
+	background: none;
+	color: var(--foreground);
+}
+
+/*
+ * The marker replaces the leading codicon. `*` for a call, `~` while it runs,
+ * `!` when it fails — the same three states the icon colour used to carry, said
+ * in a glyph so the state survives being read out loud or copied as text.
+ *
+ * `:not(.ide-chip-open)` because a chip with details is a `<details>` whose own
+ * box is `display: block`; there the marker belongs to the `<summary>`, which
+ * is the flex row.
+ */
+.ide-agent .ide-chip:not(.ide-chip-open)::before,
+.ide-agent .ide-chip > summary::before {
+	/* No trailing space: the row is a flex line and its `gap` already spaces the
+	   marker off the label. A space here would double it. */
+	content: '*';
+	flex: none;
+	color: var(--foreground-subtle);
+}
+
+.ide-agent .ide-chip[data-state='running']:not(.ide-chip-open)::before,
+.ide-agent .ide-chip[data-state='running'] > summary::before {
+	content: '~';
+	color: var(--status-running);
+}
+
+.ide-agent .ide-chip[data-state='failed']:not(.ide-chip-open)::before,
+.ide-agent .ide-chip[data-state='failed'] > summary::before {
+	content: '!';
+	color: var(--destructive);
+}
+
+.ide-agent .ide-chip > .codicon:first-child,
+.ide-agent .ide-chip > summary > .codicon:first-child {
+	display: none;
+}
+
+/* The chevron stays. A disclosure with no affordance is a disclosure nobody
+   opens, and that is a real loss to pay for a look. Dimmed, not removed. */
+.ide-agent .ide-chip > summary > .codicon-chevron-right {
+	color: var(--foreground-subtle);
+}
+
+.ide-agent .ide-chip-label {
+	font-weight: 400;
+	color: var(--muted-foreground);
+}
+
+.ide-agent .ide-chip-body {
+	padding: var(--space-1) 0 var(--space-3) var(--space-4);
+}
+
+.ide-agent .ide-chip-output {
+	border-left: 1px solid var(--border-strong);
+	padding-left: var(--space-3);
+}
+
+/* Status lines are the TUI's spinner line — `~ Asking questions...`. */
+.ide-agent-placeholder::before,
+.ide-agent-status::before {
+	content: '~ ';
+	color: var(--foreground-subtle);
+}
+
+/*
+ * Usage, pushed to the right edge. In the reference this rides the turn's
+ * header line, top right; here the turn has no header, so it stays where it is
+ * and is simply right-aligned — same reading, one number at the margin.
+ */
+.ide-agent-usage {
+	text-align: right;
+}
+
+/* Interruptions keep their weight — square, a rule down the edge, no card. */
+.ide-agent-approval {
+	border: none;
+	border-left: 2px solid var(--ring);
+	padding: var(--space-3) var(--space-4);
+	background: var(--card);
+}
+
+.ide-agent-undone,
+.ide-agent-error {
+	background: var(--card);
+}
+
+/*
+ * The composer loses its 760px cap. That cap is the Shell Guide's, and it is
+ * right for a chat column — but a terminal's input is the width of the
+ * terminal, and a centred box under a full-width transcript is the one thing
+ * that would give the skin away immediately.
+ */
+.ide-agent-composer {
+	max-width: none;
+	padding: 0 var(--space-5) var(--space-3);
+}
+
+.ide-composer-row {
+	border-color: var(--border-strong);
+	background: var(--card);
+}
+
+.ide-agent-input::placeholder {
+	color: var(--input-placeholder);
+}
+
+/* The bar under the input is the reference's footer line: model, mode, and the
+   controls, all dim, all one size, none of them a button-looking button. */
+.ide-composer-bar,
+.ide-bar-button,
+.ide-bar-summary {
 	font-size: var(--text-small);
 }

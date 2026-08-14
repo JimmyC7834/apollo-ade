@@ -1,16 +1,24 @@
 // The session model the Session Navigator draws.
 //
 // This app runs exactly one harness, one gate and one confinement root, so
-// exactly one session here is live. The rest are fixtures, and they are marked
-// as fixtures in the model rather than only in the view — a navigator that
-// shows three sessions when one exists, with nothing saying so, is how a
-// fixture gets mistaken for a feature.
+// exactly one session here is live. The rest are the workspace's *stored*
+// conversations, read back from `.ade/sessions` — real records of real turns,
+// which is what the three hardcoded fixtures that used to sit here were
+// standing in for. `live: false` no longer means "invented"; it means "not the
+// one a harness is attached to right now".
+//
+// **That is why the prototype marking is gone rather than kept.** It was keyed
+// off `live`, so the moment these rows came off disk it labelled real
+// conversations as fixtures — a worse error than the one it was put there to
+// prevent. The fixture workspace group went with it: it existed to draw the
+// grouping, and the recent roots draw it for real now.
 //
 // Concurrent live sessions are deliberately not modelled. N harnesses against
 // one git tree makes the per-turn `git_checkpoint` meaningless: two turns
 // interleaving produce a checkpoint neither can be rolled back to. That is its
 // own ticket. Multi-root is `docs/adr/0001-multi-root-confinement.md`.
 
+import type { StoredSession } from './agent';
 import type { WorkspaceSelection } from './workspace';
 
 /**
@@ -33,8 +41,10 @@ export interface Session {
 	 */
 	readonly unread?: boolean;
 	/**
-	 * False for every session but the live one. The view must show this, not
-	 * merely honour it — see the module comment.
+	 * True for the one session a harness is attached to. False means stored, not
+	 * invented — the view shows the difference with the marker's size and must
+	 * not label the others, which is what it used to do back when `false` meant
+	 * fixture.
 	 */
 	readonly live: boolean;
 }
@@ -44,16 +54,13 @@ export interface WorkspaceGroup {
 	readonly label: string;
 	/** Undefined when the workspace is not a repository, or HEAD is detached. */
 	readonly branch?: string;
-	/** True when nothing in this group is real. */
-	readonly fixture: boolean;
 	/**
 	 * Index into Rust's recent-workspaces list, for a root that is *not* the
 	 * current one. Present means activating this header switches to it — and
 	 * it is an index rather than a path for the reason
 	 * `docs/adr/0001-multi-root-confinement.md` gives.
 	 *
-	 * Absent on the current workspace (there is nothing to switch to) and on
-	 * the fixture group (there is nothing there).
+	 * Absent on the current workspace, where there is nothing to switch to.
 	 */
 	readonly switchIndex?: number;
 	readonly sessions: readonly Session[];
@@ -84,38 +91,38 @@ export function liveStatus(options: {
 export const LIVE_SESSION_ID = 'live';
 
 /**
- * Sessions that exist only to draw the navigator, and one extra workspace group
- * to draw the grouping. Every one is `live: false`, which is what the view
- * keys its prototype marking off.
+ * A stored conversation, as the row it becomes.
+ *
+ * `done` rather than `idle` when it has messages in it, because that is the
+ * difference the marker is for: a conversation someone had, versus a session
+ * that was opened and abandoned. Neither is running — nothing but the live one
+ * can be, and `live: false` is what the view keys that off.
  */
-const FIXTURE_SESSIONS: readonly Session[] = [
-	{ id: 'fixture:review', name: 'Review the gate policy', status: 'done', unread: true, live: false },
-	{ id: 'fixture:diag', name: 'Chase a failing check', status: 'waiting', live: false },
-	{ id: 'fixture:idle', name: 'Untitled session', status: 'idle', live: false },
-];
-
-const FIXTURE_GROUP: WorkspaceGroup = {
-	id: 'fixture:workspace',
-	label: 'another-workspace',
-	branch: 'feature/pinned-dock',
-	fixture: true,
-	sessions: [
-		{ id: 'fixture:other', name: 'Port the dock to portrait', status: 'running', live: false },
-	],
-};
+function storedRow(stored: StoredSession): Session {
+	return {
+		id: stored.id,
+		name: stored.name,
+		status: stored.empty ? 'idle' : 'done',
+		live: false,
+	};
+}
 
 /**
- * The navigator's whole model: the current workspace first with the live session
- * at the top of it, then every other root this app has been given, then the
- * fixtures.
+ * The navigator's whole model: the current workspace with the live session at
+ * the top of it and its stored conversations under that, then every other root
+ * this app has been given.
  *
  * The live session's name comes from its first prompt, which is the only thing
- * about a session that is naturally a name. Nothing else names sessions yet.
+ * about a session that is naturally a name. A stored session's comes from the
+ * same place, read back off disk — see `nameStored` in `agent/provider.ts`.
  *
- * **The recent roots are groups with no sessions, and that is honest.** Sessions
- * do not persist, so a root that is not open right now has none to show. What it
- * has is a header you can activate to switch to it, which is the whole of
- * ticket 31 and the only real functionality in this slice.
+ * **The recent roots still have no sessions, and the reason has changed.** It
+ * used to be that sessions did not persist; they do now, per workspace, in
+ * `.ade/sessions` inside each root. What stops those rows being drawn is
+ * confinement: `workspace.rs` resolves every read against the *current* root, so
+ * another root's sessions cannot be read without either crossing that boundary
+ * or a narrow Rust command that lists them by recents index. Neither is built,
+ * and `docs/adr/0001-multi-root-confinement.md` is why the first will not be.
  */
 export function buildGroups(options: {
 	readonly workspace: WorkspaceSelection | undefined;
@@ -125,6 +132,8 @@ export function buildGroups(options: {
 	readonly liveStatus: SessionStatus;
 	/** Something happened while you were not looking. Not a status — see `Session`. */
 	readonly liveUnread?: boolean;
+	/** This workspace's stored conversations, newest first. */
+	readonly stored: readonly StoredSession[];
 }): readonly WorkspaceGroup[] {
 	const { workspace } = options;
 	if (!workspace) {
@@ -135,7 +144,6 @@ export function buildGroups(options: {
 			id: workspace.path || workspace.label,
 			label: workspace.label,
 			branch: options.branch,
-			fixture: false,
 			sessions: [
 				{
 					id: LIVE_SESSION_ID,
@@ -144,7 +152,13 @@ export function buildGroups(options: {
 					unread: options.liveUnread,
 					live: true,
 				},
-				...FIXTURE_SESSIONS,
+				/*
+				 * The active one is dropped rather than deduplicated: it is already
+				 * the row above, drawn from live state, and live state is the only
+				 * place its status and unread flag are true. Reading it back off
+				 * disk would show the same conversation as `done` while it runs.
+				 */
+				...options.stored.filter((entry) => !entry.active).map(storedRow),
 			],
 		},
 		/*
@@ -159,13 +173,11 @@ export function buildGroups(options: {
 						{
 							id: `recent:${recent.path}`,
 							label: recent.label,
-							fixture: false,
 							switchIndex: index,
 							sessions: [],
 						},
 					]
 		),
-		FIXTURE_GROUP,
 	];
 }
 

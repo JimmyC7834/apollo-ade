@@ -166,6 +166,26 @@ interface SessionStore {
 	readonly own: Promise<Session>;
 	/** A session of a subagent's own, recorded as belonging to `own`. */
 	child(): Promise<Session>;
+	/** Every stored conversation in this workspace, newest first. */
+	list(): Promise<readonly StoredSession[]>;
+}
+
+/**
+ * One stored conversation, at the width the navigator draws it.
+ *
+ * Metadata and a name, never entries: this is what a *list* needs, and reading
+ * a transcript to show a row is how a session list becomes slower than the
+ * conversation it lists.
+ */
+export interface StoredSession {
+	/** The file's path under the sessions root. Stable, and unique per session. */
+	readonly id: string;
+	readonly name: string;
+	readonly startedAt: string;
+	/** True for the one this window is appending to right now. */
+	readonly active: boolean;
+	/** No user message in it — started and abandoned, rather than had. */
+	readonly empty: boolean;
 }
 
 let sessionOnce: Promise<Session<JsonlSessionMetadata>> | undefined;
@@ -189,6 +209,7 @@ function diskSessions(env: ExecutionEnv): SessionStore {
 	const own = (sessionOnce ??= openSession(env, repo));
 	return {
 		own,
+		list: () => listStored(repo, own),
 		/*
 		 * **Both fields, and they are not the same claim.** `parentSessionPath`
 		 * because it is true and because the deferred child chat view needs the
@@ -206,6 +227,118 @@ function diskSessions(env: ExecutionEnv): SessionStore {
 			});
 		},
 	};
+}
+
+/**
+ * How many stored sessions the navigator is told about.
+ *
+ * A cap rather than a page, because the work per row is a file read: naming a
+ * session means opening it and finding its first user message, and an unbounded
+ * list would make opening a long-lived workspace cost one parse per conversation
+ * ever had in it. Twenty is the recent ones, which is what a switcher is for.
+ */
+const MAX_LISTED = 20;
+
+/**
+ * How far into a session to look for the message that names it.
+ *
+ * The first user message is near the front but not at it — a session opens with
+ * tool, model and thinking-level entries, and the sample in this repo had ten
+ * before the first prompt. Sixty is generous for that and still bounded, so a
+ * session that somehow contains no user message costs sixty entries rather than
+ * its whole transcript.
+ */
+const NAME_WINDOW = 60;
+
+/**
+ * What to call a stored session.
+ *
+ * A name the user set wins. Failing that it is the first thing they said, which
+ * is the only part of a conversation that is naturally its title — the same rule
+ * the live session's own name follows.
+ *
+ * Every failure below lands on the same answer rather than propagating: a
+ * corrupt file must cost you that row's *name*, not the navigator.
+ */
+async function nameStored(
+	repo: JsonlSessionRepo,
+	metadata: JsonlSessionMetadata
+): Promise<{ name: string; empty: boolean }> {
+	const untitled = { name: 'Untitled session', empty: true };
+	try {
+		const session = await repo.open(metadata);
+		const named = await session.getSessionName();
+		const entries = await session.getEntries({ limit: NAME_WINDOW });
+		/*
+		 * `content` is checked, not assumed. `AgentMessage` is a union and one of
+		 * its members — pi's bash-execution message — carries no content at all,
+		 * so a session whose first user entry is one of those has no title in it
+		 * and says so rather than failing to compile around it.
+		 */
+		const first = entries.find(
+			(entry) => entry.type === 'message' && entry.message.role === 'user' && 'content' in entry.message
+		);
+		if (named) {
+			return { name: named, empty: first === undefined };
+		}
+		if (first === undefined || first.type !== 'message' || !('content' in first.message)) {
+			return untitled;
+		}
+		return { name: summarise(contentText(first.message.content)), empty: false };
+	} catch {
+		return untitled;
+	}
+}
+
+/** A prompt, at row width: one line, and short enough not to widen anything. */
+function summarise(text: string): string {
+	const line = text.trim().split('\n')[0]?.trim() ?? '';
+	if (line === '') {
+		return 'Untitled session';
+	}
+	return line.length > 60 ? `${line.slice(0, 59)}…` : line;
+}
+
+/**
+ * The workspace's stored conversations, newest first.
+ *
+ * **Children are excluded, for the reason `openSession` excludes them.** A
+ * subagent's session is a sub-task's record, not a conversation the user had,
+ * and listing them would bury the four turns someone remembers under forty they
+ * never saw.
+ */
+async function listStored(
+	repo: JsonlSessionRepo,
+	own: Promise<Session<JsonlSessionMetadata>>
+): Promise<readonly StoredSession[]> {
+	/*
+	 * The active path is read first and separately: if it cannot be read the
+	 * list is still worth showing, it merely marks nothing as active — and the
+	 * live row is drawn from live state regardless, so nothing disappears.
+	 */
+	let active: string | undefined;
+	try {
+		active = (await (await own).getMetadata()).path;
+	} catch {
+		active = undefined;
+	}
+
+	const stored = (await repo.list({ cwd: '/' }))
+		.filter((entry) => !entry.metadata?.delegatedFrom)
+		.slice(0, MAX_LISTED);
+
+	return await Promise.all(
+		stored.map(async (metadata) => {
+			const { name, empty } = await nameStored(repo, metadata);
+			return {
+				id: metadata.path,
+				name,
+				startedAt: metadata.createdAt,
+				active: metadata.path === active,
+				empty,
+			};
+		})
+	);
 }
 
 /**
@@ -255,6 +388,13 @@ function memorySessions(): SessionStore {
 	return {
 		own: Promise.resolve(new Session(new InMemorySessionStorage())),
 		child: async () => new Session(new InMemorySessionStorage()),
+		/*
+		 * Empty, not fabricated. Browser mode has no disk, so it has no stored
+		 * conversations — and a fixture list here would be the parallel fiction
+		 * ticket 10 ruled out, in the one place the navigator would look most
+		 * convincing. The live session still shows; it is the only one there is.
+		 */
+		list: () => Promise.resolve([]),
 	};
 }
 
@@ -1196,7 +1336,7 @@ function createRunner(
 		return await enqueue(async () => restore(await sessions.own, sha));
 	}
 
-	return { start, skill, template, compact, undo };
+	return { start, skill, template, compact, undo, listSessions: () => sessions.list() };
 }
 
 export function createAgentProvider(): AgentProvider {
@@ -1257,6 +1397,8 @@ export function createAgentProvider(): AgentProvider {
 		// would fail on the missing `invoke` anyway. Passed through so the two
 		// providers stay the same shape.
 		undo: runner.undo,
+		// Empty here, for the reason `memorySessions` gives.
+		listSessions: runner.listSessions,
 	};
 }
 

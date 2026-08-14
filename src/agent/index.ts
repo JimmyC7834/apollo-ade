@@ -8,6 +8,7 @@
 // is what keeps a vocabulary which breaks in minor releases every couple of
 // days from reaching the UI.
 
+import type { StoredSession } from './provider';
 import type { UndoOutcome } from './undo';
 
 export type AgentEvent =
@@ -203,8 +204,20 @@ export interface AgentProvider {
 	 * appends to the session so the model's context stays true.
 	 */
 	undo(checkpoint: string): Promise<UndoOutcome>;
+	/**
+	 * The workspace's stored conversations, newest first, for the navigator.
+	 *
+	 * On the provider because the session store is: sessions live inside the
+	 * workspace root and are reached through the agent's own `ExecutionEnv`, so
+	 * nothing above this layer can read them and nothing needs to.
+	 *
+	 * Never rejects. A workspace with no sessions and a workspace whose sessions
+	 * could not be read are the same answer here — an empty list — because the
+	 * navigator is a convenience and must not be able to break the window.
+	 */
+	listSessions(): Promise<readonly StoredSession[]>;
 }
 
-export { createAgentProvider } from './provider';
+export { createAgentProvider, type StoredSession } from './provider';
 export { undoNote, type UndoOutcome } from './undo';
 export { loadProfileFiles, type ProfileLoad } from './profileFiles';
