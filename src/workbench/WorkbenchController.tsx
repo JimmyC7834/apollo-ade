@@ -267,16 +267,26 @@ export function WorkbenchController() {
 			if (!workspace) {
 				return;
 			}
-			setSelection(workspace);
-
 			/*
 			 * Profiles, now that there is a root to read the project file from.
 			 * Never fails: a missing file is the normal state and a malformed one
 			 * is reported here rather than costing anyone their editors. The
 			 * announcement is the only channel — a profile that silently did not
 			 * load looks exactly like a profile that did nothing.
+			 *
+			 * **Before `setSelection`, not after, and that ordering is load-bearing
+			 * now.** Everything keyed on `selection` runs once it is set — the
+			 * session list is, and the model a profile names is what decides which
+			 * sessions there are to list. This reads through Rust's root, which
+			 * `restoreWorkspace` has already set, so it never needed React's copy
+			 * of it; being second was incidental and is what left effects racing a
+			 * profile that had not arrived.
 			 */
 			const loaded = await loadProfileFiles();
+			if (cancelled) {
+				return;
+			}
+			setSelection(workspace);
 			if (loaded.problems.length > 0) {
 				// One announcement, not one per problem: a live region only
 				// reacts to the latest mutation, so announcing in a loop would

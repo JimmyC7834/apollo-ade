@@ -202,7 +202,32 @@ still fine there.
 
 ## Open defects
 
-### A profile's model never reaches the provider, and the composer bar says it did
+### ~~A profile's model never reaches the provider~~ — fixed 2026-08-13
+
+**Fixed the same day it was found.** The branch in `createAgentProvider` is now
+`isTauri()` alone: native always gets the real environment, real disk sessions
+and `modelFollowsProfile`, so the model becomes the late-bound part and the
+`onProfileChange` handler that has called `harness.setModel` since profiles could
+name a second model does the rest. `loadProfileFiles()` also moved *above*
+`setSelection` in the controller's start-up, so effects keyed on the root cannot
+race a profile that has not arrived.
+
+Deferring the whole provider until profiles loaded was the obvious repair and is
+wrong: `createRunner` calls `setCapabilities`, and `profile.ts` records that
+until it does, a profile naming a tool refuses to activate — a window that is
+unobservable *only* because the runner is built first.
+
+**Verified in the native window with no `VITE_AGENT_MODEL` set**, which is the
+condition that produced the bug: a real model answered, and the navigator listed
+the workspace's stored session — proof the disk-backed store is in use, since the
+canned path holds its sessions in memory. A root with no profile file (`colorle`)
+refuses the turn with "No model is configured…" rather than falling back to the
+fixture. Browser mode still gets the canned agent; **an ungated version of that
+refusal broke it, and the regression was caught by running it** — the guard is
+gated on `modelFollowsProfile`, which is exactly "the profile is where the model
+comes from".
+
+The record of what it was follows, because the shape of it is worth keeping.
 
 **Found 2026-08-13, while verifying the session list.** With `ade.profiles.json`
 naming `deepseek-chat` and no `.env` present, the native window ran the **canned**
@@ -229,14 +254,14 @@ So at the moment the provider is chosen, the only model available is
 late. Setting `VITE_AGENT_MODEL` masks it completely, which is why every earlier
 native verification in this repo passed: they all ran with the env var set.
 
-**Not fixed here, because the fix is a design question rather than a line.**
-Rebuilding the provider once profiles arrive means rebuilding it *mid-session* —
-what happens to `sessionOnce`, to a turn already in flight, and to the transcript
-already on screen. The alternatives are to await profiles before the first render
-or to make the provider late-bound in its model. Neither is a one-liner and
-choosing between them is not a side effect of another slice.
+Three repairs were on the table: rebuild the provider once profiles arrive, await
+profiles before the first render, or make the provider late-bound in its model.
+**The third was taken**, because the model was the only part that ever depended
+on the profile — the environment depends on `isTauri()`, which is synchronous —
+and because the machinery for changing it mid-session was already built and
+already used.
 
-**Workaround until then:** launch with the model in the environment.
+**The workaround, no longer needed:**
 
 ```bash
 VITE_AGENT_MODEL=deepseek-chat npm run tauri dev

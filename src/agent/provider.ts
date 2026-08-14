@@ -1025,6 +1025,46 @@ function createRunner(
 		run: (harness: AgentHarness<ToolContext>) => Promise<unknown>,
 		onEvent: (event: AgentEvent) => void
 	) {
+		/*
+		 * No model, no turn.
+		 *
+		 * Checked here rather than at construction, because at construction there
+		 * is nothing to check: `createAgentProvider` runs during render and the
+		 * profile naming the model is read on the effect path afterwards. By the
+		 * time anybody presses Enter it has long since arrived, so this only fires
+		 * when a model really is configured nowhere — no profile file, no global
+		 * one, no `VITE_AGENT_MODEL`.
+		 *
+		 * It says what to do instead of failing at the network. `modelFor` builds
+		 * a `Model` out of whatever it is handed, so an empty id reaches the
+		 * provider host as an empty model name and comes back as somebody's 404.
+		 *
+		 * **`modelFollowsProfile` gates it, and leaving that off was a regression
+		 * caught by running browser mode.** There the model is the canned script's
+		 * own and the profile names none, so an ungated check refused every turn
+		 * in the browser — replacing a working fixture with a message telling the
+		 * user to configure something the fixture does not use. The flag already
+		 * means exactly "the profile is where the model comes from", which is the
+		 * only condition under which the profile lacking one is a problem.
+		 */
+		if (modelFollowsProfile && !activeProfile().model.id) {
+			onEvent({
+				kind: 'error',
+				message:
+					'No model is configured. Name one in a profile — the profile button ' +
+					'below the composer — or start the app with VITE_AGENT_MODEL set.',
+				code: 'no_model',
+			});
+			onEvent({ kind: 'complete' });
+			return {
+				cancel: () => undefined,
+				steer: () => undefined,
+				follow: () => undefined,
+				resolveApproval: () => undefined,
+				answerQuestion: () => undefined,
+			};
+		}
+
 		// Read at turn start, not at construction: switching to `ask` has to
 		// apply to the next turn rather than to the next window.
 		gate.begin(activeProfile().gatePolicy, onEvent);
@@ -1339,25 +1379,53 @@ function createRunner(
 	return { start, skill, template, compact, undo, listSessions: () => sessions.list() };
 }
 
+/**
+ * Which agent this window gets.
+ *
+ * **The branch is `isTauri()` and nothing else, and that is the fix for a real
+ * bug.** It used to be `native && activeProfile().model.id`, on the premise —
+ * stated in the comment that was here — that a model could only come from an env
+ * var, which is available synchronously. That premise expired when profiles
+ * became files: `ade.profiles.json` names a model, `loadProfileFiles()` reads it
+ * on the *effect* path, and this function runs during `WorkbenchController`'s
+ * **render**. A project profile was therefore always too late, so a native
+ * window with a perfectly good profile ran the canned fixture — answering
+ * "Browser mode. Run `npm run tauri dev`" inside a real Tauri window — while the
+ * composer bar, which subscribes to the store, displayed the model it was not
+ * using. `VITE_AGENT_MODEL` masked it completely, which is why every native
+ * verification in this repo had passed.
+ *
+ * Deferring construction until profiles load was the obvious repair and is the
+ * wrong one: `createRunner` calls `setCapabilities`, and `profile.ts` notes that
+ * until it does, a profile naming a tool refuses to activate. That window is
+ * unobservable *only* because the runner is built first. So the runner stays
+ * eager and the **model** becomes the late-bound part — which needs no new
+ * machinery, because `onProfileChange` already calls `harness.setModel` and has
+ * since profiles could name a second model.
+ *
+ * A native window with no model configured anywhere no longer falls back to the
+ * fixture. It gets the real environment and refuses turns until a model is
+ * named — see the guard in `begin`. The fixture is browser mode's, and it says
+ * so in every one of its replies.
+ */
 export function createAgentProvider(): AgentProvider {
-	const native = isTauri();
-	// The active profile names the model. An empty id means nobody has named one
-	// — there is still no picker and no profile file, so it comes from an env var
-	// — and that falls to the canned provider exactly as a missing env var did.
-	const choice = native && activeProfile().model.id ? activeProfile().model : undefined;
-
-	if (choice) {
+	if (isTauri()) {
 		// Diverts provider hosts to Rust for every adapter, including the Google
 		// ones that refuse an injected `fetch`.
 		installRustFetch();
 		const env = createTauriEnv();
-		return createRunner(env, diskSessions(env), allModels(), modelFor(choice), true);
+		/*
+		 * `activeProfile().model` may still be the empty built-in here, and that
+		 * is expected rather than tolerated: `modelFollowsProfile` is `true`, so
+		 * the moment `loadProfileFiles` installs the real one the harness is told.
+		 */
+		return createRunner(env, diskSessions(env), allModels(), modelFor(activeProfile().model), true);
 	}
 
-	// No model configured, or no native shell: the canned provider. It is the
-	// same harness and the same tool, so a bug in the mapping shows up here too.
-	// The session stays in memory here — browser mode has no disk to persist to,
-	// and inventing one would be the parallel fiction ticket 10 ruled out.
+	// Browser mode: the canned provider. It is the same harness and the same
+	// tool, so a bug in the mapping shows up here too. The session stays in
+	// memory — there is no disk to persist to, and inventing one would be the
+	// parallel fiction ticket 10 ruled out.
 	const canned = cannedProvider();
 	/*
 	 * `FIXTURE_PROFILES` — browser mode's one addition to the built-ins — is

@@ -4377,3 +4377,51 @@ removed afterwards: the row carried that session's real first message, its marke
 read `done`, and clicking it announced that reopening is not built. A defect
 found on the way — the composer bar naming a model the provider never received —
 is in `OPEN-ISSUES.md` rather than fixed here.
+
+## The profile named a model the agent never received
+
+Found while verifying the session list, fixed the same day. The native window
+was running the canned fixture provider — answering "Browser mode. Run
+`npm run tauri dev`" inside a real Tauri window — while the composer bar
+displayed `deepseek-chat · medium · 128k`. The UI named a model the agent could
+not use.
+
+The branch was `native && activeProfile().model.id`, written when a model could
+only come from `VITE_AGENT_MODEL`, which is available synchronously. That
+premise expired when profiles became files. `createAgentProvider` runs in a
+`useMemo` during render; `loadProfileFiles` runs on the effect path, deliberately,
+because installing profiles notifies `ComposerBar` and updating one component
+while rendering another is a React warning. So a project profile was always too
+late — and setting the env var masked it completely, which is why every native
+verification in this repo had passed.
+
+**The obvious repair is the wrong one.** Deferring the provider until profiles
+load breaks a different invariant: `createRunner` calls `setCapabilities`, and
+`profile.ts` says in its own comment that until it does, a profile naming a tool
+refuses to activate — a window that is unobservable *only* because the runner is
+built first. Building it late would make that window real and silent.
+
+So the runner stayed eager and the model became the late-bound part. The branch
+is now `isTauri()` alone: native gets the real environment, real disk sessions
+and `modelFollowsProfile`, and `onProfileChange` — which has called
+`harness.setModel` since a profile file could name a second model — applies the
+model when it arrives. No new machinery. The environment never depended on the
+profile in the first place; only the model did.
+
+Two things came with it. `loadProfileFiles()` moved above `setSelection` in
+start-up, so effects keyed on the root cannot race a profile that has not
+arrived. And a native window with no model configured anywhere now refuses the
+turn and says where to name one, instead of falling back to a fixture whose
+replies tell you to run the command you are already running.
+
+**A regression, caught by running browser mode rather than by reasoning about
+it.** That refusal was ungated at first, so it fired on the canned path too,
+where the model is the script's own and the profile names none — every browser
+turn answered "No model is configured", telling the user to configure something
+the fixture does not use. It is gated on `modelFollowsProfile` now, which already
+means "the profile is where the model comes from".
+
+Verified three ways: native with no env var (a real model answered, and the
+navigator listed the workspace's stored session, which the in-memory store could
+not have produced); a root with no profile file (refused, clearly); and browser
+mode (canned agent, unchanged).
