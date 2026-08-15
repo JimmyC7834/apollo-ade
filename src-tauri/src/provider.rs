@@ -28,6 +28,20 @@ struct Credential {
     /// Anthropic and Google want the bare key; OpenAI-shaped APIs want a
     /// `Bearer` prefix. Getting this wrong reads as an invalid key.
     bearer: bool,
+    /// **The only host this key may be sent to.**
+    ///
+    /// A field on the credential rather than a table beside it, so a provider
+    /// cannot be added without naming where its key travels — the same argument
+    /// `CREDENTIAL_VARS` makes about `env_var`, and for the same reason: the
+    /// wrong direction for that mistake to fail is silently.
+    ///
+    /// `src/agent/rustFetch.ts` has the same three hosts, and the duplication is
+    /// deliberate in the way `may_write` and `agent_may_write` are. That map is
+    /// *routing* — which requests the renderer diverts to Rust at all. This is
+    /// the floor: the renderer picks both the provider and the URL, so a
+    /// renderer that has been talked into naming another host still cannot make
+    /// this process attach a key to it.
+    host: &'static str,
 }
 
 /// Every environment variable that holds a key, for `exec` to strip.
@@ -39,25 +53,60 @@ struct Credential {
 pub const CREDENTIAL_VARS: [&str; 3] =
     ["ANTHROPIC_API_KEY", "GEMINI_API_KEY", "DEEPSEEK_API_KEY"];
 
+/// The credential for a provider, or `None` when there is no such provider.
+///
+/// **`None` rather than a catch-all**, which is what the last arm used to be:
+/// every unrecognised id fell through to the DeepSeek key. Combined with a URL
+/// the renderer also chooses, that made `provider_stream` a way to attach a real
+/// credential to an arbitrary request — the exact shape of hole `agent_write_file`
+/// exists to close on the file surface. The three ids here are `ProviderId` in
+/// `src/agent/profile.ts`; a fourth is a change in both places, deliberately.
 fn credential_for(provider: &str) -> Option<Credential> {
     match provider {
         "anthropic" => Some(Credential {
             header: "x-api-key",
             env_var: "ANTHROPIC_API_KEY",
             bearer: false,
+            host: "api.anthropic.com",
         }),
         "google" => Some(Credential {
             header: "x-goog-api-key",
             env_var: "GEMINI_API_KEY",
             bearer: false,
+            host: "generativelanguage.googleapis.com",
         }),
-        // Every OpenAI-compatible provider, DeepSeek included.
-        _ => Some(Credential {
+        // OpenAI-shaped, which for this app means DeepSeek. Named rather than
+        // matched by default: "every OpenAI-compatible provider" was a promise
+        // this app never made — nothing constructs a fourth provider id — and
+        // keeping it as a fallback meant a typo in a profile silently sent the
+        // DeepSeek key somewhere.
+        "deepseek" => Some(Credential {
             header: "authorization",
             env_var: "DEEPSEEK_API_KEY",
             bearer: true,
+            host: "api.deepseek.com",
         }),
+        _ => None,
     }
+}
+
+/// The request URL, if this credential may be sent to it.
+///
+/// Two conditions, and the scheme is not a formality: without it `http://` to
+/// the right host would put the key on the wire in clear.
+///
+/// Split out from `stream_inner` so it can be asserted below — the rest of that
+/// function needs a live `Channel` and a network, and a boundary that can only
+/// be tested by crossing it is a boundary nobody tests.
+fn permitted(credential: &Credential, url: &str) -> Result<reqwest::Url, String> {
+    let parsed = reqwest::Url::parse(url).map_err(|_| format!("not a URL: {url}"))?;
+    if parsed.scheme() != "https" || parsed.host_str() != Some(credential.host) {
+        return Err(format!(
+            "refusing to send the {} credential to {url} — it belongs to https://{}",
+            credential.env_var, credential.host
+        ));
+    }
+    Ok(parsed)
 }
 
 /// Where the key comes from. Ticket 06 settled: environment variable for the
@@ -128,6 +177,9 @@ async fn stream_inner(
 ) -> Result<(), String> {
     let credential = credential_for(&request.provider)
         .ok_or_else(|| format!("no credential configured for provider `{}`", request.provider))?;
+    // Before the key is even read: the renderer names the provider *and* the
+    // URL, and only one of those was ever checked against the other.
+    let url = permitted(&credential, &request.url)?;
     let key = resolve_api_key(credential.env_var).ok_or_else(|| {
         format!("{} is not set in the app's environment", credential.env_var)
     })?;
@@ -136,7 +188,7 @@ async fn stream_inner(
         .map_err(|_| format!("unsupported HTTP method `{}`", request.method))?;
 
     let client = reqwest::Client::new();
-    let mut builder = client.request(method, &request.url).header(
+    let mut builder = client.request(method, url).header(
         credential.header,
         if credential.bearer { format!("Bearer {key}") } else { key },
     );
@@ -185,4 +237,68 @@ async fn stream_inner(
     }
 
     on_event.send(ProviderEvent::End).map_err(|error| error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{credential_for, permitted, CREDENTIAL_VARS};
+
+    /// Every provider this app can name has a credential, and nothing else does.
+    ///
+    /// The second half is the one that matters. The last arm used to be `_`, so
+    /// any string at all resolved to the DeepSeek key — and the renderer supplies
+    /// that string.
+    #[test]
+    fn only_the_three_providers_have_a_credential() {
+        for id in ["deepseek", "anthropic", "google"] {
+            assert!(credential_for(id).is_some(), "{id} should have one");
+        }
+        for id in ["", "openai", "deepseek ", "DeepSeek", "../deepseek", "evil"] {
+            assert!(credential_for(id).is_none(), "{id:?} should not have one");
+        }
+    }
+
+    /// The list `exec.rs` strips is the `env_var` of every arm, and stays that way.
+    #[test]
+    fn every_credential_is_stripped_from_children() {
+        for id in ["deepseek", "anthropic", "google"] {
+            let credential = credential_for(id).unwrap();
+            assert!(
+                CREDENTIAL_VARS.contains(&credential.env_var),
+                "{} is not in CREDENTIAL_VARS, so `agent_exec` would leak it",
+                credential.env_var
+            );
+        }
+    }
+
+    /// A key goes to its own provider's host over TLS, and nowhere else.
+    #[test]
+    fn a_key_only_travels_to_its_own_host() {
+        let deepseek = credential_for("deepseek").unwrap();
+        let anthropic = credential_for("anthropic").unwrap();
+
+        assert!(permitted(&deepseek, "https://api.deepseek.com/chat/completions").is_ok());
+        assert!(permitted(&anthropic, "https://api.anthropic.com/v1/messages").is_ok());
+
+        for refused in [
+            // The plain exfiltration: a host of the renderer's choosing.
+            "https://evil.example/collect",
+            // The other provider's host — a key is not merely "for an API".
+            "https://api.anthropic.com/v1/messages",
+            // Clear text to the right host still puts the key on the wire.
+            "http://api.deepseek.com/chat/completions",
+            // Host-matching that is a substring test rather than a host test.
+            "https://api.deepseek.com.evil.example/x",
+            "https://evil.example/?api.deepseek.com",
+            // Credentials in the authority, which some parsers read as the host.
+            "https://api.deepseek.com@evil.example/x",
+            "not a url at all",
+            "",
+        ] {
+            assert!(
+                permitted(&deepseek, refused).is_err(),
+                "should have refused {refused:?}"
+            );
+        }
+    }
 }
