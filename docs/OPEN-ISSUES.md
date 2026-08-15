@@ -356,21 +356,41 @@ nothing" and "rtk is on and rewrote this" are exactly the two states this file
 already warns are hard to tell apart, and under `auto` the transcript made them
 look identical.
 
-### Two findings from the codebase review, left open on purpose
+### `terminal_kill` deadlocks the whole IPC — found 2026-08-15, not fixed
 
-The 2026-08-15 review (see the dev log) closed four things. These two were not
-closed, because neither is a defect I can settle alone.
+**This is what has been making the window stop responding, and it is not the
+debugging port.** This file already warns that a half-open debugger connection
+stalls WebView2's UI thread; that warning is sound but it is not what was
+happening here. Three separate probe runs left the app at `Responding: False`,
+and every one of them had called `terminal_kill`.
 
-**The integrated terminal is the one child that inherits the credentials.**
-`exec.rs`, `lsp.rs` and `rtk.rs` all strip `CREDENTIAL_VARS` before spawning, and
-each says the rule is *about children, not about which child*. `terminal.rs`
-does not. The honest case for leaving it: the keys are set with `setx`, so the
-user's own shell has them anyway and stripping buys nothing real — the terminal
-is the user's, not the agent's. The case against: `exec.rs`'s own comment records
-that `echo $DEEPSEEK_API_KEY` printing into the transcript is exactly what
-motivated the strip, and the PTY prints into the renderer too. Two lines either
-way. **It should be a decision rather than an omission, and right now it is an
-omission.**
+Measured: `terminal_create`, `terminal_resize` and `terminal_write` all return
+normally, and the *first* `terminal_kill` never returns. It is a **synchronous**
+command, so it holds Tauri's dispatcher, and with the dispatcher held every later
+`invoke` from the page hangs — which looks exactly like the app having died.
+
+The kill itself is not the blocking part. `WinChild::kill` is
+`self.do_kill().ok(); Ok(())` — `TerminateProcess` and no wait. What blocks is
+almost certainly the *drop* at the end of the command: `Session` owns
+`master: Box<dyn MasterPty + Send>`, and closing a ConPTY master waits for its
+output to be drained while our own reader thread is parked in a blocking `read`
+on that same PTY. `exec.rs` hit the sibling of this and wrote the lesson down —
+*"killing the shell does not close its stdout… waiting for EOF is waiting for
+the wrong event"* — and the PTY path never got the same treatment.
+
+Not fixed here because it is not what this session was asked for, and because
+the fix is a real design question rather than a line: the reader thread has to be
+told to stop before the master is dropped, and `terminal_kill` should almost
+certainly be `async` regardless, so that even a slow close cannot take the IPC
+with it.
+
+Reproduce with `terminal_create` → `terminal_write` → `terminal_kill` over the
+debugging port; the second command after the kill never answers.
+
+### One finding from the review, left open on purpose
+
+The 2026-08-15 review (see the dev log) closed five things. This one was not
+closed.
 
 **`provider.ts` and `AgentChat.tsx` are collecting unrelated reasons to change.**
 1,433 and 1,246 lines. The first holds session storage, model construction,

@@ -4584,3 +4584,39 @@ One incidental correction: the directory named `----` under `.ade/sessions` was
 recorded as rtk mangling `ls` output. It is real, and it is pi's — the
 `JsonlSessionRepo` namespaces sessions by cwd, and `cwd: "/"` sanitises to that.
 The session files are inside it.
+
+## 2026-08-15 — the terminal stops inheriting the keys, and why that was hard to prove
+
+The review left this one open as a decision rather than a defect, and the
+decision came back: strip them. `terminal.rs` was the last child that inherited
+`CREDENTIAL_VARS`, and the argument that settled it is that this shell prints
+into the renderer — `exec.rs` fixed exactly that surface when `echo
+$DEEPSEEK_API_KEY` reached the transcript, and a PTY pane is the same surface
+with a different frame. Targeted, not `env_clear`; `PATH` survives.
+
+Two tests, because there are two ways it could be wrong: the strip not working,
+and the strip not being called. One runs it against a builder that certainly had
+the keys; the other asserts the builder `terminal_create` actually spawns has
+none, with `PATH` as the control. The second says out loud when the test process
+has no credential set, so a green run on a bare machine cannot be misread — and
+on this machine it stayed quiet, which means the keys really were there to lose.
+
+**What this cost, and what it found.** The obvious verification — open a
+terminal over the debugging port, ask the shell for the *lengths* of the
+variables, read them back — never completed, three times, and each time left the
+app at `Responding: False`. That looks precisely like the half-open-debugger
+stall this repo already documents, and it is not: every one of those runs had
+called `terminal_kill`, and `terminal_kill` never returns. `create`, `resize` and
+`write` all answer; the first `kill` hangs, and because it is a synchronous
+command it holds Tauri's dispatcher, so every later `invoke` hangs behind it.
+
+`WinChild::kill` is `TerminateProcess` with no wait, so the block is the drop at
+the end of the command — `Session` owns the ConPTY master, and closing one waits
+for output to drain while our own reader thread sits in a blocking `read` on it.
+That is the sibling of the bug `exec.rs` already solved and wrote down: *waiting
+for EOF is waiting for the wrong event.* Recorded in OPEN-ISSUES, not fixed —
+the reader has to be signalled before the master drops, and the command should
+be `async` so a slow close can never take the IPC with it either way.
+
+So the credential strip is carried by the Rust tests rather than by the window,
+and the entry above says so rather than implying a run that did not happen.
