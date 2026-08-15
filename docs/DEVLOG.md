@@ -4494,3 +4494,27 @@ Verified where it broke. With the corrupt file the only session in the root, a
 turn answers normally on a fresh one. And a turn in `workspace-b` after a switch
 grew workspace-b's session from 2,338 to 4,382 bytes while this repo's two files
 stayed byte-identical — the exact thing that used to go wrong, not going wrong.
+
+## 2026-08-15 — a profile file nobody answered now picks the profile
+
+Writing `ade.profiles.json` and finding the window on a built-in that names no
+model was the last of the three. A file defining only `b-only` left the session
+on built-in `auto`; `auto` has no model, so every turn refused with "No model is
+configured" while the file sat there looking unread. It had been read. Its
+profile was simply not the active one, and nothing said so.
+
+`installProfiles` re-resolved the active profile **by name**, which is right
+after someone has switched and wrong before anyone has. So `chosen` now records
+whether `active` is an answer or a default: false until `activateProfile`
+succeeds, and while it is false the file's first profile wins. Switching to
+`plan` and then reloading still leaves you on `plan`, because that was an
+answer — the guard is the whole design, not a detail of it.
+
+The check for this has to sit above the first `activateProfile` in the file, and
+says so: "nobody has chosen" is module state with no reset, and one deliberate
+switch ends it for the rest of the run.
+
+Verified in the native window. `workspace-b`, whose only profile is `b-only`,
+comes up on `b-only` with `deepseek-chat · low` and answers a real turn; this
+repo still comes up on its own `auto` at `medium`. Both roots were reached by
+switching, which is now a reload — so each one is a genuine start-up.

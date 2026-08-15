@@ -55,10 +55,38 @@ const plan = builtinProfiles().find((profile) => profile.name === 'plan') as Pro
 	);
 }
 
+// A profile file nobody has answered yet decides which profile you are on.
+//
+// **This block must stay above the first `activateProfile`.** "Nobody has
+// chosen" is module state with no reset, and the whole point is that one
+// deliberate switch ends it — so the un-chosen case is only reachable here.
+{
+	assert.equal(activeProfile().name, 'auto', 'the default before any file is read');
+
+	// The reported failure: a file defining only `cheap` left the session on
+	// built-in `auto`, which names no model, so every turn refused while the
+	// file sat there looking unread.
+	installProfiles([{ name: 'cheap', gatePolicy: 'ask' }]);
+	assert.equal(activeProfile().name, 'cheap', 'the file decides');
+	assert.equal(activeProfile().gatePolicy, 'ask', 'and it is the file definition');
+
+	// The file's *first*, not its last, and not whichever the built-ins put first.
+	installProfiles([{ name: 'cheap' }, { name: 'thorough' }]);
+	assert.equal(activeProfile().name, 'cheap');
+
+	// A file with nothing usable in it names no profiles, so there is nothing to
+	// prefer — and `cheap` went with the file that defined it, since built-ins
+	// are the only base. The default is what is left, not a dangling name.
+	installProfiles([{ gatePolicy: 'ask' }]);
+	assert.equal(activeProfile().name, 'auto');
+
+	installProfiles([]);
+}
+
 // Switching, and refusing to. The previous profile survives a refusal — a
 // session left on nothing would be worse than a session left where it was.
 {
-	assert.equal(activeProfile().name, 'auto', 'the gate default is the first run');
+	assert.equal(activeProfile().name, 'auto', 'an empty file falls back to the built-in');
 
 	const seen: string[] = [];
 	const off = onProfileChange((profile) => seen.push(profile.name));

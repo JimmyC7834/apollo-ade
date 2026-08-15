@@ -256,6 +256,16 @@ export function builtinProfiles(): Profile[] {
 let profiles = builtinProfiles();
 let active: Profile = profiles[0];
 
+/**
+ * Whether `active` is a choice or a default.
+ *
+ * `false` until someone activates a profile deliberately, which is the one
+ * thing that tells a *default* built-in apart from a built-in the user asked
+ * for. `installProfiles` needs the distinction: it may prefer a file's own
+ * profile over an unchosen default, and must not do so over a choice.
+ */
+let chosen = false;
+
 const listeners = new Set<(profile: Profile) => void>();
 
 export function listProfiles(): readonly Profile[] {
@@ -401,14 +411,20 @@ function applyDefinition(base: Profile, raw: Record<string, unknown>, problems: 
  * 4's "project wins" without a second merge pass. Built-ins are the base, so a
  * file that names `plan` retunes it and a file that names `cheap` adds it.
  *
- * The active profile is re-resolved **by name** and its listeners fire, so a
- * reloaded definition of the profile you are already on takes effect rather than
- * waiting for a switch. If the file dropped that name, the session falls back to
- * the first profile rather than holding a profile no longer in the list.
+ * The active profile is re-resolved and its listeners fire, so a reloaded
+ * definition of the profile you are already on takes effect rather than waiting
+ * for a switch. Which profile that is depends on whether anyone has chosen one:
+ * before a deliberate switch the **file's first** profile wins, because a file
+ * you wrote and never answered is the closest thing to an answer there is;
+ * after one, resolution is **by name**, and a file that dropped that name falls
+ * back to the first profile rather than holding one no longer in the list.
  */
 export function installProfiles(definitions: readonly unknown[], problems: string[] = []): string[] {
 	const merged = new Map(builtinProfiles().map((profile) => [profile.name, profile]));
 	const fallback = merged.get('auto') as Profile;
+
+	// In file order, and only the ones that survived — see the preference below.
+	const named: string[] = [];
 
 	for (const definition of definitions) {
 		if (!isRecord(definition) || typeof definition.name !== 'string' || !definition.name) {
@@ -417,6 +433,7 @@ export function installProfiles(definitions: readonly unknown[], problems: strin
 		}
 		const base = merged.get(definition.name) ?? fallback;
 		merged.set(definition.name, applyDefinition(base, definition, problems));
+		named.push(definition.name);
 	}
 
 	profiles = [...merged.values()];
@@ -434,7 +451,23 @@ export function installProfiles(definitions: readonly unknown[], problems: strin
 	 * one whose references dangle. `auto` is the fallback because it is a
 	 * built-in and therefore cannot be the thing that broke.
 	 */
-	const candidate = profiles.find((profile) => profile.name === active.name) ?? profiles[0];
+	/*
+	 * **A profile file that nobody has answered yet decides which profile you
+	 * are on.** Writing one and then finding the window on a built-in that names
+	 * no model is the whole of the report this exists for: `ade.profiles.json`
+	 * defining only `cheap` used to leave the session on built-in `auto`, and
+	 * `auto` has no model, so every turn refused. Nothing said the file had been
+	 * read — it had, and its profile was simply not the active one.
+	 *
+	 * Guarded by `chosen`, which is the point: this is how a *default* is picked,
+	 * not a veto over a choice. Switching to `plan` and then reloading the file
+	 * leaves you on `plan`, because that was an answer.
+	 */
+	const preferred = chosen
+		? undefined
+		: named.map((name) => merged.get(name)).find((profile) => profile !== undefined);
+	const candidate =
+		preferred ?? profiles.find((profile) => profile.name === active.name) ?? profiles[0];
 	const missing = danglingReferences(candidate);
 	if (missing.length > 0) {
 		problems.push(
@@ -488,6 +521,8 @@ export function activateProfile(name: string): Activation {
 		};
 	}
 	active = profile;
+	// An answer, so a later `installProfiles` stops choosing for you.
+	chosen = true;
 	for (const listener of listeners) {
 		listener(profile);
 	}
