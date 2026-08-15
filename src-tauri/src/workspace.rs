@@ -83,6 +83,24 @@ pub(crate) fn canonical(path: &Path) -> std::io::Result<PathBuf> {
 /// anything that is not a regular file. Symlinks are rejected because
 /// `symlink_metadata` is checked before following.
 pub(crate) fn resolve(root: &Path, id: &str) -> Result<PathBuf, String> {
+    resolve_within(root, id, Some(MAX_FILE_BYTES))
+}
+
+/// The same, with the size cap made a parameter.
+///
+/// Exists for `read_text_lines`, which is the one reader that must be allowed
+/// past 2 MiB — a session transcript grows without bound and refusing to read it
+/// back would lose the conversation. It used to make its own containment
+/// argument and made three quarters of it: the component scan and the symlink
+/// and regular-file checks, but **not** the canonicalised `starts_with`. So a
+/// symlinked *directory* on the way down was followed, where every other path
+/// command in this file refuses it.
+///
+/// Reachable only through ids the session repo builds, and an agent with a shell
+/// can read outside the root anyway (ticket 02), so this was a consistency hole
+/// rather than a live escape. It is closed by inheriting the argument instead of
+/// writing the missing quarter a second time — one containment rule, one place.
+fn resolve_within(root: &Path, id: &str, max_bytes: Option<u64>) -> Result<PathBuf, String> {
     let candidate = Path::new(id);
     if candidate
         .components()
@@ -99,7 +117,7 @@ pub(crate) fn resolve(root: &Path, id: &str) -> Result<PathBuf, String> {
     if !meta.is_file() {
         return Err("not a file".into());
     }
-    if meta.len() > MAX_FILE_BYTES {
+    if max_bytes.is_some_and(|cap| meta.len() > cap) {
         return Err("file is larger than 2 MiB".into());
     }
 
@@ -735,10 +753,14 @@ pub fn agent_list_dir(
 
 /// Read up to `max_lines` UTF-8 lines.
 ///
-/// Separate from `read_file` because that one goes through `resolve`, which
-/// refuses anything over 2 MiB — and the session transcript is exactly the file
-/// that will pass 2 MiB in a long conversation. Reading it back line by line
-/// also keeps a large session out of the renderer's memory in one lump.
+/// Separate from `read_file` because that one caps at 2 MiB — and the session
+/// transcript is exactly the file that will pass 2 MiB in a long conversation.
+/// Reading it back line by line also keeps a large session out of the renderer's
+/// memory in one lump.
+///
+/// **The cap is the only thing it relaxes.** `resolve_within` with no cap is the
+/// same containment argument `resolve` makes, canonicalisation included, which is
+/// the part this command used to be missing.
 #[tauri::command]
 pub fn read_text_lines(
     id: String,
@@ -748,15 +770,7 @@ pub fn read_text_lines(
     use std::io::{BufRead, BufReader};
 
     let root = root_of(&state)?;
-    let target = contained(&root, &id)?;
-
-    let meta = fs::symlink_metadata(&target).map_err(|_| "not found".to_string())?;
-    if meta.file_type().is_symlink() {
-        return Err("symlinks are not supported".into());
-    }
-    if !meta.is_file() {
-        return Err("not a file".into());
-    }
+    let target = resolve_within(&root, &id, None)?;
 
     let file = fs::File::open(&target).map_err(|e| e.to_string())?;
     let limit = max_lines.unwrap_or(usize::MAX);
@@ -1268,6 +1282,50 @@ mod tests {
 
         let _ = fs::remove_dir_all(&dir);
         let _ = fs::remove_file(dir.join("../ade-outside.txt"));
+    }
+
+    /// Lifting the size cap must not lift anything else.
+    ///
+    /// `read_text_lines` is the one reader allowed past 2 MiB, and it used to buy
+    /// that by making its own containment argument — which omitted the
+    /// canonicalised `starts_with`. This asserts the two halves separately: the
+    /// cap is the only difference, and every escape `resolve` refuses is still
+    /// refused with the cap off.
+    #[test]
+    fn lifting_the_cap_keeps_the_confinement() {
+        let dir = std::env::temp_dir().join("ade-uncapped-test");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("sub")).unwrap();
+        fs::write(dir.join("sub/small.txt"), "hi").unwrap();
+        // One byte over, so `resolve` refuses it and the uncapped form does not.
+        fs::write(dir.join("big.txt"), vec![b'x'; (MAX_FILE_BYTES + 1) as usize]).unwrap();
+        fs::write(dir.join("../ade-uncapped-outside.txt"), "nope").unwrap();
+        let root = canonical(&dir).unwrap();
+
+        assert!(resolve(&root, "big.txt").is_err(), "the cap still applies to `resolve`");
+        assert!(
+            resolve_within(&root, "big.txt", None).is_ok(),
+            "and a session transcript can still be read back"
+        );
+        assert!(resolve_within(&root, "sub/small.txt", None).is_ok());
+
+        for escape in [
+            "../ade-uncapped-outside.txt",
+            "sub/../../ade-uncapped-outside.txt",
+            "/etc/passwd",
+            r"..\ade-uncapped-outside.txt",
+        ] {
+            assert!(
+                resolve_within(&root, escape, None).is_err(),
+                "uncapped took {escape:?}"
+            );
+        }
+        // The two non-file cases the old body did check, so they cannot regress.
+        assert!(resolve_within(&root, "sub", None).is_err(), "a directory is not a file");
+        assert!(resolve_within(&root, "sub/gone.txt", None).is_err());
+
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_file(dir.join("../ade-uncapped-outside.txt"));
     }
 
     /// Ticket 29's criterion: rename and delete refuse a path outside the root.
