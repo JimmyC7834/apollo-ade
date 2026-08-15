@@ -308,10 +308,14 @@ The entry doubling is unrelated and stands: every line in these files is written
 twice on two parallel branches, which is the development double-mount giving one
 session two writers. Harmless as far as anyone has seen, and not investigated.
 
-**Debris left by the bug**, none of it deleted: `colorle/.ade/` and
-`workspace-b/.ade/` hold partial copies of this repo's session, written there
-while the root was switched. This repo's own `2026-08-05…jsonl` keeps its two
-dangling parents and is now simply history the app declines to resume.
+**The debris is cleared**, backed up first and removed only where it held no
+conversation. `colorle/.ade/` is gone entirely — two session files with no
+message in either, plus the `.gitignore` we had written into someone else's
+repo — so that root is untouched again. `workspace-b` lost the fragment and kept
+its own session. Here, an empty orphan and the half of a workspace-b session
+that landed on this side went; what stayed is everything with messages in it,
+including `2026-08-05…jsonl`, which keeps its two dangling parents and is now
+simply history the app declines to resume.
 
 ### ~~The transcript shows the pre-rtk command under `auto`~~ — fixed 2026-08-15
 
