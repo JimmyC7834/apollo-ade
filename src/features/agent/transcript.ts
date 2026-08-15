@@ -282,6 +282,11 @@ export function applyEvent(turn: Turn, event: AgentEvent): Turn {
 					{ kind: 'tool', id: event.id, name: event.name, input: event.input, state: 'running' },
 				],
 			};
+		case 'tool_input':
+			return {
+				...turn,
+				parts: patchTool(turn, event.id, (part) => ({ ...part, input: event.input })),
+			};
 		case 'tool_update':
 			return {
 				...turn,

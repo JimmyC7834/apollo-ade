@@ -1108,11 +1108,27 @@ function createRunner(
 			 * list reads what will actually run. Ticket 11, amendment 6:
 			 * `resolve → rtk rewrites → deny list → gate → run → stripControl`.
 			 */
-			const offRtk = harness.on('tool_call', (event) =>
-				rewriteToolCall(event, activeProfile().rtk, (message) =>
+			// `Promise<undefined>`, not `void`, for the reason `rewriteToolCall`
+			// carries the same annotation: pi keeps the last non-undefined hook
+			// result, so anything returned here displaces the gate's decision.
+			const offRtk = harness.on('tool_call', async (event): Promise<undefined> => {
+				const before = event.input.command;
+				await rewriteToolCall(event, activeProfile().rtk, (message) =>
 					onEvent({ kind: 'error', message, code: 'rtk_unavailable' })
-				)
-			);
+				);
+				/*
+				 * The transcript row is already out and says what the *model* wrote:
+				 * pi emits `tool_execution_start` with `toolCall.arguments` before it
+				 * validates them or runs this hook, and it validates into a fresh
+				 * object, so the mutation above can never be seen from there. Under
+				 * `ask` the approval card is built later still and shows the truth,
+				 * which is why this only ever looked wrong under `auto` — the policy
+				 * the user actually runs.
+				 */
+				if (event.input.command !== before) {
+					onEvent({ kind: 'tool_input', id: event.toolCallId, input: { ...event.input } });
+				}
+			});
 			const offHook = harness.on('tool_call', (event) => gate.onToolCall(event));
 			/*
 			 * The extension point for the system prompt

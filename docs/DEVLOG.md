@@ -4425,3 +4425,38 @@ Verified three ways: native with no env var (a real model answered, and the
 navigator listed the workspace's stored session, which the in-memory store could
 not have produced); a root with no profile file (refused, clearly); and browser
 mode (canned agent, unchanged).
+
+## 2026-08-15 — the transcript stops lying about rtk, and a corrupt session turns up
+
+The bash chip under `auto` showed the command the *model* wrote while running
+the rtk-rewritten one. The recorded cause was a microtask race in
+`rewriteToolCall`; it was not. pi emits `tool_execution_start` with
+`toolCall.arguments` before it validates them or runs the `tool_call` hook, and
+it validates into a fresh object — so no mutation in the hook can ever reach the
+event that already went out, at any timing. The old diagnosis pointed at a fix
+that would not have worked.
+
+What does work is a correction after the fact: a `tool_input` event carrying the
+id and the new arguments, emitted only when `event.input.command` actually
+changed, patched into the existing part by `patchTool` so nothing is appended
+and an unmatched id is dropped. Fifteen event kinds now, and the hook grew an
+explicit `Promise<undefined>` for the same reason `rewriteToolCall` carries one:
+pi keeps the last non-undefined hook result, and anything returned there would
+displace the gate's decision.
+
+**Verifying it found a worse defect.** Every turn in this repo answered `Entry
+7e3c97b8 not found` and stopped — no model call, no tool. That id is named as a
+`parentId` by two lines written the day before and defined nowhere, in either
+session file. Switching to another workspace did not escape it, because the
+window opens one session at start-up and keeps it; and the Ade menu's New
+session is `disabled: 'one session in this build'`. So one bad file had no way
+out from inside the app. The file was renamed aside — kept, and copied to the
+session scratchpad — and turns worked immediately.
+
+Every entry in these files is written twice on two parallel branches, which is
+the development double-mount giving one session two writers. Two writers each
+holding their own head is the obvious suspect for a dangling parent and is not
+proven. Filed rather than chased.
+
+The chip was then measured where it lives: native window, `auto`, real model,
+rtk on `PATH`. It reads `{"command":"rtk git status"}`.

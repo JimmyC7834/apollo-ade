@@ -25,6 +25,15 @@ export type AgentEvent =
 			readonly name: string;
 			readonly input: unknown;
 	  }
+	/**
+	 * The arguments changed after `tool_start` reported them.
+	 *
+	 * pi emits `tool_execution_start` with the *model's* arguments and only then
+	 * validates them and runs the `tool_call` hook, so a rewrite there — rtk's, in
+	 * practice — can never reach the row that already went out. This corrects it.
+	 * Correlated by `id`, and silently dropped when no such row exists.
+	 */
+	| { readonly kind: 'tool_input'; readonly id: string; readonly input: unknown }
 	/** Progress for an in-flight tool. Correlated to `tool_start` by `id`. */
 	| { readonly kind: 'tool_update'; readonly id: string; readonly partial: string }
 	| {

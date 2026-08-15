@@ -267,7 +267,57 @@ already used.
 VITE_AGENT_MODEL=deepseek-chat npm run tauri dev
 ```
 
-### The transcript shows the pre-rtk command under `auto`, the rewritten one under `ask`
+### A corrupt session file bricks every turn in the window
+
+**Found 2026-08-15, while verifying the rtk chip fix below.** Every turn in this
+repo answered `Entry 7e3c97b8 not found` and nothing else — no model call, no
+tool, no way through. The id is real: two `active_tools_change` lines written
+`2026-08-14T02:29:11` name it as their `parentId`, and **no line anywhere
+defines it**, in either session file. Something wrote a parent pointer for an
+entry that was never persisted.
+
+Three things make it worse than one bad file:
+
+- **Switching workspace does not escape it.** The window opens one session at
+  start-up and keeps it; `workspace-b`, with its own root and its own sessions
+  directory, failed on the same id. That is the same gap as *sessions under
+  workspaces*, seen from the failure side.
+- **There is no new-session affordance.** The Ade menu's item is
+  `disabled: 'one session in this build'` (`WorkbenchController.tsx:1119`). With
+  the resumed session broken, the app has no in-product way back to a working
+  one.
+- **The message says nothing useful.** `Entry <id> not found` is pi's internal
+  vocabulary surfacing raw as the agent's reply.
+
+**Worked around, not fixed:** the file was renamed to `.jsonl.corrupt` — kept,
+not deleted, and a copy is in the session's scratchpad — after which turns work
+normally. What is unknown is *what wrote the dangling pointer*. Every entry in
+these files is written **twice**, on two parallel branches, which is React's
+development double-mount giving one session two writers; two writers each
+holding their own head pointer is the obvious suspect and is not yet proven.
+
+### ~~The transcript shows the pre-rtk command under `auto`~~ — fixed 2026-08-15
+
+The chip now reads the command that ran. `tool_input` (`src/agent/index.ts`) is
+a correction event carrying the tool call's id and its arguments after the
+rewrite; the rtk hook emits one when — and only when — `event.input.command`
+actually changed, and `applyEvent` patches the existing part through
+`patchTool`, so nothing is appended and an unmatched id is dropped like every
+other id-correlated event.
+
+**The recorded diagnosis was wrong, and the wrong half mattered.** This was not
+a microtask race in `rewriteToolCall`. pi emits `tool_execution_start` with
+`toolCall.arguments` **before** it validates them or runs the `tool_call` hook
+(`agent-loop.js:298-304` then `:404-405`), and it validates into a *fresh*
+object — so no mutation in the hook can ever be seen from the event that already
+went out, at any timing. A correction after the fact is the only repair short of
+patching pi.
+
+**Verified in the native window**, `auto`, real model, rtk on `PATH`: the chip
+reads `{"command":"rtk git status"}` where it used to read `{"command":"git
+status"}`.
+
+The record of what it was follows.
 
 Observed in the native window against a real model. Same prompt, same chain, two
 gate policies:
@@ -279,16 +329,11 @@ gate policies:
   and the transcript entry keeps that form afterwards.
 
 The gate is right either way, which is the load-bearing half: it screens what
-runs. The transcript is the one that lies, and only on the policy the user
-actually uses. The cause is timing rather than ordering — `rewriteToolCall`
-awaits `resolveRtk()`, so the mutation lands a microtask after the UI has
-already serialised the arguments for rendering; the approval card is built later
-still and sees the mutated object.
-
-Nothing runs unapproved because of this. But "rtk is on and did nothing" and
-"rtk is on and rewrote this" are exactly the two states this file already warns
-are hard to tell apart, and under `auto` the transcript makes them look
-identical.
+runs. The transcript is the one that lied, and only on the policy the user
+actually uses. Nothing ran unapproved because of it. But "rtk is on and did
+nothing" and "rtk is on and rewrote this" are exactly the two states this file
+already warns are hard to tell apart, and under `auto` the transcript made them
+look identical.
 
 ### rtk's fetch is proven; its three other platforms are not
 
@@ -518,11 +563,12 @@ by `src/features/lsp/live.smoke.ts`.
   but none of the three has been reached by hand — making an editor dirty needs
   typing into Monaco, which is the EditContext limit recorded below. The path
   that *was* exercised is the one that writes.
-- **No `profiles.json` exists on this machine.** Every native run so far has used
-  the three built-ins. Nothing that only a profile file can turn on — a delegable
-  profile, a second model, a user tool, `careful` — has met the native window.
-  Slice 38's delegable profile is a browser-mode fixture and is installed nowhere
-  else.
+- **Most of what only a profile file can turn on.** This is no longer "no
+  profile file exists": `ade.profiles.json` landed in `a8ffa46` and has since
+  driven real native runs — one profile, `auto`, with a model and rtk on. What it
+  does *not* exercise is a delegable profile, a second model, a user tool, or
+  `careful`. Slice 38's delegable profile is a browser-mode fixture and is
+  installed nowhere else.
 
 ### Never exercised anywhere
 

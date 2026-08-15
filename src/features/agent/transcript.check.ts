@@ -182,6 +182,29 @@ const started = (): Turn => ({ id: 1, prompt: 'go', parts: [], status: 'running'
 	assert.equal(part.output, 'all');
 }
 
+// rtk rewrites the command after pi has already announced the model's version of
+// it, so the row has to be correctable in place — same part, new arguments.
+{
+	let turn = applyEvent(started(), {
+		kind: 'tool_start',
+		id: 'c1',
+		name: 'bash',
+		input: { command: 'git status' },
+	});
+	turn = applyEvent(turn, { kind: 'tool_input', id: 'c1', input: { command: 'rtk git status' } });
+	assert.equal(turn.parts.length, 1, 'a correction does not append');
+	const part = turn.parts[0];
+	assert.ok(part.kind === 'tool');
+	assert.deepEqual(part.input, { command: 'rtk git status' });
+	assert.equal(part.state, 'running', 'and changes nothing else');
+
+	// An unmatched id is dropped, like every other id-correlated event.
+	assert.equal(
+		applyEvent(turn, { kind: 'tool_input', id: 'ghost', input: {} }).parts.length,
+		1
+	);
+}
+
 // A failed tool keeps its message. Losing it is exactly the defect that shipped
 // in the spike, where the reason rendered as "[object Object]".
 {
@@ -478,4 +501,4 @@ const started = (): Turn => ({ id: 1, prompt: 'go', parts: [], status: 'running'
 	assert.equal(undone.checkpoint, 'abc1234');
 }
 
-console.log('transcript.check.ts: fourteen kinds ok');
+console.log('transcript.check.ts: fifteen kinds ok');
