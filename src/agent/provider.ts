@@ -375,7 +375,21 @@ async function openSession(
 		const existing = await repo.list({ cwd: '/' });
 		const mine = existing.find((entry) => !entry.metadata?.delegatedFrom);
 		if (mine) {
-			return await repo.open(mine);
+			const session = await repo.open(mine);
+			/*
+			 * **Opening is not enough to know it is usable.** `open` parses the
+			 * file; nothing walks the parent chain until the first turn builds a
+			 * context, and `getPathToRootOrCompaction` throws `Entry <id> not
+			 * found` there on a chain with a hole in it. That arrived as the
+			 * agent's reply to every prompt, in a build with one session and no
+			 * way to start another — so the window was unusable and the fallback
+			 * three lines below never ran.
+			 *
+			 * `getBranch()` is that same walk, done here where falling back still
+			 * costs only the history.
+			 */
+			await session.getBranch();
+			return session;
 		}
 	} catch {
 		// Fall through to a new session.

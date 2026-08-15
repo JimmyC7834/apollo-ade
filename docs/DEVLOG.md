@@ -4460,3 +4460,37 @@ proven. Filed rather than chased.
 
 The chip was then measured where it lives: native window, `auto`, real model,
 rtk on `PATH`. It reads `{"command":"rtk git status"}`.
+
+## 2026-08-15 — the session followed the workspace, and split in half
+
+`Entry 7e3c97b8 not found`, as the agent's reply to every prompt, with no way
+out: one session per window, and New session is `disabled: 'one session in this
+build'`. The id looked like a write that never landed. It had landed — in
+`colorle`, in that root's copy of the same session file.
+
+Every path an `ExecutionEnv` handles goes to Rust as an id and is resolved
+against whatever root is current *now*, while `sessionOnce` is a module
+singleton that survives a switch. So the session kept its identity across a
+workspace change and its writes did not: half the chain in one workspace, half
+in another, and the first turn after coming back walked into the hole.
+`switchWorkspace` had already thought about this for editors and profiles — its
+comment even says the agent's env is bound to the old root — and the env was the
+one thing it did not rebind.
+
+It reloads now when the root changes. Rebinding from inside means rebuilding the
+provider, the harness and the session store mid-life; reloading rebinds all of
+it through ordinary start-up, which reads the root back from Rust. The refusals
+that were already there — dirty editor, running turn — are what make something
+this blunt safe. Browser mode never reaches it: its only switch is to the root
+it already has.
+
+Second, smaller: `openSession` now calls `getBranch()` before handing the
+session over. The fallback for "a corrupt or half-written JSONL file" was
+written long ago and could not fire, because `open` only parses and nothing
+walks the parent chain until a turn builds a context — by which time the failure
+is the agent's reply rather than a start-up decision.
+
+Verified where it broke. With the corrupt file the only session in the root, a
+turn answers normally on a fresh one. And a turn in `workspace-b` after a switch
+grew workspace-b's session from 2,338 to 4,382 bytes while this repo's two files
+stayed byte-identical — the exact thing that used to go wrong, not going wrong.

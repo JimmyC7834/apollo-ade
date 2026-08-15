@@ -1073,7 +1073,32 @@ export function WorkbenchController() {
 				announce(`Could not switch workspace. ${reason(error)}`);
 				return;
 			}
-			// Editor ids are relative to the old root, so they cannot survive.
+			/*
+			 * **Reload, rather than reset what this callback can reach.**
+			 *
+			 * Editor ids are relative to the old root and project profiles are read
+			 * from it — both were handled here. The one that was not is the agent's
+			 * session: `ExecutionEnv` sends every path to Rust, which resolves it
+			 * against whatever root is current *now*, so a `Session` opened under
+			 * the old root goes on appending under the new one. Its parent chain
+			 * then splits across two files, and every later turn dies on a parent
+			 * id that exists only in the other root — an unrecoverable window, since
+			 * this build has one session and no way to start another.
+			 *
+			 * Rebinding that from here would mean rebuilding the provider, the
+			 * harness and the session store mid-life. Reloading rebinds everything
+			 * through ordinary start-up instead, which reads the root back from
+			 * Rust — the restore path, already proven. Refusing while an editor is
+			 * dirty or a turn is running is what makes it safe to be this blunt.
+			 *
+			 * The announcement below is deliberately not made on this path: the
+			 * page is going. What replaces it is the workbench coming up on the new
+			 * root, which is the same information more plainly.
+			 */
+			if (chosen.path !== selection?.path) {
+				window.location.reload();
+				return;
+			}
 			setInputs([]);
 			setActiveEditorId(undefined);
 			setSelection(chosen);
@@ -1090,7 +1115,7 @@ export function WorkbenchController() {
 					: `Switched to ${chosen.label}.`
 			);
 		},
-		[announce, dirty, provider, recents.length, session.status]
+		[announce, dirty, provider, recents.length, selection?.path, session.status]
 	);
 
 	const groups = useMemo(

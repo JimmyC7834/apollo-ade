@@ -267,34 +267,51 @@ already used.
 VITE_AGENT_MODEL=deepseek-chat npm run tauri dev
 ```
 
-### A corrupt session file bricks every turn in the window
+### ~~A switch of workspace corrupted the session~~ — fixed 2026-08-15
 
-**Found 2026-08-15, while verifying the rtk chip fix below.** Every turn in this
-repo answered `Entry 7e3c97b8 not found` and nothing else — no model call, no
-tool, no way through. The id is real: two `active_tools_change` lines written
-`2026-08-14T02:29:11` name it as their `parentId`, and **no line anywhere
-defines it**, in either session file. Something wrote a parent pointer for an
-entry that was never persisted.
+**Found while verifying the rtk chip fix below.** Every turn in this repo
+answered `Entry 7e3c97b8 not found` and nothing else — no model call, no tool,
+no way through. Switching workspace did not escape it, and the Ade menu's New
+session is `disabled: 'one session in this build'`
+(`WorkbenchController.tsx:1119`), so the window was simply unusable.
 
-Three things make it worse than one bad file:
+**The id was not missing. It was in another workspace.** `7e3c97b8` is written
+in `colorle`'s copy of the same session file. Every path in `ExecutionEnv` goes
+to Rust as an id, and Rust resolves it against whatever root is current *now* —
+while `sessionOnce` is a module singleton that survives a switch. So a `Session`
+opened under one root went on appending under the next: half the chain in one
+workspace, half in another, and the first turn after coming back died on a
+parent that exists only over there. `switchWorkspace` already reset editor ids
+and re-read profiles, and its own comment claimed the agent's env was bound to
+the old root — it was the one thing that was not.
 
-- **Switching workspace does not escape it.** The window opens one session at
-  start-up and keeps it; `workspace-b`, with its own root and its own sessions
-  directory, failed on the same id. That is the same gap as *sessions under
-  workspaces*, seen from the failure side.
-- **There is no new-session affordance.** The Ade menu's item is
-  `disabled: 'one session in this build'` (`WorkbenchController.tsx:1119`). With
-  the resumed session broken, the app has no in-product way back to a working
-  one.
-- **The message says nothing useful.** `Entry <id> not found` is pi's internal
-  vocabulary surfacing raw as the agent's reply.
+Two changes, and the first is the fix:
 
-**Worked around, not fixed:** the file was renamed to `.jsonl.corrupt` — kept,
-not deleted, and a copy is in the session's scratchpad — after which turns work
-normally. What is unknown is *what wrote the dangling pointer*. Every entry in
-these files is written **twice**, on two parallel branches, which is React's
-development double-mount giving one session two writers; two writers each
-holding their own head pointer is the obvious suspect and is not yet proven.
+- **`switchWorkspace` reloads the window** when the root actually changes.
+  Rebinding from inside would mean rebuilding the provider, the harness and the
+  session store mid-life; reloading rebinds all of it through start-up, which
+  reads the root back from Rust. Refusing while dirty or mid-turn is what makes
+  that safe. Browser mode never reaches it, because its only switch is to the
+  root it already has.
+- **`openSession` walks the chain before returning the session.** `open` only
+  parses; nothing touches the parent chain until the first turn builds a
+  context, which is why the fallback that was already written for "a corrupt or
+  half-written JSONL file" never ran. `getBranch()` is that walk, done where
+  falling back still costs only the history.
+
+**Verified in the native window.** With the corrupt file as the only session in
+the root, a turn now answers normally on a fresh session. And a turn taken in
+`workspace-b` after a switch wrote 2,338 → 4,382 bytes there while this repo's
+two files stayed byte-identical, which is the thing that used to go wrong.
+
+The entry doubling is unrelated and stands: every line in these files is written
+twice on two parallel branches, which is the development double-mount giving one
+session two writers. Harmless as far as anyone has seen, and not investigated.
+
+**Debris left by the bug**, none of it deleted: `colorle/.ade/` and
+`workspace-b/.ade/` hold partial copies of this repo's session, written there
+while the root was switched. This repo's own `2026-08-05…jsonl` keeps its two
+dangling parents and is now simply history the app declines to resume.
 
 ### ~~The transcript shows the pre-rtk command under `auto`~~ — fixed 2026-08-15
 
