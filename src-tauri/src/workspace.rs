@@ -433,12 +433,39 @@ pub fn set_workspace(
     Ok(info)
 }
 
+/// Off the dispatcher, for work whose size is the workspace's rather than ours.
+///
+/// **Synchronous commands are serialised, and that is what this avoids.**
+/// Measured in the native window: `agent_shell` answers in 2ms alone and in
+/// 583ms when issued during a `search_workspace` — it waits for the search. The
+/// window keeps painting throughout (38 frames in 635ms, the same as idle), so
+/// this is not a frozen UI; it is every *other* command being unable to answer.
+/// On this repo a search is 635ms. On a monorepo it is seconds, and for those
+/// seconds no file read, no git call and no agent tool can get through.
+///
+/// Applied to the three whose cost is unbounded — the two tree walks and the
+/// delete count. The rest are a stat or a `git` invocation and are left alone
+/// deliberately: an `async` command that does nothing slow buys nothing and
+/// costs a thread hop.
+async fn off_thread<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
-pub fn list_tree(state: tauri::State<'_, WorkspaceState>) -> Result<Vec<Entry>, String> {
+pub async fn list_tree(state: tauri::State<'_, WorkspaceState>) -> Result<Vec<Entry>, String> {
+    // The root is read out here, before the hop: `State` is borrowed from the
+    // command and cannot cross an await, where a `PathBuf` is owned and can.
     let root = root_of(&state)?;
-    let mut out = Vec::new();
-    walk(&root, "", 0, &mut out);
-    Ok(out)
+    off_thread(move || {
+        let mut out = Vec::new();
+        walk(&root, "", 0, &mut out);
+        Ok(out)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -880,11 +907,16 @@ pub struct SearchResult {
 /// not UTF-8 are skipped rather than reported as errors — an unreadable file
 /// is not a search failure.
 #[tauri::command]
-pub fn search_workspace(
+pub async fn search_workspace(
     query: String,
     state: tauri::State<'_, WorkspaceState>,
 ) -> Result<Vec<SearchResult>, String> {
     let root = root_of(&state)?;
+    off_thread(move || search_in(&root, &query)).await
+}
+
+/// The search itself. A free function so the command above is only the hop.
+fn search_in(root: &Path, query: &str) -> Result<Vec<SearchResult>, String> {
     let needle = query.trim().to_lowercase();
     if needle.is_empty() {
         return Ok(Vec::new());
@@ -1098,7 +1130,7 @@ fn count_under(dir: &Path, total: &mut u64) {
 
 /// What `delete_entry` would remove. Reads only.
 #[tauri::command]
-pub fn delete_plan(
+pub async fn delete_plan(
     id: String,
     state: tauri::State<'_, WorkspaceState>,
 ) -> Result<DeletePlan, String> {
@@ -1106,6 +1138,10 @@ pub fn delete_plan(
     // Checked here as well as in `delete_entry`, even though this only reads: a
     // path that cannot be deleted should be refused before the confirmation
     // appears, not after someone has agreed to it.
+    //
+    // Both of these stay *before* the hop, so a refusal is still immediate and
+    // does not cost a thread. Only the counting walk goes off-thread, which is
+    // the part whose size is the user's directory rather than ours.
     may_write(&id)?;
     let target = existing(&root, &id)?;
     if !target.is_dir() {
@@ -1115,13 +1151,16 @@ pub fn delete_plan(
             capped: false,
         });
     }
-    let mut entries = 0;
-    count_under(&target, &mut entries);
-    Ok(DeletePlan {
-        kind: "directory".into(),
-        entries,
-        capped: entries >= MAX_COUNT,
+    off_thread(move || {
+        let mut entries = 0;
+        count_under(&target, &mut entries);
+        Ok(DeletePlan {
+            kind: "directory".into(),
+            entries,
+            capped: entries >= MAX_COUNT,
+        })
     })
+    .await
 }
 
 /// Move an entry to the OS trash.
