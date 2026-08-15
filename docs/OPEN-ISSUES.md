@@ -356,6 +356,32 @@ nothing" and "rtk is on and rewrote this" are exactly the two states this file
 already warns are hard to tell apart, and under `auto` the transcript made them
 look identical.
 
+### Two findings from the codebase review, left open on purpose
+
+The 2026-08-15 review (see the dev log) closed four things. These two were not
+closed, because neither is a defect I can settle alone.
+
+**The integrated terminal is the one child that inherits the credentials.**
+`exec.rs`, `lsp.rs` and `rtk.rs` all strip `CREDENTIAL_VARS` before spawning, and
+each says the rule is *about children, not about which child*. `terminal.rs`
+does not. The honest case for leaving it: the keys are set with `setx`, so the
+user's own shell has them anyway and stripping buys nothing real — the terminal
+is the user's, not the agent's. The case against: `exec.rs`'s own comment records
+that `echo $DEEPSEEK_API_KEY` printing into the transcript is exactly what
+motivated the strip, and the PTY prints into the renderer too. Two lines either
+way. **It should be a decision rather than an omission, and right now it is an
+omission.**
+
+**`provider.ts` and `AgentChat.tsx` are collecting unrelated reasons to change.**
+1,433 and 1,246 lines. The first holds session storage, model construction,
+subagent execution, the turn queue and four entry points; the second holds the
+transcript, the composer, profile-modal wiring and undo. Both are readable, and
+that is the tell — the comment density is doing work the structure should.
+`SessionStore` plus `listStored`/`nameStored`/`openSession` is a clean seam out
+of `provider.ts`: already a named interface, no dependency on the runner. Not
+started, because a refactor of a file this commented is a large diff and the
+governing philosophy here is that nothing ships around the wanted feature.
+
 ### rtk's fetch is proven; its three other platforms are not
 
 `rtk_resolve` was verified in the native window, and this machine has rtk on

