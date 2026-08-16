@@ -356,36 +356,42 @@ nothing" and "rtk is on and rewrote this" are exactly the two states this file
 already warns are hard to tell apart, and under `auto` the transcript made them
 look identical.
 
-### `terminal_kill` deadlocks the whole IPC — found 2026-08-15, not fixed
+### The integrated terminal produces no output — found 2026-08-15, not fixed
 
-**This is what has been making the window stop responding, and it is not the
-debugging port.** This file already warns that a half-open debugger connection
-stalls WebView2's UI thread; that warning is sound but it is not what was
-happening here. Three separate probe runs left the app at `Responding: False`,
-and every one of them had called `terminal_kill`.
+**Found underneath the `terminal_kill` deadlock, which is fixed** (see the dev
+log); this is a different defect that the deadlock was hiding, because until the
+kill returned nothing could be probed twice.
 
-Measured: `terminal_create`, `terminal_resize` and `terminal_write` all return
-normally, and the *first* `terminal_kill` never returns. It is a **synchronous**
-command, so it holds Tauri's dispatcher, and with the dispatcher held every later
-`invoke` from the page hangs — which looks exactly like the app having died.
+Measured over the debugging port, subscribing to both terminal events *before*
+creating anything: `terminal_create` succeeds, exactly one `terminal://output`
+event arrives carrying **4 bytes**, and then nothing — ever. `terminal_write` of
+`echo HI\r` returns `ok` and produces no output, no echo, and no further events.
+No `terminal://exit` arrives after the kill either. The event bus itself is
+fine: the 4-byte event proves the subscription works.
 
-The kill itself is not the blocking part. `WinChild::kill` is
-`self.do_kill().ok(); Ok(())` — `TerminateProcess` and no wait. What blocks is
-almost certainly the *drop* at the end of the command: `Session` owns
-`master: Box<dyn MasterPty + Send>`, and closing a ConPTY master waits for its
-output to be drained while our own reader thread is parked in a blocking `read`
-on that same PTY. `exec.rs` hit the sibling of this and wrote the lesson down —
-*"killing the shell does not close its stdout… waiting for EOF is waiting for
-the wrong event"* — and the PTY path never got the same treatment.
+It is **not** the credential strip, and not the app's plumbing. The same spawn
+reproduced in a plain Rust test — `shell_command()` through `NativePtySystem`,
+with a draining reader and no Tauri anywhere — also produced nothing and then
+hung, so it is the PTY spawn itself rather than the reader thread or `emit`.
 
-Not fixed here because it is not what this session was asked for, and because
-the fix is a real design question rather than a line: the reader thread has to be
-told to stop before the master is dropped, and `terminal_kill` should almost
-certainly be `async` regardless, so that even a slow close cannot take the IPC
-with it.
+Unknown, and worth an hour before anything is changed: whether this is a
+regression at all. `OPEN-ISSUES` records the PTY as verified working in Slice 12f
+— *"a real PowerShell spawns, renders its prompt into xterm, and starts in the
+workspace root"* — and many slices have landed since. A bisect against that
+commit is the honest first move rather than a fix.
 
-Reproduce with `terminal_create` → `terminal_write` → `terminal_kill` over the
-debugging port; the second command after the kill never answers.
+Two smaller things noticed in the same file while looking:
+
+- **The terminal has no `Reaper`**, alone among the things this app spawns.
+  `exec.rs`, `lsp.rs` and `rtk.rs` all adopt their children into a job object so
+  a kill takes the tree. Killing the process that owned a PTY left its
+  `powershell.exe` alive and reparented, observed directly during this
+  investigation.
+- **`killing_a_shell_and_closing_its_pty_completes` is a weak test.** It passes
+  in milliseconds, which means it very likely kills the shell before the shell
+  has finished starting. It is not vacuous — the close still runs — but it is
+  not the guard its name suggests, and it will stay weak until the item above is
+  understood.
 
 ### One finding from the review, left open on purpose
 

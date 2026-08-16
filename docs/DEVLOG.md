@@ -4620,3 +4620,42 @@ be `async` so a slow close can never take the IPC with it either way.
 
 So the credential strip is carried by the Rust tests rather than by the window,
 and the entry above says so rather than implying a run that did not happen.
+
+## 2026-08-15 — the terminal_kill deadlock, and what it was hiding
+
+`terminal_kill` never returned. Because a synchronous Tauri command holds the
+dispatcher, every later `invoke` hung behind it, and the window went
+unresponsive — which looks exactly like the half-open-debugger stall this repo
+already warns about, and got blamed on it three times before the terminal turned
+out to be the common factor in all three.
+
+The kill was never the slow part: `WinChild::kill` is `TerminateProcess` with no
+wait. The drop is. `Session` owns the master, `ConPtyMasterPty` is an
+`Arc<Mutex<Inner>>` holding a `PsuedoCon`, and `PsuedoCon::drop` calls
+`ClosePseudoConsole`, which waits for the pty's output to drain. The only thing
+draining it is our reader thread, and that thread lives in `app.emit(…)`, which
+needs the main thread — the one inside this command. Each waits for the other.
+
+The fix hands the teardown to a blocking task and returns. It moves **only** the
+drop, which is what makes it a diagnosis rather than a guess: if the kill had
+been the blocker, nothing would have changed. It did change — `terminal_kill`
+returns in 3ms against never, `agent_shell` answers 3ms later, and a second
+terminal can be created and killed afterwards.
+
+The lesson is one this repo already owned. `exec.rs`: *killing the shell does not
+close its stdout… waiting for EOF is waiting for the wrong event.* Same shape,
+with the close in place of the EOF, in the file that never got the treatment.
+
+**And with the kill returning, the terminal could be probed properly for the
+first time — which found something worse.** The PTY produces no output at all:
+one 4-byte event at startup and then silence, no echo, no response to input, no
+exit event. Reproduced in a plain Rust test with no Tauri in it, so it is the
+spawn rather than the reader or `emit`. It is *not* the credential strip. It may
+not even be a regression from this week — the PTY was last verified in Slice 12f
+and a lot has landed since — so the honest next move is a bisect against that
+commit rather than a fix. Recorded in OPEN-ISSUES with the two smaller things
+noticed beside it: the terminal is the only child this app spawns without a
+`Reaper`, and the new close test is weaker than its name suggests.
+
+This is the second time in two days that a fix's real value was making the next
+bug visible. Worth remembering when a fix looks like it bought little.
