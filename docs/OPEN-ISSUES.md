@@ -153,6 +153,21 @@ Two things that cost time when this was first set up:
   enough to make React throw on the next commit, and an error with no boundary
   unmounts the whole tree. The window goes blank and it looks exactly like the
   feature under test destroying itself. Read those nodes; never write them.
+- **A PTY will not talk to you until you answer its cursor question.** ConPTY
+  opens by emitting `ESC[6n` — a Device Status Report, *where is the cursor?* —
+  and does not pump the shell until something replies. xterm.js answers
+  automatically, so the terminal works in the app; a probe reading raw bytes off
+  `terminal://output` does not, and sees exactly 4 bytes and then silence
+  forever. That looks precisely like a broken terminal and was written up as one
+  for half a day. Reply with `terminal_write` of `[1;1R` and the prompt
+  appears. **Measured both ways** in a standalone `portable-pty` program with no
+  app code in it: 4 bytes without the reply, 160 bytes and a working `echo` with
+  it.
+- **Hold the cargo build lock in mind when a `cargo test` goes quiet.** The dev
+  watcher owns `src-tauri/target`, so a `cargo test` run beside `npm run tauri
+  dev` blocks on the file lock and prints *nothing* — no test output, no
+  `eprintln!`. A ten-minute silence read as "the test hung" when the test had
+  never started. Stop the watcher first, or accept that the result means nothing.
 - **The dev watcher restarts the app.** Editing anything under `src-tauri`
   mid-probe rebuilds and relaunches it, so a probe can be measuring one build
   and reporting on another. Finish the edit, wait for the relaunch, then probe.
@@ -356,42 +371,19 @@ nothing" and "rtk is on and rewrote this" are exactly the two states this file
 already warns are hard to tell apart, and under `auto` the transcript made them
 look identical.
 
-### The integrated terminal produces no output — found 2026-08-15, not fixed
+### The terminal has no `Reaper`, alone among this app's children
 
-**Found underneath the `terminal_kill` deadlock, which is fixed** (see the dev
-log); this is a different defect that the deadlock was hiding, because until the
-kill returned nothing could be probed twice.
+`exec.rs`, `lsp.rs` and `rtk.rs` each adopt their children into a job object so a
+kill takes the whole tree; `terminal.rs` does not. Observed directly: killing the
+process that owned a PTY left its `powershell.exe` alive and reparented.
 
-Measured over the debugging port, subscribing to both terminal events *before*
-creating anything: `terminal_create` succeeds, exactly one `terminal://output`
-event arrives carrying **4 bytes**, and then nothing — ever. `terminal_write` of
-`echo HI\r` returns `ok` and produces no output, no echo, and no further events.
-No `terminal://exit` arrives after the kill either. The event bus itself is
-fine: the 4-byte event proves the subscription works.
+Lower stakes than the `exec` case that motivated `Reaper` — a user's shell is
+not a build spawning `cargo` and `rustc` — but it is the same omission shape as
+the credentials one, and the same answer probably applies.
 
-It is **not** the credential strip, and not the app's plumbing. The same spawn
-reproduced in a plain Rust test — `shell_command()` through `NativePtySystem`,
-with a draining reader and no Tauri anywhere — also produced nothing and then
-hung, so it is the PTY spawn itself rather than the reader thread or `emit`.
-
-Unknown, and worth an hour before anything is changed: whether this is a
-regression at all. `OPEN-ISSUES` records the PTY as verified working in Slice 12f
-— *"a real PowerShell spawns, renders its prompt into xterm, and starts in the
-workspace root"* — and many slices have landed since. A bisect against that
-commit is the honest first move rather than a fix.
-
-Two smaller things noticed in the same file while looking:
-
-- **The terminal has no `Reaper`**, alone among the things this app spawns.
-  `exec.rs`, `lsp.rs` and `rtk.rs` all adopt their children into a job object so
-  a kill takes the tree. Killing the process that owned a PTY left its
-  `powershell.exe` alive and reparented, observed directly during this
-  investigation.
-- **`killing_a_shell_and_closing_its_pty_completes` is a weak test.** It passes
-  in milliseconds, which means it very likely kills the shell before the shell
-  has finished starting. It is not vacuous — the close still runs — but it is
-  not the guard its name suggests, and it will stay weak until the item above is
-  understood.
+Beside it: `killing_a_shell_and_closing_its_pty_completes` passes in
+milliseconds, which very likely means it kills the shell before the shell has
+finished starting. Not vacuous — the close still runs — but weaker than its name.
 
 ### One finding from the review, left open on purpose
 

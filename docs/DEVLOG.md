@@ -4659,3 +4659,53 @@ noticed beside it: the terminal is the only child this app spawns without a
 
 This is the second time in two days that a fix's real value was making the next
 bug visible. Worth remembering when a fix looks like it bought little.
+
+## 2026-08-15 — the terminal was never broken; the probe was not a terminal
+
+The bisect asked for did not happen, because the first step of it made the
+bisect pointless. Recorded here in full because the entry above this one is
+wrong, and this is an append-only log.
+
+**What the previous entry claimed:** the PTY produces no output — one 4-byte
+event and then silence — reproduced in a plain Rust test with no Tauri in it,
+therefore the spawn rather than the plumbing, possibly a regression since
+Slice 12f.
+
+**Two things in that were unfounded.** The Rust test that supposedly reproduced
+it never ran: `npm run tauri dev` was up and holding the cargo build lock on
+`src-tauri/target`, so `cargo test` sat waiting for the lock and printed nothing
+for ten minutes — no test output and not even the `eprintln!` before the
+assertion. A silent run was read as a hanging test. And the conclusion drawn
+from it, that the app's plumbing was innocent, therefore rested on nothing.
+
+**What a real standalone reproduction found.** A throwaway cargo project with
+`portable-pty` and no repo code spawns `powershell.exe -NoLogo -NoProfile`,
+reads, and gets 4 bytes: `ESC[6n`. That is a Device Status Report — ConPTY
+asking the terminal *where is the cursor?* — and ConPTY will not pump the shell
+until something answers. Answer it with `ESC[1;1R` and the same program gets 160
+bytes, a `PS C:\Users\c7834>` prompt, and a working `echo`.
+
+So the terminal works. xterm.js answers the DSR as any emulator does; every
+probe written this session read raw bytes with no emulator attached and was
+therefore not a terminal, which is why the shell never spoke to it. Confirmed
+in the app itself: **View: Show Terminal** → New terminal renders
+`PS C:\Users\c7834\Documents\git-repos\vscode\tauri-ade-prototype>`, in the
+workspace root, which also proves the cwd path.
+
+**And with the trick understood, the thing that could not be verified two
+commits ago now is.** Answering the DSR from the probe makes the shell talk to
+it too, so the credential strip is finally confirmed where it matters: in a real
+PTY in the running app, `DEEPSEEK_API_KEY`, `ANTHROPIC_API_KEY` and
+`GEMINI_API_KEY` all report length 0 while `PATH` reports 2,192 characters. A
+targeted strip, not an `env_clear`, measured rather than reasoned. No key was
+ever printed — the shell was asked for lengths.
+
+Both gotchas are now in the probing section of OPEN-ISSUES, because both cost
+hours and both will cost them again: a PTY that will not speak until answered,
+and a `cargo test` that goes silent behind the watcher's build lock.
+
+The lesson under both is the same one, and it is the one this repo keeps
+relearning: **an absence of output is not evidence.** It is a question about the
+instrument. Three separate conclusions this session came from believing a
+silence — the wedged window blamed on the debugger port, the "hanging" test that
+never ran, and the "broken" terminal that was waiting to be spoken to.
