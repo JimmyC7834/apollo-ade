@@ -371,18 +371,6 @@ nothing" and "rtk is on and rewrote this" are exactly the two states this file
 already warns are hard to tell apart, and under `auto` the transcript made them
 look identical.
 
-### `killing_a_shell_and_closing_its_pty_completes` is weaker than its name
-
-It passes in milliseconds, which almost certainly means it kills the shell before
-the shell has finished starting. Not vacuous — the close still runs, and that is
-the half it claims — but it does not exercise a *busy* pty, which is the case the
-`terminal_kill` deadlock actually came from.
-
-Now cheap to strengthen, and worth doing next time this file is open: the
-`ESC[6n` answer recorded in the probing section is what makes a test shell
-actually run something, and `killing_the_shell_takes_its_children` beside it
-already uses it. This one predates that trick.
-
 ### One finding from the review, left open on purpose
 
 The 2026-08-15 review (see the dev log) closed five things. This one was not

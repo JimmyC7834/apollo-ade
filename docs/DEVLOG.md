@@ -4749,3 +4749,46 @@ else this week: a sweep for leftover `Start-Sleep` shells kept reporting one, an
 it was the *query itself* — the filter string appears in the searching process's
 own command line, so it matched itself. Three times this session an instrument
 has been mistaken for a result.
+
+## 2026-08-15 — the close test, and two assertions that were wrong
+
+The weak test left behind by the `terminal_kill` fix is now
+`closing_a_busy_pty_returns`, and strengthening it turned out to be more
+interesting than expected.
+
+It was weak in the way recorded: it killed the shell immediately after spawning,
+so nothing was buffered and it closed an idle pty, when the deadlock came from a
+busy one. It now answers the `ESC[6n` the pty opens with, waits for a real
+prompt, floods the pty, and closes it under load.
+
+**The more serious flaw was that it could not fail on what it claimed to test.**
+The shape was `drop(master); let elapsed = started.elapsed(); assert!(elapsed <
+10s)` — a close that blocked forever never reached the assertion at all. It could
+only catch slow-but-finite, which is the one failure that was never going to
+happen. The close now runs on its own thread with the main thread waiting on a
+channel deadline, so a hang fails loudly instead of hanging the suite.
+
+**Two of the new assertions were also wrong, and only falsification found them.**
+
+The first was a byte count after a fixed sleep — a race dressed as a threshold. A
+warm run moved megabytes and a cold one moved 72 KB, so it failed on the first
+run and passed on the second. Flaky is worse than weak.
+
+The second was subtler and is the one worth keeping in mind. Sampling *"did
+anything move in the last 250ms"* is not a race, and it is also not the property:
+it passes on the echo of the command that was just typed. Replacing the flood
+with a silent forty-second sleep still passed. It was asserting that the pty was
+not stone dead, which was never in doubt. The fix is to wait for a real volume
+against a generous deadline — deterministic on any machine, and false exactly
+when nothing is flooding. The falsification now reports `only 265 bytes
+streamed`, and those 265 bytes are the prompt and the echo: the precise thing the
+previous assertion had been passing on.
+
+Both failure modes were then induced deliberately. A silent shell fails on the
+load assertion; a close stalled for sixty seconds fails at 17.2s with the
+deadlock message and the suite ends in 23s rather than hanging.
+
+The habit that produced all three findings is the same one, and it is cheap:
+after writing an assertion, break the thing it is supposed to catch and watch it
+fail. Every assertion in this session that was never falsified turned out to be
+measuring something other than what it said.
