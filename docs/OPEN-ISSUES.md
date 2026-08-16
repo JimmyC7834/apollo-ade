@@ -371,19 +371,17 @@ nothing" and "rtk is on and rewrote this" are exactly the two states this file
 already warns are hard to tell apart, and under `auto` the transcript made them
 look identical.
 
-### The terminal has no `Reaper`, alone among this app's children
+### `killing_a_shell_and_closing_its_pty_completes` is weaker than its name
 
-`exec.rs`, `lsp.rs` and `rtk.rs` each adopt their children into a job object so a
-kill takes the whole tree; `terminal.rs` does not. Observed directly: killing the
-process that owned a PTY left its `powershell.exe` alive and reparented.
+It passes in milliseconds, which almost certainly means it kills the shell before
+the shell has finished starting. Not vacuous — the close still runs, and that is
+the half it claims — but it does not exercise a *busy* pty, which is the case the
+`terminal_kill` deadlock actually came from.
 
-Lower stakes than the `exec` case that motivated `Reaper` — a user's shell is
-not a build spawning `cargo` and `rustc` — but it is the same omission shape as
-the credentials one, and the same answer probably applies.
-
-Beside it: `killing_a_shell_and_closing_its_pty_completes` passes in
-milliseconds, which very likely means it kills the shell before the shell has
-finished starting. Not vacuous — the close still runs — but weaker than its name.
+Now cheap to strengthen, and worth doing next time this file is open: the
+`ESC[6n` answer recorded in the probing section is what makes a test shell
+actually run something, and `killing_the_shell_takes_its_children` beside it
+already uses it. This one predates that trick.
 
 ### One finding from the review, left open on purpose
 

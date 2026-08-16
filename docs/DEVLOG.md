@@ -4709,3 +4709,43 @@ relearning: **an absence of output is not evidence.** It is a question about the
 instrument. Three separate conclusions this session came from believing a
 silence — the wedged window blamed on the debugger port, the "hanging" test that
 never ran, and the "broken" terminal that was waiting to be spoken to.
+
+## 2026-08-15 — the terminal gets a Reaper, and the test that could finally be written
+
+`terminal.rs` was the last spawn point in the app without a job object, and
+`reaper.rs` had been naming it in its own documentation as the example of the
+failure it exists to prevent: *"`child.kill()` — what `terminal.rs` does — kills
+only the direct child and leaves every descendant running."* That sentence is
+now retired rather than left true.
+
+The fix is `exec.rs`'s, unchanged: create the job, adopt immediately after spawn
+so the gap is as small as the API allows, and kill the job before the child —
+`lsp::stop`'s order, because the reaper is the guarantee and a wedged direct
+child must not be able to delay it. `TerminateJobObject` does not block, so it
+stays on the command thread and yesterday's deadlock fix is untouched.
+
+One thing came free. `Reaper` sets `KILL_ON_JOB_CLOSE`, so dropping a `Session`
+now takes the tree whether or not `terminal_kill` was ever called — which means
+closing the window cleans up after itself, where before it left every shell's
+descendants behind.
+
+**The interesting part is that the test was writable at all.** Asserting "killing
+the shell takes its children" needs the shell to *start* a child, and a pty runs
+nothing until something answers its opening `ESC[6n` — the handshake found while
+chasing the terminal that turned out not to be broken. So the test answers the
+cursor request, has PowerShell start a detached `Start-Sleep` and print its pid,
+kills, and asserts the pid is gone. Yesterday that test could not have been
+written; the day spent on a bug that did not exist bought the technique for
+proving one that did.
+
+And it was falsified on purpose, because a test that cannot fail is not evidence:
+with `reaper.adopt` removed it fails after 15.3 seconds with the grandchild still
+running, and with it, passes in 4.9. Confirmed in the app as well — a terminal
+created over the debugging port started a grandchild at pid 14556, the pane was
+killed, and the pid was gone.
+
+A footnote on the cleanup afterwards, since it is the same lesson as everything
+else this week: a sweep for leftover `Start-Sleep` shells kept reporting one, and
+it was the *query itself* — the filter string appears in the searching process's
+own command line, so it matched itself. Three times this session an instrument
+has been mistaken for a result.
