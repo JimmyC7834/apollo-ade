@@ -653,10 +653,55 @@ The sequence, each slice demoable. **All eight have landed** — 37–40 togethe
 | **[43](tickets/43-profile-modal.md)** | Profile modal, subpages, Ask/Auto/Bypass | 37 |
 | **[44](tickets/44-palette-and-notifications.md)** | Palette, Global Search, notifications | 39, 40 |
 
-Two things are written but not built, deliberately: an **ADR for multi-root confinement**
+Two things were written but not built, deliberately: an **ADR for multi-root confinement**
 (ticket 39 — two live workspaces means two roots, and `workspace.rs` holds one), and
 **concurrent live sessions**, which make the per-turn `git_checkpoint` meaningless and are
-their own ticket rather than navigator chrome.
+their own ticket rather than navigator chrome. **Both are now tickets 45–53 below**, on the
+dev's word, and the second one has taken the first with it.
+
+### Multiple sessions — tickets 45–53
+
+**The ADE becomes a manager of harness instances rather than a window with one.** Several
+conversations open at once, any of them running while you look at another, each with its own
+working folder. Settled with the dev in three rounds; the answers that shaped it:
+
+- **All three levels**, not the cheap one — instant switching, background running, *and*
+  truly parallel turns. Sessions in one folder and sessions across folders both.
+- **A session object**, the dev's framing: package what exists into something instantiable
+  and let the ADE spawn and manage them.
+- **Warn, do not lock.** Two agents in one tree are allowed to run at once; the second to
+  write a file is told, and decides for itself. A per-root turn queue was offered and
+  declined.
+- **The navigator is the switcher and the creator.** No tabs, no second picker — its
+  workspace groups already list what a new session needs to be told.
+- **No cap**, and **nothing resumes at launch**.
+
+Two costs bought knowingly. **The reload-based switch shipped in `a4c954b` is replaced** —
+it was only ever safe because nothing could be running in the background. And **ADR 0001 is
+reopened**: confinement stops being ambient and becomes a property of the session, which is
+strictly stricter, since a root is then fixed at birth rather than mutable underneath work
+in flight.
+
+| | | |
+|---|---|---|
+| **[45](tickets/45-session-as-an-object.md)** | A session is an object the window holds | — prefactor, nothing visible |
+| **[46](tickets/46-a-root-per-session.md)** | Rust gives each session its own root | — prefactor, carries the new ADR |
+| **[47](tickets/47-two-sessions-in-one-window.md)** | Two sessions in one window | 45 |
+| **[48](tickets/48-sessions-run-in-the-background.md)** | A session keeps running while you look at another | 47 |
+| **[49](tickets/49-a-session-in-another-folder.md)** | A session in another folder | 46, 48 |
+| **[50](tickets/50-profile-follows-the-session.md)** | Profile and model follow the session | 49 |
+| **[51](tickets/51-concurrent-write-warning.md)** | Rust tells an agent another session wrote this file | 46, 48 |
+| **[52](tickets/52-undo-under-contention.md)** | Undo says whose work it will also revert | 48 |
+| **[53](tickets/53-launch-reopens-sessions.md)** | Launch reopens the sessions you had | 49 |
+
+45 and 46 are prefactors and break the tracer-bullet rule on purpose: neither changes
+anything on screen, and every slice after them is impossible while a session is module-level
+state and confinement is ambient. 51 and 52 are not polish — they are what stops parallel
+turns in one tree from being silently wrong, which is the price of declining the lock.
+
+**A per-session git worktree is the direction the other harnesses took** and would make 52's
+problem not exist. It is not in this sequence: it changes what "the workspace" means, and it
+is a decision that has not been made.
 
 ### Queued by the dev after Slice 38
 
