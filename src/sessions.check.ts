@@ -3,21 +3,32 @@
 // Two things here are worth a check and the rest is data. `liveStatus` has an
 // ordering that is easy to get backwards — a blocked run is still a run, so
 // `running` would win if the branches were swapped, and the navigator would
-// flash "running" at a user it is waiting on. `buildGroups` has one invariant
-// the rest of the app rests on — exactly one session is `live` — and one join
-// that is easy to get wrong now that the rows are real: the live session and
-// its own file on disk are the same conversation, and must be one row.
+// flash "running" at a user it is waiting on. `buildGroups` has one join that is
+// easy to get wrong now that the rows are real and there are several of them:
+// an open session and its own file on disk are the same conversation, and must
+// be one row.
 
 import assert from 'node:assert/strict';
 import type { StoredSession } from './agent/provider.ts';
-import { LIVE_SESSION_ID, breadcrumb, buildGroups, liveStatus } from './sessions.ts';
+import { breadcrumb, buildGroups, liveStatus, type Session } from './sessions.ts';
 
 /** A stored row as `listSessions` hands them over: newest first. */
 const stored: readonly StoredSession[] = [
-	{ id: '/s/3.jsonl', name: 'Fix the sash', startedAt: '2026-08-05T03:00:00Z', active: true, empty: false },
-	{ id: '/s/2.jsonl', name: 'Chase a failing check', startedAt: '2026-08-04T03:00:00Z', active: false, empty: false },
-	{ id: '/s/1.jsonl', name: 'Untitled session', startedAt: '2026-08-03T03:00:00Z', active: false, empty: true },
+	{ id: '/s/3.jsonl', name: 'Fix the sash', startedAt: '2026-08-05T03:00:00Z', empty: false },
+	{ id: '/s/2.jsonl', name: 'Chase a failing check', startedAt: '2026-08-04T03:00:00Z', empty: false },
+	{ id: '/s/1.jsonl', name: 'Untitled session', startedAt: '2026-08-03T03:00:00Z', empty: true },
 ];
+
+/** The window's open conversations, as the controller builds them. */
+const open = (over: Partial<Session> = {}): Session => ({
+	id: 'session-a',
+	name: 'Fix the sash',
+	status: 'running',
+	live: true,
+	focused: true,
+	storedPath: '/s/3.jsonl',
+	...over,
+});
 
 // Blocked outranks running, which is the point of having both.
 assert.equal(liveStatus({ running: true, blocked: true, turns: 3 }), 'waiting');
@@ -36,37 +47,79 @@ const groups = buildGroups({
 	workspace,
 	branch: 'master',
 	recents,
-	liveName: 'Fix the sash',
-	liveStatus: 'running',
+	live: [open()],
 	stored,
 });
 
-// Exactly one live session across every group. If this ever fails, the
-// navigator is claiming a harness it does not have.
 const live = groups.flatMap((group) => group.sessions).filter((session) => session.live);
 assert.equal(live.length, 1);
-assert.equal(live[0].id, LIVE_SESSION_ID);
-assert.equal(live[0].name, 'Fix the sash');
+assert.equal(live[0].id, 'session-a');
 assert.equal(live[0].status, 'running');
 
-// The live session leads the current workspace, which is never switchable —
+// The open sessions lead the current workspace, which is never switchable —
 // there is nothing to switch to.
 assert.equal(groups[0].switchIndex, undefined);
-assert.equal(groups[0].sessions[0].id, LIVE_SESSION_ID);
+assert.equal(groups[0].sessions[0].id, 'session-a');
 // Every session outside the current group belongs to no harness.
 assert.ok(groups.slice(1).every((group) => group.sessions.every((s) => !s.live)));
 
 /*
- * The stored rows follow the live one, in the order they arrived, and **the
- * active one is not among them**. It is already the row above: drawn from live
- * state, where its status is `running`. Reading it back off disk as well would
- * put the same conversation on screen twice, the second time saying `done`.
+ * The stored rows follow the open ones, in the order they arrived, and **the
+ * conversation already open is not among them**. It is the row above: drawn from
+ * live state, where its status is `running`. Offering the stored row as well
+ * would put the same file on screen twice — and opening it would put two
+ * harnesses on one JSONL, both appending.
  */
 assert.deepEqual(
 	groups[0].sessions.map((session) => session.id),
-	[LIVE_SESSION_ID, '/s/2.jsonl', '/s/1.jsonl']
+	['session-a', '/s/2.jsonl', '/s/1.jsonl']
 );
-assert.equal(live.length, 1, 'and a stored row is never live');
+
+/*
+ * **Several live sessions, which is the whole of tickets 45 to 48.** Each keeps
+ * its own status, exactly one is focused, and each one open hides its own stored
+ * row rather than the first one's.
+ */
+const many = buildGroups({
+	workspace,
+	branch: 'master',
+	recents,
+	live: [
+		open(),
+		open({ id: 'session-b', name: 'Chase a failing check', status: 'waiting', focused: false, storedPath: '/s/2.jsonl' }),
+	],
+	stored,
+});
+assert.deepEqual(
+	many[0].sessions.map((session) => session.id),
+	['session-a', 'session-b', '/s/1.jsonl']
+);
+assert.deepEqual(
+	many[0].sessions.filter((session) => session.focused).map((session) => session.id),
+	['session-a'],
+	'exactly one row is the one on screen'
+);
+assert.deepEqual(
+	many[0].sessions.filter((session) => session.live).map((session) => session.status),
+	['running', 'waiting'],
+	'a background session keeps its own status'
+);
+
+/*
+ * A brand-new session has no file yet, so it hides nothing. The stored list must
+ * come back whole rather than losing a row to an undefined path matching an
+ * undefined id.
+ */
+assert.deepEqual(
+	buildGroups({
+		workspace,
+		branch: undefined,
+		recents,
+		live: [open({ storedPath: undefined })],
+		stored,
+	})[0].sessions.map((session) => session.id),
+	['session-a', '/s/3.jsonl', '/s/2.jsonl', '/s/1.jsonl']
+);
 
 // Had, versus opened and abandoned. That is the whole of what the marker says
 // about a session nothing is attached to.
@@ -74,18 +127,17 @@ assert.equal(groups[0].sessions[1].status, 'done');
 assert.equal(groups[0].sessions[2].status, 'idle');
 assert.equal(groups[0].sessions[1].name, 'Chase a failing check');
 
-// A workspace whose sessions could not be read, or has none, shows the live row
+// A workspace whose sessions could not be read, or has none, shows the open rows
 // alone — not an empty group, and not a fixture standing in for one.
 assert.deepEqual(
 	buildGroups({
 		workspace,
 		branch: 'master',
 		recents: [workspace],
-		liveName: 'Only me',
-		liveStatus: 'idle',
+		live: [open({ name: 'Only me', storedPath: undefined })],
 		stored: [],
 	})[0].sessions.map((session) => session.id),
-	[LIVE_SESSION_ID]
+	['session-a']
 );
 
 /*
@@ -101,16 +153,14 @@ assert.equal(switchable[0].switchIndex, 1);
 assert.deepEqual(switchable[0].sessions, []);
 
 /*
- * A recent root's own conversations, which is what makes "switching a session
- * switches the workspace" a thing you can *do* rather than describe. Each row
- * carries the index of the root it lives in, and the path to open once there.
+ * A recent root's own conversations. Each row carries the index of the root it
+ * lives in, and the path to open once there.
  */
 const across = buildGroups({
 	workspace,
 	branch: 'master',
 	recents,
-	liveName: 'Fix the sash',
-	liveStatus: 'idle',
+	live: [open({ status: 'idle' })],
 	stored,
 	elsewhere: new Map([['/tmp/other', stored.slice(1)]]),
 });
@@ -128,6 +178,16 @@ assert.deepEqual(
 assert.ok(other.sessions.every((session) => !session.live));
 
 /*
+ * **A session open here does not hide a same-named file over there.** The two
+ * are different conversations in different folders, and dropping the second one
+ * would make a workspace look emptier than it is.
+ */
+assert.ok(
+	across[1].sessions.some((session) => session.storedPath === '/s/2.jsonl'),
+	'the filter is against this root only'
+);
+
+/*
  * **Row ids are unique across workspaces, and session paths are not.** Two
  * checkouts of one project hold the same session filenames, so keying rows on
  * the path alone would collide — React would draw one row for two conversations
@@ -137,20 +197,15 @@ const collide = buildGroups({
 	workspace,
 	branch: undefined,
 	recents,
-	liveName: undefined,
-	liveStatus: 'idle',
+	live: [open({ status: 'idle' }), open({ id: 'session-b', focused: false, storedPath: '/s/2.jsonl' })],
 	stored,
 	elsewhere: new Map([['/tmp/other', stored]]),
 });
 const ids = collide.flatMap((group) => group.sessions).map((session) => session.id);
 assert.equal(new Set(ids).size, ids.length, ids.join(' '));
 
-// The live row opens nothing: it is already open, and `selectSession` reads
-// that absence rather than a flag of its own.
-assert.equal(collide[0].sessions[0].storedPath, undefined);
-assert.equal(collide[0].sessions[1].storedPath, '/s/2.jsonl');
 // A session in the current root has nowhere to switch to.
-assert.equal(collide[0].sessions[1].switchIndex, undefined);
+assert.equal(collide[0].sessions[2].switchIndex, undefined);
 
 // A root with nothing listed for it is still offered, because switching to a
 // workspace you have never had a conversation in is a normal thing to want.
@@ -159,8 +214,7 @@ assert.deepEqual(
 		workspace,
 		branch: undefined,
 		recents,
-		liveName: undefined,
-		liveStatus: 'idle',
+		live: [open()],
 		stored,
 		elsewhere: new Map(),
 	})[1].sessions,
@@ -177,8 +231,7 @@ const twins = buildGroups({
 		workspace,
 		{ label: 'ade', path: '/tmp/ade-3' },
 	],
-	liveName: undefined,
-	liveStatus: 'idle',
+	live: [open()],
 	stored,
 }).filter((group) => group.switchIndex !== undefined);
 assert.deepEqual(
@@ -186,29 +239,9 @@ assert.deepEqual(
 	[0, 2]
 );
 
-// An unnamed session still has a name; a nameless row is not renderable.
-assert.equal(
-	buildGroups({
-		workspace,
-		branch: undefined,
-		recents: [],
-		liveName: undefined,
-		liveStatus: 'idle',
-		stored: [],
-	})[0].sessions[0].name,
-	'New session'
-);
-
 // No root, no groups — not one empty group with a fixture hanging off it.
 assert.deepEqual(
-	buildGroups({
-		workspace: undefined,
-		branch: 'x',
-		recents,
-		liveName: 'y',
-		liveStatus: 'idle',
-		stored,
-	}),
+	buildGroups({ workspace: undefined, branch: 'x', recents, live: [open()], stored }),
 	[]
 );
 

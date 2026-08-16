@@ -13,6 +13,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(workspace::WorkspaceState::default())
+        .manage(workspace::SessionRoots::default())
         .manage(terminal::TerminalState::default())
         .manage(exec::ExecState::default())
         .manage(lsp::LspState::default())
@@ -22,6 +23,8 @@ pub fn run() {
             workspace::set_workspace,
             workspace::recent_workspaces,
             workspace::switch_workspace,
+            workspace::create_agent_session,
+            workspace::close_agent_session,
             workspace::list_tree,
             workspace::read_file,
             workspace::write_file,

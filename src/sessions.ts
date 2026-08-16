@@ -1,11 +1,11 @@
 // The session model the Session Navigator draws.
 //
-// This app runs exactly one harness, one gate and one confinement root, so
-// exactly one session here is live. The rest are the workspace's *stored*
+// A window holds as many conversations as you have opened, each with its own
+// harness and its own confinement root. The rest are the workspace's *stored*
 // conversations, read back from `.ade/sessions` — real records of real turns,
 // which is what the three hardcoded fixtures that used to sit here were
-// standing in for. `live: false` no longer means "invented"; it means "not the
-// one a harness is attached to right now".
+// standing in for. `live: false` no longer means "invented"; it means "not open
+// in this window right now".
 //
 // **That is why the prototype marking is gone rather than kept.** It was keyed
 // off `live`, so the moment these rows came off disk it labelled real
@@ -13,10 +13,13 @@
 // prevent. The fixture workspace group went with it: it existed to draw the
 // grouping, and the recent roots draw it for real now.
 //
-// Concurrent live sessions are deliberately not modelled. N harnesses against
-// one git tree makes the per-turn `git_checkpoint` meaningless: two turns
-// interleaving produce a checkpoint neither can be rolled back to. That is its
-// own ticket. Multi-root is `docs/adr/0001-multi-root-confinement.md`.
+// Concurrent live sessions *are* modelled now — tickets 45 to 48. The cost was
+// taken with eyes open: N harnesses against one git tree makes the per-turn
+// `git_checkpoint` ambiguous, because two turns interleaving produce a snapshot
+// neither conversation was ever alone in. A per-root queue was declined in
+// favour of telling the truth about it — tickets 51 and 52 — so until those
+// land, undo in a contended root is the known sharp edge.
+// Confinement is `docs/adr/0002-a-root-per-session.md`.
 
 import type { StoredSession } from './agent';
 import type { WorkspaceSelection } from './workspace';
@@ -41,16 +44,21 @@ export interface Session {
 	 */
 	readonly unread?: boolean;
 	/**
-	 * True for the one session a harness is attached to. False means stored, not
+	 * True for a session a harness is attached to. False means stored, not
 	 * invented — the view shows the difference with the marker's size and must
 	 * not label the others, which is what it used to do back when `false` meant
 	 * fixture.
 	 */
 	readonly live: boolean;
+	/** True for the one live session on screen. At most one row ever has it. */
+	readonly focused?: boolean;
 	/**
-	 * The file this row opens, as `listSessions` reported it. Absent on the live
-	 * row, which is already open — and that absence is what `selectSession` keys
-	 * "there is nothing to switch to" off.
+	 * The file this row is, as `listSessions` reported it.
+	 *
+	 * Set on a live row too, and that is what stops the same conversation being
+	 * offered twice: a session open in this window is filtered out of the stored
+	 * list by matching on this. Undefined until the provider has said which file
+	 * it got, and in browser mode where there is no disk.
 	 */
 	readonly storedPath?: string;
 	/**
@@ -72,7 +80,7 @@ export interface WorkspaceGroup {
 	 * Index into Rust's recent-workspaces list, for a root that is *not* the
 	 * current one. Present means activating this header switches to it — and
 	 * it is an index rather than a path for the reason
-	 * `docs/adr/0001-multi-root-confinement.md` gives.
+	 * `docs/adr/0002-a-root-per-session.md` gives.
 	 *
 	 * Absent on the current workspace, where there is nothing to switch to.
 	 */
@@ -100,9 +108,6 @@ export function liveStatus(options: {
 	}
 	return options.turns > 0 ? 'done' : 'idle';
 }
-
-/** The single session that is actually backed by a harness. */
-export const LIVE_SESSION_ID = 'live';
 
 /**
  * A stored conversation, as the row it becomes.
@@ -139,15 +144,14 @@ function storedRow(stored: StoredSession, switchIndex?: number): Session {
  * about a session that is naturally a name. A stored session's comes from the
  * same place, read back off disk — see `nameStored` in `agent/sessionStore.ts`.
  *
- * **The recent roots now have sessions, through the narrow command rather than
- * the wide one.** This used to say they could not: `workspace.rs` resolves every
- * read against the current root, so the choice was between crossing that
- * boundary and a command that reads another root *by recents index*. The second
- * is what was built — `read_root` there, read-only — so nothing about
- * `docs/adr/0001-multi-root-confinement.md` is reopened. One root is still the
- * confinement boundary; it is merely possible to read the session list of a
- * folder the user has already handed over, without spending a switch to find
- * out what is in it.
+ * **The recent roots have sessions, through the narrow command rather than the
+ * wide one.** `workspace.rs` resolves a workbench read against the current root,
+ * so the choice was between crossing that boundary and a command that reads
+ * another root *by recents index*. The second is what was built — `read_root`
+ * there, read-only — and it is not a session: it makes it possible to *list* the
+ * conversations in a folder the user has already handed over, without spending a
+ * switch to find out what is in it. Confinement itself belongs to the session
+ * now — `docs/adr/0002-a-root-per-session.md`.
  *
  * `elsewhere` is keyed by root path rather than positionally, because the recent
  * list is reordered by every switch and a stale index would draw one workspace's
@@ -157,10 +161,14 @@ export function buildGroups(options: {
 	readonly workspace: WorkspaceSelection | undefined;
 	readonly branch: string | undefined;
 	readonly recents: readonly WorkspaceSelection[];
-	readonly liveName: string | undefined;
-	readonly liveStatus: SessionStatus;
-	/** Something happened while you were not looking. Not a status — see `Session`. */
-	readonly liveUnread?: boolean;
+	/**
+	 * The sessions this window has open, in the order they were opened.
+	 *
+	 * Built by the caller rather than from a name and a status, because there is
+	 * no longer one of them to describe — and because their statuses come from
+	 * live objects this module has no business knowing about.
+	 */
+	readonly live: readonly Session[];
 	/** This workspace's stored conversations, newest first. */
 	readonly stored: readonly StoredSession[];
 	/** Other recent roots' stored conversations, keyed by root path. */
@@ -176,18 +184,13 @@ export function buildGroups(options: {
 			label: workspace.label,
 			branch: options.branch,
 			sessions: [
-				{
-					id: LIVE_SESSION_ID,
-					name: options.liveName ?? 'New session',
-					status: options.liveStatus,
-					unread: options.liveUnread,
-					live: true,
-				},
+				...options.live,
 				/*
-				 * The active one is dropped rather than deduplicated: it is already
-				 * the row above, drawn from live state, and live state is the only
-				 * place its status and unread flag are true. Reading it back off
-				 * disk would show the same conversation as `done` while it runs.
+				 * A conversation already open is dropped rather than listed twice: it is
+				 * one of the rows above, drawn from live state, and live state is the
+				 * only place its status and unread flag are true. Offering the stored row
+				 * as well would invite opening one file into two harnesses, which is two
+				 * writers appending to one JSONL.
 				 */
 				/*
 				 * Not `.map(storedRow)`: `map` passes the array index as the second
@@ -195,7 +198,9 @@ export function buildGroups(options: {
 				 * *current* root would claim to live in some other one, and opening it
 				 * would switch you there. The check caught it, which is what it is for.
 				 */
-				...options.stored.filter((entry) => !entry.active).map((entry) => storedRow(entry)),
+				...options.stored
+					.filter((entry) => !options.live.some((open) => open.storedPath === entry.id))
+					.map((entry) => storedRow(entry)),
 			],
 		},
 		/*

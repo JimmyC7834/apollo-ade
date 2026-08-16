@@ -676,18 +676,24 @@ working folder. Settled with the dev in three rounds; the answers that shaped it
   workspace groups already list what a new session needs to be told.
 - **No cap**, and **nothing resumes at launch**.
 
-Two costs bought knowingly. **The reload-based switch shipped in `a4c954b` is replaced** —
-it was only ever safe because nothing could be running in the background. And **ADR 0001 is
-reopened**: confinement stops being ambient and becomes a property of the session, which is
-strictly stricter, since a root is then fixed at birth rather than mutable underneath work
-in flight.
+Two costs bought knowingly, and both have now been paid. **The reload-based switch shipped
+in `a4c954b` is gone** — it was only ever safe because nothing could be running in the
+background. And **ADR 0001 is superseded by
+[0002](../../adr/0002-a-root-per-session.md)**: confinement stopped being ambient and became
+a property of the session, which is strictly stricter, since a root is fixed at birth rather
+than mutable underneath work in flight.
+
+**45 to 48 have landed.** The window holds several conversations, they run in the background,
+and two turns can be in flight at once — driven in the native window with real turns landing
+in two separate session files. What that leaves sharp is exactly what 51 and 52 are for: two
+agents can now edit one tree, and until those land nothing warns either of them.
 
 | | | |
 |---|---|---|
-| **[45](tickets/45-session-as-an-object.md)** | A session is an object the window holds | — prefactor, nothing visible |
-| **[46](tickets/46-a-root-per-session.md)** | Rust gives each session its own root | — prefactor, carries the new ADR |
-| **[47](tickets/47-two-sessions-in-one-window.md)** | Two sessions in one window | 45 |
-| **[48](tickets/48-sessions-run-in-the-background.md)** | A session keeps running while you look at another | 47 |
+| **[45](tickets/45-session-as-an-object.md)** | A session is an object the window holds | **landed** |
+| **[46](tickets/46-a-root-per-session.md)** | Rust gives each session its own root | **landed**, ADR 0002 |
+| **[47](tickets/47-two-sessions-in-one-window.md)** | Two sessions in one window | **landed** |
+| **[48](tickets/48-sessions-run-in-the-background.md)** | A session keeps running while you look at another | **landed** |
 | **[49](tickets/49-a-session-in-another-folder.md)** | A session in another folder | 46, 48 |
 | **[50](tickets/50-profile-follows-the-session.md)** | Profile and model follow the session | 49 |
 | **[51](tickets/51-concurrent-write-warning.md)** | Rust tells an agent another session wrote this file | 46, 48 |

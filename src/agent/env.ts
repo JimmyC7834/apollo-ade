@@ -151,20 +151,40 @@ function canonicalPath(path: string): Promise<Result<string, FileError>> {
 }
 
 /**
- * @param workspace Index into Rust's recent-roots list, when the reads are
- * against a workspace this window is *not* in. Absent — always, except for the
- * navigator's cross-workspace session listing — means the current root.
+ * Which root this environment's paths resolve against.
  *
- * **Only reads honour it**, because only the four read commands take it. An
- * env built with an index must therefore never be written through, which is
- * what `createReadOnlyTauriEnv` is for; nothing else should pass this directly.
+ * Exactly one of the two, and they answer different questions. Neither names a
+ * path: Rust mints the session id and owns the recents list, so the renderer
+ * cannot widen either into "any folder" — see `docs/adr/0002-a-root-per-session.md`.
  */
-export function createTauriEnv(workspace?: number): ExecutionEnv {
+export interface EnvRoot {
+	/**
+	 * A session's own root, fixed when Rust registered it.
+	 *
+	 * **What every agent environment passes**, and the reason a background turn
+	 * cannot follow the window into another folder: the id resolves to the root
+	 * the session was born in regardless of what is focused now.
+	 */
+	readonly session?: string;
+	/**
+	 * Index into Rust's recent-roots list, when the reads are against a workspace
+	 * this window is *not* in. The navigator's cross-workspace session listing and
+	 * nothing else.
+	 *
+	 * **Only reads honour it**, because only the four read commands take it. An
+	 * env built with an index must therefore never be written through, which is
+	 * what `createReadOnlyTauriEnv` is for; nothing else should pass this directly.
+	 */
+	readonly workspace?: number;
+}
+
+export function createTauriEnv(root: EnvRoot = {}): ExecutionEnv {
 	const core = () => import('@tauri-apps/api/core');
 	// `null` rather than omitted: Tauri's argument matching is by name, and a
-	// missing key and an explicit null both arrive as `None`. Passing it always
-	// keeps the four call sites uniform.
-	const at = workspace ?? null;
+	// missing key and an explicit null both arrive as `None`. Passing both always
+	// keeps every call site uniform.
+	const at = root.workspace ?? null;
+	const session = root.session ?? null;
 
 	/*
 	 * The single conversion point. `invoke` *rejects* on `Err` and pi requires a
@@ -192,12 +212,12 @@ export function createTauriEnv(workspace?: number): ExecutionEnv {
 
 	const stat = async (path: string) =>
 		attempt(path, async () =>
-			(await core()).invoke<PathMeta | null>('stat_path', { id: toId(path), workspace: at })
+			(await core()).invoke<PathMeta | null>('stat_path', { id: toId(path), session, workspace: at })
 		);
 
 	const readText = async (path: string) =>
 		attempt(path, async () =>
-			(await core()).invoke<string>('read_file', { id: toId(path), workspace: at })
+			(await core()).invoke<string>('read_file', { id: toId(path), session, workspace: at })
 		);
 
 	return {
@@ -236,6 +256,7 @@ export function createTauriEnv(workspace?: number): ExecutionEnv {
 				(await core()).invoke<string[]>('read_text_lines', {
 					id: toId(path),
 					maxLines: options?.maxLines ?? null,
+					session,
 					workspace: at,
 				})
 			);
@@ -246,19 +267,19 @@ export function createTauriEnv(workspace?: number): ExecutionEnv {
 				return err(new FileError('not_supported', 'binary appends are not supported', path));
 			}
 			return attempt(path, async () =>
-				(await core()).invoke<void>('agent_append_file', { id: toId(path), content })
+				(await core()).invoke<void>('agent_append_file', { id: toId(path), content, session })
 			);
 		},
 
 		async createDir(path) {
 			return attempt(path, async () =>
-				(await core()).invoke<void>('agent_create_dir', { id: toId(path) })
+				(await core()).invoke<void>('agent_create_dir', { id: toId(path), session })
 			);
 		},
 
 		async listDir(path) {
 			const result = await attempt(path, async () =>
-				(await core()).invoke<PathMeta[]>('agent_list_dir', { id: toId(path), workspace: at })
+				(await core()).invoke<PathMeta[]>('agent_list_dir', { id: toId(path), session, workspace: at })
 			);
 			return result.ok
 				? ok(result.value.map((meta) => ({ ...meta, path: ROOT + meta.path })))
@@ -314,6 +335,7 @@ export function createTauriEnv(workspace?: number): ExecutionEnv {
 			try {
 				const outcome = await invoke<ExecOutcome>('agent_exec', {
 					id,
+					session,
 					request: {
 						command,
 						cwd: options?.cwd ? toId(options.cwd) : null,
@@ -379,7 +401,7 @@ export function createTauriEnv(workspace?: number): ExecutionEnv {
 				);
 			}
 			return attempt(path, async () =>
-				(await core()).invoke<void>('agent_write_file', { id: toId(path), content })
+				(await core()).invoke<void>('agent_write_file', { id: toId(path), content, session })
 			);
 		},
 
@@ -411,7 +433,7 @@ export function createTauriEnv(workspace?: number): ExecutionEnv {
  * Rust's, against whichever root the index named.
  */
 export function createReadOnlyTauriEnv(workspace: number): ExecutionEnv {
-	const env = createTauriEnv(workspace);
+	const env = createTauriEnv({ workspace });
 	const refuse = <T,>(path: unknown): Promise<Result<T, FileError>> =>
 		Promise.resolve(
 			err(

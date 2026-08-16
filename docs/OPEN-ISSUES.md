@@ -395,6 +395,49 @@ event for asking and none for having answered. Restoring it as a pending questio
 would read "Not answered" over a question that was answered, which is worse than
 the gap. Everything else in the turn restores normally.
 
+### Three sharp edges left by concurrent sessions — tickets 45–48
+
+**Two agents can edit one tree at once, and neither is told.** This is the price
+of declining a per-root turn queue, taken deliberately: the answer is a warning
+([ticket 51](wayfinder/pi-harness/tickets/51-concurrent-write-warning.md)) rather
+than a lock. Until it lands, the second writer overwrites the first silently.
+
+**Undo in a contended root restores a snapshot neither conversation was alone
+in.** `git_checkpoint` captures the whole working tree before a turn, so a
+checkpoint taken for session A already contains part of session B's work, and
+restoring it reverts B's edits too.
+[Ticket 52](wayfinder/pi-harness/tickets/52-undo-under-contention.md) is what
+makes that honest. This is the one that most deserves a per-session git worktree,
+which is the direction the other harnesses took and is not a decision that has
+been made.
+
+**A session in another root cannot be opened without switching workspace.** The
+navigator says so rather than pretending; the reload that used to make it work is
+gone, and doing it properly means the workbench following focus —
+[ticket 49](wayfinder/pi-harness/tickets/49-a-session-in-another-folder.md).
+Switching roots — through the navigator's headers or *Open Folder* — still
+reloads the window and still refuses while any session is mid-turn. The refusal
+on `openFolder` was **missing** and was added by review, not by use: without it
+`choose_workspace` moved Rust's current root under live sessions, and since
+`git_checkpoint` takes no session id, an undo could have reset an unrelated
+repository.
+
+### A long-resumed session lists as *Untitled*, and its transcript disagrees
+
+Seen in the native window: a session whose first turn is *"Write exactly 300
+words…"* was listed as *Untitled session*, and showed its real name the moment it
+was opened. `nameStored` looks `NAME_WINDOW` (60) entries in for the first user
+message, and a session that has been *resumed* many times accumulates tool,
+model and thinking-level entries at every launch — so the first prompt eventually
+falls outside the window.
+
+Pre-existing, and narrow: the name is wrong, nothing else is, and opening the row
+fixes the display because the live name comes from the restored transcript. The
+honest fix is to look for the first user message rather than inside a fixed
+prefix, bounded by something other than an entry count. Not done here, because
+the window exists to stop an unbounded parse per row and replacing it is a
+decision about that cost.
+
 ### One finding from the review, left open on purpose
 
 The 2026-08-15 review (see the dev log) closed five things. This one was not

@@ -4866,3 +4866,129 @@ conversation containing `plum` while that root's newest was an empty session —
 which is what the fallback would have given. Same-workspace switching, the
 damaged-file toast, and a fresh turn appending to the reopened file were each
 driven the same way.
+
+---
+
+## Tickets 45–48 — More than one conversation at a time
+
+**User outcome:** The window holds as many conversations as you open. Moving
+between them is instant and loses nothing. A turn started in one keeps running
+while you work in another, and says so in the navigator when it finishes.
+
+### The shape of the change, in one sentence
+
+A session stopped being three module-level things — a promise cached in
+`sessionStore.ts`, a provider built during `WorkbenchController`'s render, and a
+transcript in `AgentChat`'s `useState` — and became an object the window holds a
+collection of.
+
+That is ticket 45, and it is why it had to come first. All three of those *are*
+"the one session", so a second one was not a feature nobody had built; it was
+unrepresentable. The visible slices after it are small by comparison.
+
+### What replaced the StrictMode promise cache
+
+`sessionOnce` existed because React double-invokes render, so `createAgentProvider`
+ran twice and both runs created a session — an empty orphan on disk at every
+start. A cache keyed per *module* cannot survive a window that wants several
+sessions, so the fix moved rather than shrank: **creating a session is an action
+now**. `sessionSet.bootstrap()` is idempotent and sets its guard before the
+await; everything else happens because somebody pressed something, and a press
+does not happen twice. Confirmed against the running app — the file count did not
+move on start-up.
+
+### Confinement stopped being ambient — ADR 0002
+
+`WorkspaceState` holds one root and every command resolved against whatever it
+held *at the moment it ran*, so "which root am I confined to" was a property of
+timing. Two turns in flight makes that untenable, and it was already the cause of
+one real bug: a workspace switch mutating the root under an open session is
+exactly how the transcript corruption fixed on 2026-08-15 happened. The fix at
+the time was to reload the window on every switch — the mechanism ticket 47 has
+now retired.
+
+So Rust keeps a session table. `create_agent_session` resolves a root the two
+ways a root has always been resolvable, mints an opaque id, and every agent
+filesystem and exec command carries it. **An unknown or stale id is refused, never
+resolved against the current root** — a fallback there would put one session's
+writes into another session's folder, silently, and only when a focus change
+happened to be in flight. `docs/adr/0002-a-root-per-session.md` supersedes 0001
+and answers its four recorded consequences one by one; the fourth,
+`git_checkpoint` being per-tree, is the one still open and is tickets 51 and 52.
+
+This is **stricter** than what it replaces. A session's root is fixed at birth
+rather than mutable underneath in-flight work.
+
+### Where the turns live now
+
+`AgentChat` keeps `setTurns`, `setRunning` and the rest under the same names, and
+they write through to the session instead of to component state. The one line
+that had to go was the opposite of a refactor:
+
+    // A run outliving its view would keep emitting into dead state.
+    useEffect(() => () => runRef.current?.cancel(), []);
+
+Right when unmounting meant the window was going. Exactly wrong when it means you
+looked at another conversation.
+
+`unread` is decided in the session's own event sink rather than by the view,
+because by the time a background turn ends its view was never mounted — which is
+the whole of "leave it working, come back and find out what happened".
+
+### Two decisions worth naming
+
+**The draft is session state.** Losing a half-typed message on focus would make
+switching expensive, which is the opposite of the point. Purely visual state —
+which completion is highlighted, whether the file drawer is open — stays in the
+component, and `AgentChat` is keyed by session so it resets. That split is the
+whole of what "the composer follows focus" means.
+
+**Closing the last session opens a fresh one.** A window with no conversation has
+nothing to be. The closed one is still on disk and still in the navigator, which
+is what "closing is not deleting" means.
+
+### Verified in the native window, with real turns
+
+- Opening a stored conversation added a **second** live session beside the first,
+  with its six restored turns, and no reload.
+- A draft typed in one session was still there after switching away and back; the
+  other session's composer was empty.
+- **Two sessions mid-turn simultaneously**, both marked `running`, one focused and
+  one not — the criterion the whole sequence exists for.
+- The background one finished as `done, unread` with a toast naming it and an
+  *Open* action; focusing it cleared the flag and its full answer was there.
+- The four turns taken across the two sessions landed in **two different files**,
+  checked by reading the user messages back out of `.ade/sessions` — nothing
+  crossed.
+- Closing a session removed it from the collection and it reappeared in the
+  navigator as a stored row. Closing one mid-turn asked first, through the app's
+  own `Confirm`; cancelling changed nothing.
+- The read tool answered from `package.json` in the right root, through the
+  session id rather than the ambient one.
+
+### Still sharp, deliberately
+
+Two agents can now edit one tree at once, and nothing warns either of them.
+A per-root turn queue was declined in favour of saying so out loud — ticket 51
+warns the agent, ticket 52 makes undo name whose work it also reverts. Until
+those land, undo in a contended root restores a snapshot neither conversation was
+alone in. A session in *another* root still cannot be opened without a workspace
+switch; that is ticket 49, and the navigator says so rather than pretending.
+
+### One finding from the review, and it was not in this diff
+
+`switchWorkspace` refuses while any session is mid-turn and reloads when the root
+changes. `openFolder` — the same operation with a dialog in front of it — did
+neither, and nobody had noticed because nothing could run in the background
+before. `choose_workspace` moves Rust's current root the instant the dialog is
+answered, and while a session's *files* now carry their own root, `git_checkpoint`
+and `git_restore_checkpoint` take no session id: a turn taken afterwards in a
+session created before the switch would snapshot the new folder, and an undo would
+reset an unrelated repository. `openFolder` now makes the same refusal and takes
+the same reload.
+
+The reload-based session switch was also removed rather than left lying around.
+`requestSession`, `takeSessionRequest` and `clearSessionRequest` are gone;
+`sessionRequest.ts` keeps only the part that still has to cross a boundary in
+time — a start-up failure with nobody to tell yet. Ticket 53 wants a record of
+*several* open sessions, which is not what a one-slot note ever held.

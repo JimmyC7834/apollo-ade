@@ -7,7 +7,6 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 
 import { parseCommandArgs } from '@earendil-works/pi-agent-core';
 
-import type { AgentEvent, AgentProvider, AgentRun } from '../../agent';
 import { parseCommand, SLASH_COMMANDS } from '../../agent/commands';
 import { complete } from '../../agent/completion';
 import { allTemplates, onTemplatesChange, templateCommands } from '../../agent/promptTemplates';
@@ -21,8 +20,8 @@ import { userTools } from '../../agent/userTools';
 import { Confirm, Icon, Overlay } from '../../ui';
 import { OTHER } from '../../agent/ask';
 import { thinkingUnavailable } from '../../agent/models';
-import { liveStatus, type SessionStatus } from '../../sessions';
 import { ComposerBar } from './ComposerBar';
+import type { LiveSession } from './liveSession';
 import { ContextExplorer } from './ContextExplorer';
 import { withAttachments } from './composer';
 import { EventChip } from './EventChip';
@@ -31,7 +30,6 @@ import { ProfileModal } from './ProfileModal';
 import { compactResult, referencesMarkdown, toolReferences } from './references';
 import {
 	answerQuestion,
-	applyEvent,
 	approvalLabel,
 	asPlainText,
 	canAnswer,
@@ -53,7 +51,15 @@ import {
 } from './transcript';
 
 export interface AgentChatProps {
-	readonly provider: AgentProvider;
+	/**
+	 * The conversation on screen — ticket 45.
+	 *
+	 * The turns, the run and the flags belong to it, not to this component, and
+	 * that is the whole architectural change: a session nobody is looking at goes
+	 * on accumulating turns, and this renders whichever one is focused. Everything
+	 * below that is purely about *drawing* the chat is still local state.
+	 */
+	readonly session: LiveSession;
 	/**
 	 * Every file in the workspace, root-relative, for `@` — ticket 27.
 	 *
@@ -65,19 +71,6 @@ export interface AgentChatProps {
 	readonly files?: readonly string[];
 	/** Routed to the workbench live region for state changes worth hearing. */
 	readonly onAnnounce?: (message: string) => void;
-	/**
-	 * Report the live session's state upward, for the Session Navigator.
-	 *
-	 * A callback rather than lifting `running`/`awaiting` into the controller:
-	 * those are this component's own working state, and the navigator wants one
-	 * derived answer, not three raw flags it would have to combine correctly.
-	 * `name` is the first prompt, which is the only thing about a session that
-	 * is naturally a name.
-	 */
-	readonly onSession?: (state: {
-		readonly status: SessionStatus;
-		readonly name: string | undefined;
-	}) => void;
 	/**
 	 * Open or activate an artifact, by id — an artifact reference was clicked.
 	 *
@@ -403,22 +396,46 @@ function UsageView({ usage }: { readonly usage: Usage }) {
 }
 
 export function AgentChat({
-	provider,
+	session,
 	files = [],
 	onAnnounce,
-	onSession,
 	onOpenArtifact,
 	onTranscript,
 }: AgentChatProps) {
-	const [turns, setTurns] = useState<readonly Turn[]>([]);
-	const [prompt, setPrompt] = useState('');
-	const [running, setRunning] = useState(false);
-	const [awaiting, setAwaiting] = useState(false);
+	const provider = session.provider;
+	/*
+	 * The session's own state, subscribed to rather than held.
+	 *
+	 * Destructured into the same names the body used when they were `useState`,
+	 * so what reads them is unchanged — the move is where they live, not what
+	 * they mean. `setTurns`, `setRunning` and friends below write through to the
+	 * session, which is what keeps working after this component has unmounted.
+	 */
+	const { turns, running, compacting, awaiting, draft, attachments } = useSyncExternalStore(
+		session.subscribe,
+		session.snapshot
+	);
+	const setTurns = session.setTurns;
+	const setPrompt = useCallback((next: string) => session.patch({ draft: next }), [session]);
+	const setCompacting = useCallback(
+		(next: boolean) => session.patch({ compacting: next }),
+		[session]
+	);
+	/*
+	 * Updater-shaped like the `useState` setter it replaces, because two of its
+	 * callers read the current list to build the next one and a bare value would
+	 * make them close over a stale array.
+	 */
+	const setAttachments = useCallback(
+		(next: readonly string[] | ((current: readonly string[]) => readonly string[])) =>
+			session.patch({
+				attachments: typeof next === 'function' ? next(session.snapshot().attachments) : next,
+			}),
+		[session]
+	);
+	const setAwaiting = useCallback((next: boolean) => session.patch({ awaiting: next }), [session]);
+	const prompt = draft;
 	const [transcriptOpen, setTranscriptOpen] = useState(false);
-	// Tracked separately from `running` because compaction cannot be stopped —
-	// pi's `compact()` takes no abort signal — so the Stop button must be gone
-	// rather than present and inert.
-	const [compacting, setCompacting] = useState(false);
 	/**
 	 * Why the last thing you typed did not go anywhere.
 	 *
@@ -448,7 +465,6 @@ export function AgentChat({
 	 * can be taken off before it goes anywhere. What they become on the way out is
 	 * `withAttachments`' business.
 	 */
-	const [attachments, setAttachments] = useState<readonly string[]>([]);
 	const [explorerOpen, setExplorerOpen] = useState(false);
 	/** A file is over the composer right now — the border and surface say so. */
 	const [dragging, setDragging] = useState(false);
@@ -463,18 +479,6 @@ export function AgentChat({
 	const spent = useMemo(() => sessionCost(turns), [turns]);
 
 	/*
-	 * `awaiting` covers an approval and a question alike: both stop the run dead
-	 * until the user answers, which is what "waiting for input" means. Reporting
-	 * it separately from `running` is the whole point — see `liveStatus`.
-	 */
-	useEffect(() => {
-		onSession?.({
-			status: liveStatus({ running: running || compacting, blocked: awaiting, turns: turns.length }),
-			name: turns[0]?.prompt,
-		});
-	}, [onSession, running, compacting, awaiting, turns]);
-
-	/*
 	 * The turns, for the palette to search without subscribing to them. A ref
 	 * because the search reads whatever is current at the moment it is called, and
 	 * a ref is the one thing whose identity does not change when it does.
@@ -487,7 +491,7 @@ export function AgentChat({
 	);
 	useEffect(() => onTranscript?.(search), [onTranscript, search]);
 
-	const runRef = useRef<AgentRun>(null);
+	const runRef = session.run;
 	const promptRef = useRef<HTMLTextAreaElement>(null);
 	const logRef = useRef<HTMLDivElement>(null);
 
@@ -500,81 +504,34 @@ export function AgentChat({
 		}
 	}, [turns]);
 
-	// A run outliving its view would keep emitting into dead state.
-	useEffect(() => () => runRef.current?.cancel(), []);
-
 	/*
-	 * The conversation this window opened with.
+	 * **A run deliberately outlives this view.** It used to be cancelled on
+	 * unmount, which was right when unmounting meant the window was going; it is
+	 * exactly wrong now, when it means you looked at another conversation. The
+	 * events go to the session, which is still there — ticket 48.
 	 *
-	 * **Once, at mount, and only into an empty transcript.** The provider is built
-	 * once per window and the session is fixed for its life — switching sessions is
-	 * a reload, not a rebind (`sessionRequest.ts`) — so re-reading it later could
-	 * only ever put history back on top of a turn just taken.
-	 *
-	 * Restored turns are `Turn`s like any other: `replayEntries` produces the
-	 * events and `applyEvent` reduces them, which is why nothing here knows what a
-	 * tool call or a compaction looks like.
+	 * What is left is the one thing that *is* this component's: putting the cursor
+	 * back in the composer when a turn ends while you are watching it.
 	 */
 	useEffect(() => {
-		let cancelled = false;
-		void provider.history().then((restored) => {
-			if (cancelled || restored.length === 0) {
-				return;
-			}
-			setTurns((current) =>
-				current.length > 0
-					? current
-					: restored.map((turn) =>
-							turn.events.reduce<Turn>(applyEvent, {
-								id: turn.id,
-								prompt: turn.prompt,
-								parts: [],
-								status: 'running',
-							})
-						)
-			);
-		});
+		session.onIdle = () => promptRef.current?.focus();
 		return () => {
-			cancelled = true;
+			session.onIdle = undefined;
 		};
-	}, [provider]);
+	}, [session]);
 
 	/**
 	 * Open a turn and return the sink its events go into.
 	 *
 	 * Shared by sending and by `/compact`, because both produce something the
 	 * user reads in the transcript. Only one of them has a run to cancel.
+	 *
+	 * **The sink is the session's, not this component's** — ticket 48. It closes
+	 * over an object that outlives the view, so focusing another conversation
+	 * stops nothing and loses nothing, and whether the finish is worth marking
+	 * unread is decided where the answer is known.
 	 */
-	const beginTurn = useCallback(
-		(label: string) => {
-			const turn: Turn = { id: Date.now(), prompt: label, parts: [], status: 'running' };
-			setTurns((current) => [...current, turn]);
-			setRunning(true);
-
-			return (event: AgentEvent) => {
-				setTurns((current) =>
-					current.map((item) => (item.id === turn.id ? applyEvent(item, event) : item))
-				);
-				if (event.kind === 'approval') {
-					setAwaiting(true);
-					onAnnounce?.(`Approval required: ${event.name}`);
-				} else if (event.kind === 'question') {
-					setAwaiting(true);
-					onAnnounce?.(`The agent asked: ${event.question}`);
-				} else if (event.kind === 'complete' || event.kind === 'cancelled') {
-					setRunning(false);
-					setCompacting(false);
-					setAwaiting(false);
-					runRef.current = null;
-					onAnnounce?.(event.kind === 'complete' ? 'Agent finished' : 'Agent stopped');
-					// The composer is where the next action starts; a keyboard user
-					// should not have to find their way back to it.
-					promptRef.current?.focus();
-				}
-			};
-		},
-		[onAnnounce]
-	);
+	const beginTurn = session.begin;
 
 	/** Refuse, visibly and audibly, without touching the transcript. */
 	const say = useCallback(

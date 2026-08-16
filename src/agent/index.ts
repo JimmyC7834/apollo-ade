@@ -240,10 +240,26 @@ export interface AgentProvider {
 	 * costs you the history, not the window.
 	 */
 	history(): Promise<readonly HistoryTurn[]>;
+	/**
+	 * The file this session is appending to, for the navigator to recognise.
+	 *
+	 * A window holds several conversations now, and a stored row that is *already
+	 * open* must not be offered as something to open — it would make two harnesses
+	 * append to one file. Undefined where there is no disk, and never rejects.
+	 */
+	path(): Promise<string | undefined>;
+	/**
+	 * Give up the root this session claimed. Called when the session is closed.
+	 *
+	 * Not a cancel: a run is stopped through its `AgentRun`, and this is the
+	 * *root* being handed back — after it, every command carrying this session's
+	 * id is refused by Rust rather than resolved against whatever is focused.
+	 */
+	dispose(): void;
 }
 
 export { createAgentProvider } from './provider';
-export { listSessionsIn, type StoredSession } from './sessionStore';
+export { listSessionsIn, type SessionWant, type StoredSession } from './sessionStore';
 export { replayEntries, type HistoryTurn } from './history';
 export { undoNote, type UndoOutcome } from './undo';
 export { loadProfileFiles, type ProfileLoad } from './profileFiles';

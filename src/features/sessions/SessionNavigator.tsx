@@ -9,6 +9,14 @@ export interface SessionNavigatorProps {
 	readonly onSelect: (session: Session) => void;
 	/** Switch to a workspace by its index in the recent list. Rust owns that list. */
 	readonly onSwitchWorkspace: (index: number) => void;
+	/**
+	 * Start a conversation in the workspace you are in — ticket 47.
+	 *
+	 * **Born inside the group it belongs to**, because picking where a session
+	 * goes and making it are one gesture. Only the current workspace offers it;
+	 * a session in a root this window is not in is ticket 49.
+	 */
+	readonly onNewSession?: () => void;
 }
 
 const STATUS_LABEL: Record<SessionStatus, string> = {
@@ -36,6 +44,7 @@ export function SessionNavigator({
 	activeId,
 	onSelect,
 	onSwitchWorkspace,
+	onNewSession,
 }: SessionNavigatorProps) {
 	const [expanded, setExpanded] = useState(false);
 	const [collapsedGroups, setCollapsedGroups] = useState<readonly string[]>([]);
@@ -154,6 +163,19 @@ export function SessionNavigator({
 										</span>
 									</button>
 								))}
+
+						{groupCollapsed || switchTo !== undefined || !onNewSession ? null : (
+							<button
+								type="button"
+								className="ide-navigator-row"
+								onClick={onNewSession}
+							>
+								<span className="ide-navigator-icon">
+									<Icon name="add" />
+								</span>
+								<span className="ide-navigator-label">New session</span>
+							</button>
+						)}
 					</div>
 				);
 			})}

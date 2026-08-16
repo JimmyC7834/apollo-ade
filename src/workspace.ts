@@ -60,7 +60,7 @@ export interface WorkspaceProvider {
 	 * a root, and a path parameter here would reopen that hole under a
 	 * friendlier name. An index can only reach a folder the user already picked
 	 * through an OS dialog, so switching grants nothing choosing did not.
-	 * See `docs/adr/0001-multi-root-confinement.md`.
+	 * See `docs/adr/0002-a-root-per-session.md`.
 	 */
 	switchWorkspace(index: number): Promise<WorkspaceSelection>;
 	getTree(): Promise<readonly WorkspaceEntry[]>;

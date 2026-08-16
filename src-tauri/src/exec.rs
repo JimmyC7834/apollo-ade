@@ -28,7 +28,7 @@ use tauri::ipc::Channel;
 use tauri::Manager;
 
 use crate::reaper::Reaper;
-use crate::workspace::{root_of, WorkspaceState};
+use crate::workspace::{agent_root, SessionRoots, WorkspaceState};
 
 /// Ceiling on what crosses the IPC, per stream.
 ///
@@ -190,11 +190,16 @@ pub fn agent_exec_cancel(id: String, state: tauri::State<'_, ExecState>) {
 pub async fn agent_exec(
     id: String,
     request: ExecRequest,
+    session: Option<String>,
     on_event: Channel<ExecEvent>,
     app: tauri::AppHandle,
     workspace: tauri::State<'_, WorkspaceState>,
+    roots: tauri::State<'_, SessionRoots>,
 ) -> Result<ExecOutcome, ExecFailure> {
-    let root = root_of(&workspace).map_err(|e| fail("spawn_error", e))?;
+    // The session's root, not the focused one. A turn running in the background
+    // must not follow the window into another folder mid-command.
+    let root = agent_root(&workspace, &roots, session.as_deref())
+        .map_err(|e| fail("spawn_error", e))?;
 
     // Confine the cwd, and only the cwd.
     let cwd = match &request.cwd {

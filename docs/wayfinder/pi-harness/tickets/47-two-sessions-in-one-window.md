@@ -1,7 +1,11 @@
 # 47 — Two sessions in one window
 
 **Blocked by:** [45](45-session-as-an-object.md).
-**Status:** ready-for-agent
+**Status:** **landed, and driven in the native window.** Opening a stored conversation adds
+a second live session with its restored transcript and no reload; drafts survive focus;
+turns land only in their own session's file. The one criterion not met is a session in
+*another* root, which the navigator now refuses out loud rather than pretending —
+[ticket 49](49-a-session-in-another-folder.md).
 
 The first slice anyone can see, and the one that retires the reload.
 

@@ -1,7 +1,10 @@
 # 48 — A session keeps running while you look at another
 
 **Blocked by:** [47](47-two-sessions-in-one-window.md).
-**Status:** ready-for-agent
+**Status:** **landed, and driven with two real overlapping turns.** Both sessions showed
+`running` at once, the unfocused one finished `done, unread` with a notification naming it,
+and focusing it cleared the flag with its whole answer intact. Closing a running session
+confirms through the app's own `Confirm` and stops the turn.
 
 The point of the whole sequence: leave it working, go do something else, come back.
 

@@ -43,6 +43,7 @@ import {
 	diskSessions,
 	memorySessions,
 	type SessionStore,
+	type SessionWant,
 } from './sessionStore';
 import { mapEvent } from './events';
 import { installRustFetch } from './rustFetch';
@@ -1165,6 +1166,10 @@ function createRunner(
 		undo,
 		listSessions: () => sessions.list(),
 		history,
+		path: () => sessions.path,
+		// Overridden on the native path, where there is a Rust session id to
+		// release. Nothing to do for a runner that has no root registered.
+		dispose: () => {},
 	};
 }
 
@@ -1197,18 +1202,46 @@ function createRunner(
  * named — see the guard in `begin`. The fixture is browser mode's, and it says
  * so in every one of its replies.
  */
-export function createAgentProvider(): AgentProvider {
+export async function createAgentProvider(want: SessionWant = {}): Promise<AgentProvider> {
 	if (isTauri()) {
 		// Diverts provider hosts to Rust for every adapter, including the Google
-		// ones that refuse an injected `fetch`.
+		// ones that refuse an injected `fetch`. Idempotent, so a window with six
+		// sessions in it still patches `fetch` once.
 		installRustFetch();
-		const env = createTauriEnv();
+		/*
+		 * **The root is claimed before anything can touch it.** Rust registers the
+		 * folder and hands back an id; every path this environment names resolves
+		 * against *that* root for as long as the session lives, whatever the window
+		 * is showing. Ticket 46, and `docs/adr/0002-a-root-per-session.md`.
+		 */
+		const { invoke } = await import('@tauri-apps/api/core');
+		// `workspace: null` is "the root this window is in". Registering a session
+		// against a *different* recent root is ticket 49's; the door is open on the
+		// Rust side and nothing walks through it yet.
+		const session = await invoke<string>('create_agent_session', { workspace: null });
+		const env = createTauriEnv({ session });
 		/*
 		 * `activeProfile().model` may still be the empty built-in here, and that
 		 * is expected rather than tolerated: `modelFollowsProfile` is `true`, so
 		 * the moment `loadProfileFiles` installs the real one the harness is told.
 		 */
-		return createRunner(env, diskSessions(env), allModels(), modelFor(activeProfile().model), true);
+		const runner = createRunner(
+			env,
+			diskSessions(env, want),
+			allModels(),
+			modelFor(activeProfile().model),
+			true
+		);
+		return {
+			...runner,
+			/*
+			 * Handing the root back is what makes "closed" true on the Rust side as
+			 * well as in the window: every command carrying this id starts being
+			 * refused, so a straggling write from a run that was stopped cannot land
+			 * in a folder nobody is looking at.
+			 */
+			dispose: () => void invoke('close_agent_session', { session }).catch(() => {}),
+		};
 	}
 
 	// Browser mode: the canned provider. It is the same harness and the same
@@ -1259,6 +1292,10 @@ export function createAgentProvider(): AgentProvider {
 		// Empty for the same reason, and by the same code path: a session in
 		// memory has entries, it simply starts with none.
 		history: runner.history,
+		// Undefined here — there is no file — which is what the navigator reads
+		// as "not one of the stored rows".
+		path: runner.path,
+		dispose: runner.dispose,
 	};
 }
 

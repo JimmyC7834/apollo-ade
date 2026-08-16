@@ -15,7 +15,7 @@ import {
 } from '@earendil-works/pi-agent-core';
 import { contentText } from '@earendil-works/pi-ai';
 import { createReadOnlyTauriEnv } from './env';
-import { recordUnopened, sessionCandidates, takeSessionRequest } from '../sessionRequest';
+import { recordUnopened, sessionCandidates } from '../sessionRequest';
 
 /**
  * Where the transcript lives.
@@ -36,6 +36,15 @@ const SESSIONS_ROOT = '/.ade/sessions';
  */
 export interface SessionStore {
 	readonly own: Promise<Session>;
+	/**
+	 * The file `own` is appending to, once it is known.
+	 *
+	 * Needed by the navigator, which has to tell a stored row apart from the
+	 * *same* conversation already open in a tab — with several sessions live at
+	 * once, "active" stopped being a property one store could answer alone.
+	 * Undefined where there is no disk, and never rejects.
+	 */
+	readonly path: Promise<string | undefined>;
 	/** A session of a subagent's own, recorded as belonging to `own`. */
 	child(): Promise<Session>;
 	/** Every stored conversation in this workspace, newest first. */
@@ -54,35 +63,36 @@ export interface StoredSession {
 	readonly id: string;
 	readonly name: string;
 	readonly startedAt: string;
-	/** True for the one this window is appending to right now. */
-	readonly active: boolean;
 	/** No user message in it — started and abandoned, rather than had. */
 	readonly empty: boolean;
 }
 
-let sessionOnce: Promise<Session<JsonlSessionMetadata>> | undefined;
-
 /**
- * One session per window, however many times the provider is built.
+ * Which conversation a store opens with.
  *
- * React's StrictMode double-invokes `useMemo` in development, so
- * `createAgentProvider` runs twice — and both runs found no stored session and
- * both created one, leaving an empty orphan on disk at every start. Caching the
- * *promise* rather than the session is what makes the second caller wait for
- * the first rather than race it.
- *
- * This does not make concurrent writers safe in general: two windows on the
- * same workspace are two module instances, and both would open the newest
- * session and append to the same file. Nothing here prevents that — and note
- * that picking a session does *not* reopen that hole, because a switch is a
- * reload of this same one window rather than a second one.
+ * **The choice is the caller's now, and that is ticket 45.** It used to be made
+ * here, from a module-level cache that guaranteed one session per window — which
+ * is precisely the thing a window holding several of them cannot have. The
+ * double-creation that cache existed to prevent has not gone away; it has moved
+ * to where creating a session is an *action* rather than a render, and one
+ * action cannot happen twice. See `sessionSet.ts`.
  */
-export function diskSessions(env: ExecutionEnv): SessionStore {
+export type SessionWant =
+	/** A conversation of its own, whatever is already on disk. */
+	| { readonly fresh: true }
+	/** Resume: this stored session if it can be opened, else the newest. */
+	| { readonly fresh?: false; readonly requested?: string };
+
+export function diskSessions(env: ExecutionEnv, want: SessionWant = {}): SessionStore {
 	const repo = new JsonlSessionRepo({ fs: env, sessionsRoot: SESSIONS_ROOT });
-	const own = (sessionOnce ??= openSession(env, repo));
+	const own = openSession(env, repo, want);
 	return {
 		own,
-		list: () => listStored(repo, own),
+		path: own.then(
+			async (session) => (await session.getMetadata()).path,
+			() => undefined
+		),
+		list: () => listStored(repo),
 		/*
 		 * **Both fields, and they are not the same claim.** `parentSessionPath`
 		 * because it is true and because the deferred child chat view needs the
@@ -186,6 +196,11 @@ function summarise(text: string): string {
 /**
  * A workspace's stored conversations, newest first.
  *
+ * **Which of them are open is not answered here.** It cannot be: a window holds
+ * several sessions now, each with its own store, so "is this the one being
+ * appended to" is a question only the collection can answer. The navigator
+ * filters by the paths its open sessions report — see `SessionStore.path`.
+ *
  * **Children are excluded, for the reason `openSession` excludes them.** A
  * subagent's session is a sub-task's record, not a conversation the user had,
  * and listing them would bury the four turns someone remembers under forty they
@@ -193,24 +208,8 @@ function summarise(text: string): string {
  */
 async function listStored(
 	repo: JsonlSessionRepo,
-	own: Promise<Session<JsonlSessionMetadata>> | undefined,
 	limit = MAX_LISTED
 ): Promise<readonly StoredSession[]> {
-	/*
-	 * The active path is read first and separately: if it cannot be read the
-	 * list is still worth showing, it merely marks nothing as active — and the
-	 * live row is drawn from live state regardless, so nothing disappears.
-	 *
-	 * Undefined for another workspace, where nothing is active by definition:
-	 * one window, one harness, one root.
-	 */
-	let active: string | undefined;
-	try {
-		active = own === undefined ? undefined : (await (await own).getMetadata()).path;
-	} catch {
-		active = undefined;
-	}
-
 	const stored = (await repo.list({ cwd: '/' }))
 		.filter((entry) => !entry.metadata?.delegatedFrom)
 		.slice(0, limit);
@@ -218,13 +217,7 @@ async function listStored(
 	return await Promise.all(
 		stored.map(async (metadata) => {
 			const { name, empty } = await nameStored(repo, metadata);
-			return {
-				id: metadata.path,
-				name,
-				startedAt: metadata.createdAt,
-				active: metadata.path === active,
-				empty,
-			};
+			return { id: metadata.path, name, startedAt: metadata.createdAt, empty };
 		})
 	);
 }
@@ -247,7 +240,7 @@ export async function listSessionsIn(index: number): Promise<readonly StoredSess
 			fs: createReadOnlyTauriEnv(index),
 			sessionsRoot: SESSIONS_ROOT,
 		});
-		return await listStored(repo, undefined, MAX_LISTED_ELSEWHERE);
+		return await listStored(repo, MAX_LISTED_ELSEWHERE);
 	} catch {
 		return [];
 	}
@@ -279,7 +272,8 @@ export async function listSessionsIn(index: number): Promise<readonly StoredSess
  */
 async function openSession(
 	env: ExecutionEnv,
-	repo: JsonlSessionRepo
+	repo: JsonlSessionRepo,
+	want: SessionWant
 ): Promise<Session<JsonlSessionMetadata>> {
 	/*
 	 * A self-ignoring directory, so the transcript never reaches the user's
@@ -290,11 +284,14 @@ async function openSession(
 	await env.writeFile('/.ade/.gitignore', '*\n');
 
 	/*
-	 * Taken outside the `try`, so it is consumed even if listing throws. A
-	 * request that survived a failed start-up would reopen on the next launch,
-	 * long after the user had forgotten asking.
+	 * A new session skips all of it. Nothing on disk is a candidate for a
+	 * conversation that is meant to be empty, and *"resume unless asked"* was
+	 * only ever right when a window held one session.
 	 */
-	const requested = takeSessionRequest();
+	if (want.fresh) {
+		return repo.create({ cwd: '/' });
+	}
+	const requested = want.requested;
 
 	let asked: string | undefined;
 	try {
@@ -361,6 +358,9 @@ async function openSession(
 export function memorySessions(): SessionStore {
 	return {
 		own: Promise.resolve(new Session(new InMemorySessionStorage())),
+		// No disk, so no file to name. The navigator reads this as "not one of
+		// the stored rows", which is exactly right in browser mode.
+		path: Promise.resolve(undefined),
 		child: async () => new Session(new InMemorySessionStorage()),
 		/*
 		 * Empty, not fabricated. Browser mode has no disk, so it has no stored

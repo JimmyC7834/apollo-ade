@@ -4,7 +4,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 
-import { createAgentProvider, listSessionsIn, loadProfileFiles, type StoredSession } from '../agent';
+import { listSessionsIn, loadProfileFiles, type StoredSession } from '../agent';
+import { sessionSet } from '../features/agent/sessionSet';
 import { TOOL_ARTIFACTS, clampDock, dockSide, isToolArtifact } from '../artifacts';
 import { createChangesProvider } from '../changes';
 import { buildCommands } from '../commands/commandRegistry';
@@ -20,8 +21,8 @@ import { useLsp } from '../features/lsp/useLsp';
 import { refuseReason, type Replacement } from '../features/search/replace';
 import { SessionNavigator } from '../features/sessions/SessionNavigator';
 import { createPersistenceAdapter, type PersistedState } from '../persistence';
-import { clearSessionRequest, requestSession, takeUnopened } from '../sessionRequest';
-import { LIVE_SESSION_ID, breadcrumb, buildGroups, type Session, type SessionStatus } from '../sessions';
+import { takeUnopened } from '../sessionRequest';
+import { breadcrumb, buildGroups, type Session, type SessionStatus } from '../sessions';
 import { createTerminalAdapter } from '../terminal';
 import { Confirm, Prompt } from '../ui';
 import { applyTheme, type ThemeName } from '../ui/theme';
@@ -113,11 +114,15 @@ export function WorkbenchController() {
 	const [helpOpen, setHelpOpen] = useState(false);
 	const [branch, setBranch] = useState<string | undefined>(undefined);
 	const [recents, setRecents] = useState<readonly WorkspaceSelection[]>([]);
-	/** The live session, as `AgentChat` reports it. */
-	const [session, setSession] = useState<{
-		readonly status: SessionStatus;
-		readonly name: string | undefined;
-	}>({ status: 'idle', name: undefined });
+	/**
+	 * Every conversation this window is holding, and which one is on screen.
+	 *
+	 * Subscribed to rather than held, because the collection outlives every
+	 * component that draws it — a turn running in a session nobody has open has
+	 * nothing else to belong to. See `sessionSet.ts`.
+	 */
+	const live = useSyncExternalStore(sessionSet.subscribe, sessionSet.view);
+	const session = live.focused;
 	/** This workspace's stored conversations. Empty until they are read. */
 	const [stored, setStored] = useState<readonly StoredSession[]>([]);
 	/** Other recent roots' conversations, keyed by root path. See the effect below. */
@@ -125,21 +130,14 @@ export function WorkbenchController() {
 		new Map()
 	);
 	const [commandCenterOpen, setCommandCenterOpen] = useState(false);
+	/** The session whose close is being confirmed, because a turn is in flight. */
+	const [closing, setClosing] = useState<string>();
 	/*
 	 * Notifications — ticket 44. Toasts are a list rather than one slot because
 	 * two things can finish while you are away, and the second replacing the first
 	 * would make the mechanism unreliable exactly when it is needed.
 	 */
 	const [toasts, setToasts] = useState<readonly Toast[]>([]);
-	/**
-	 * Whether the live session has something you have not seen.
-	 *
-	 * **Not a lifecycle status**, which is the whole point of `Session.unread`: a
-	 * session can be done and read, or done and unread, and folding the two loses
-	 * the second. Set when a turn ends while the window is not focused; cleared
-	 * when it comes back, because that is when you saw it.
-	 */
-	const [unread, setUnread] = useState(false);
 	/** Search the live transcript. Handed over by the chat; see `onTranscript`. */
 	const transcriptSearch = useRef<(term: string) => readonly TranscriptHit[]>(() => []);
 	const searchTranscript = useCallback((term: string) => transcriptSearch.current(term), []);
@@ -174,48 +172,56 @@ export function WorkbenchController() {
 		[announce]
 	);
 
-	/*
-	 * A finished turn is worth a toast **only when you are not here to see it**.
-	 * With the window focused the transcript already said so, and a notice for
-	 * something on screen is the kind of noise that teaches people to ignore the
-	 * mechanism. The same condition sets unread.
+	/**
+	 * A finished turn is worth a toast **when you were not there to see it**.
+	 *
+	 * Two ways not to be there now, and the second is the new one: the window is
+	 * behind something else, or the session that finished is not the session on
+	 * screen — which is the whole point of ticket 48. A notice for a turn you are
+	 * watching is the kind of noise that teaches people to ignore the mechanism.
+	 *
+	 * Keyed per session in a ref, because "the previous status" stopped being a
+	 * single value the moment there was more than one conversation. A ref rather
+	 * than state for the reason it always was: this runs from an effect and
+	 * raising a toast from a state updater raised two under StrictMode.
 	 */
-	/*
-	 * The previous status, in a ref rather than read inside the `setSession`
-	 * updater. A state updater has to be pure — StrictMode calls it twice to prove
-	 * it — and raising a toast from inside one raised two.
-	 */
-	const lastStatus = useRef<SessionStatus>('idle');
-	const onSessionState = useCallback(
-		(next: { readonly status: SessionStatus; readonly name: string | undefined }) => {
-			setSession(next);
-			if (
-				lastStatus.current !== next.status &&
-				(next.status === 'done' || next.status === 'waiting') &&
-				!document.hasFocus()
-			) {
-				setUnread(true);
-				notify(
-					next.status === 'waiting'
-						? 'The agent is waiting for your answer.'
-						: 'The agent finished.'
-				);
-			}
-			lastStatus.current = next.status;
-		},
-		[notify]
-	);
-
-	// Coming back is when you saw it. Nothing else clears unread, because nothing
-	// else means you looked.
+	const lastStatus = useRef(new Map<string, SessionStatus>());
 	useEffect(() => {
-		const seen = () => setUnread(false);
-		window.addEventListener('focus', seen);
-		return () => window.removeEventListener('focus', seen);
-	}, []);
+		for (const open of live.sessions) {
+			const status = open.status();
+			const before = lastStatus.current.get(open.key) ?? 'idle';
+			lastStatus.current.set(open.key, status);
+			if (before === status || (status !== 'done' && status !== 'waiting')) {
+				continue;
+			}
+			if (open === live.focused && document.hasFocus()) {
+				continue;
+			}
+			const who = open.name() ?? 'A session';
+			notify(
+				status === 'waiting' ? `${who} is waiting for your answer.` : `${who} finished.`,
+				open === live.focused ? undefined : { label: 'Open', run: () => sessionSet.focus(open.key) }
+			);
+		}
+		// Sessions that have been closed leave nothing behind to compare against.
+		for (const key of [...lastStatus.current.keys()]) {
+			if (!live.sessions.some((open) => open.key === key)) {
+				lastStatus.current.delete(key);
+			}
+		}
+	}, [live, notify]);
 
 	const provider = useMemo(() => createWorkspaceProvider(), []);
-	const agentProvider = useMemo(() => createAgentProvider(), []);
+	/*
+	 * The window's first conversation, opened as an *action* rather than during
+	 * render — ticket 45. `bootstrap` is idempotent, which is what makes
+	 * StrictMode's double-invoked effect produce one session and one file rather
+	 * than the module-level promise cache that used to guarantee it.
+	 */
+	useEffect(() => {
+		sessionSet.onAnnounce(announce);
+		sessionSet.bootstrap();
+	}, [announce]);
 	const changesProvider = useMemo(() => createChangesProvider(), []);
 	const terminalAdapter = useMemo(() => createTerminalAdapter(), []);
 	const [selection, setSelection] = useState<WorkspaceSelection | undefined>(undefined);
@@ -379,8 +385,33 @@ export function WorkbenchController() {
 		if (dirty) {
 			return;
 		}
+		/*
+		 * **The same refusal `switchWorkspace` makes, and it was missing here.**
+		 * `choose_workspace` moves Rust's current root the moment the dialog is
+		 * answered. A session's *files* survive that — they carry their own root
+		 * now — but `git_checkpoint` and `git_restore_checkpoint` take no session
+		 * and resolve against whichever root is current, so a turn taken in a
+		 * session created before the switch would snapshot the *new* folder and an
+		 * undo would reset an unrelated repository. Found by review, not by use.
+		 */
+		if (live.sessions.some((open) => open.status() === 'running' || open.status() === 'waiting')) {
+			announce('A session is mid-turn. Wait for it to finish before opening another folder.');
+			return;
+		}
 		const chosen = await provider.chooseWorkspace();
 		if (!chosen) {
+			return;
+		}
+		/*
+		 * Reloaded for `switchWorkspace`'s reason, which applies identically here:
+		 * the sessions this window holds were built against the old root, and
+		 * rebinding them in place would mean rebuilding every provider and harness
+		 * mid-life. Start-up reads the root back from Rust, which is the proven
+		 * path. Doing this without a reload is what left a session pointing at one
+		 * folder while the checkpoint pointed at another.
+		 */
+		if (chosen.path !== selection?.path) {
+			window.location.reload();
 			return;
 		}
 		// Editor ids are relative to the old root, so they cannot survive.
@@ -391,7 +422,7 @@ export function WorkbenchController() {
 		// A deliberate choice supersedes a root that failed to restore: the
 		// user has answered the question the held record was waiting on.
 		setUnrestored(undefined);
-	}, [dirty, provider]);
+	}, [announce, dirty, live.sessions, provider, selection?.path]);
 
 	const openFile = useCallback(
 		async (id: string, revealLine?: number) => {
@@ -889,6 +920,44 @@ export function WorkbenchController() {
 	const closeHelp = useCallback(() => setHelpOpen(false), []);
 	const closeCommandCenter = useCallback(() => setCommandCenterOpen(false), []);
 
+	/** A conversation of its own, in the root you are in. Ticket 47. */
+	const newSession = useCallback(async () => {
+		announce('New session.');
+		await sessionSet.open({ fresh: true });
+	}, [announce]);
+
+	/**
+	 * Stop watching the focused conversation.
+	 *
+	 * **Closing is not deleting.** The file stays on disk and the row stays in the
+	 * navigator as a stored conversation, because reopening is cheap now. A turn
+	 * in flight is confirmed first and stopped on confirm — ticket 48 — since the
+	 * one thing closing does destroy is a run nobody asked to end.
+	 */
+	const dropSession = useCallback(
+		(key: string) => {
+			sessionSet.close(key);
+			announce('Session closed. It is still listed as a stored conversation.');
+		},
+		[announce]
+	);
+	const closeSession = useCallback(() => {
+		const going = live.focused;
+		if (!going) {
+			return;
+		}
+		/*
+		 * Asked through the app's own `Confirm` rather than `window.confirm`, which
+		 * blocks the whole webview and cannot be styled or driven. `ConfirmDiscard`
+		 * is the same shape for the same reason.
+		 */
+		if (going.status() === 'running' || going.status() === 'waiting') {
+			setClosing(going.key);
+			return;
+		}
+		dropSession(going.key);
+	}, [dropSession, live.focused]);
+
 	const commands = useMemo(
 		() =>
 			buildCommands({
@@ -914,9 +983,13 @@ export function WorkbenchController() {
 				openFolder: provider.canChooseWorkspace ? () => void openFolder() : undefined,
 				openFolderDisabled: dirty ? 'Save your changes first' : undefined,
 				showAccessibilityHelp: () => setHelpOpen(true),
+				newSession: () => void newSession(),
+				closeSession,
 			}),
 		[
 			showArtifact,
+			newSession,
+			closeSession,
 			closeEditor,
 			saveFile,
 			activeEditorId,
@@ -1012,9 +1085,13 @@ export function WorkbenchController() {
 	 * are still being read, and the answer to the old question must not overwrite
 	 * the answer to the new one.
 	 */
+	const anyProvider = live.sessions[0]?.provider;
 	useEffect(() => {
+		if (!anyProvider) {
+			return;
+		}
 		let cancelled = false;
-		void agentProvider.listSessions().then((sessions) => {
+		void anyProvider.listSessions().then((sessions) => {
 			if (cancelled) {
 				return;
 			}
@@ -1047,7 +1124,13 @@ export function WorkbenchController() {
 		return () => {
 			cancelled = true;
 		};
-	}, [agentProvider, notify, selection]);
+		/*
+		 * Re-read when a session opens or closes as well as on a root change: a
+		 * conversation that was closed becomes a stored row, and one that was
+		 * opened stops being one. Both are cheap and neither happens often — unlike
+		 * a turn ending, which is why that is still deliberately not a trigger.
+		 */
+	}, [anyProvider, live.sessions.length, notify, selection]);
 
 	/*
 	 * The other recent roots' conversations.
@@ -1092,7 +1175,7 @@ export function WorkbenchController() {
 
 	/**
 	 * Switch roots by index into that list — never by path. See
-	 * `docs/adr/0001-multi-root-confinement.md`.
+	 * `docs/adr/0002-a-root-per-session.md`.
 	 *
 	 * Refused outright while anything is dirty or a turn is running, rather
 	 * than handled. Both are legitimate answers and this is the cheap one:
@@ -1108,8 +1191,14 @@ export function WorkbenchController() {
 				announce('Save your changes before switching workspace.');
 				return false;
 			}
-			if (session.status === 'running' || session.status === 'waiting') {
-				announce('The agent is mid-turn. Wait for it to finish before switching workspace.');
+			/*
+			 * Still refused while *anything* is mid-turn, and now it really is
+			 * anything: a switch reloads, and a reload takes every open session with
+			 * it, not only the one on screen. Focusing a session in another root
+			 * without reloading is ticket 49; until then this stays blunt.
+			 */
+			if (live.sessions.some((open) => open.status() === 'running' || open.status() === 'waiting')) {
+				announce('A session is mid-turn. Wait for it to finish before switching workspace.');
 				return false;
 			}
 			let chosen: WorkspaceSelection;
@@ -1162,56 +1251,48 @@ export function WorkbenchController() {
 			);
 			return true;
 		},
-		[announce, dirty, provider, recents.length, selection?.path, session.status]
+		[announce, dirty, live.sessions, provider, recents.length, selection?.path]
 	);
 
 	/**
-	 * Selecting a session, from the navigator or from a search result.
+	 * Opening a session, from the navigator or from a search result.
 	 *
-	 * One function because it is one decision, and it is no longer a refusal. The
-	 * rows are real stored conversations and this opens them — including the ones
-	 * in another root, which is the whole of "switching a session switches you to
-	 * its workspace": the request is written down, the root switch happens if there
-	 * is one to do, and the note is still there when the new window comes up. See
-	 * `sessionRequest.ts` for why a reload rather than a rebind.
+	 * **Three answers, and the first two are the interesting ones.** A session
+	 * already open in this window is simply focused — nothing restarts, nothing is
+	 * re-read from disk, and the conversation you left keeps every turn it had.
+	 * That is ticket 47, and it is what retired the reload: switching used to mean
+	 * writing a note to `localStorage` and reloading the page, which was the only
+	 * way to rebind a provider, a harness and a session store that were all
+	 * module-level.
 	 *
-	 * **Guarded exactly as switching roots is, and for the same two reasons.** A
-	 * reload drops unsaved editors, and it drops a turn in flight along with the
-	 * harness running it. Both are refusals rather than prompts because both have
-	 * an obvious next move the user can take themselves.
+	 * A stored conversation in this root is opened as a second session beside the
+	 * ones already here, rather than in place of them.
 	 *
-	 * The live session is already what is on screen, so choosing it only clears
-	 * unread.
+	 * A conversation in *another* root still cannot be opened, and says so. The
+	 * reload is gone and with it the only mechanism that ever made it work; doing
+	 * it properly means a session carrying its own workbench, which is
+	 * [ticket 49](docs/wayfinder/pi-harness/tickets/49-a-session-in-another-folder.md).
 	 */
 	const selectSession = useCallback(
 		async (picked: Session) => {
-			if (picked.live || !picked.storedPath) {
-				setUnread(false);
+			const already = live.sessions.find(
+				(open) => open.key === picked.id || (picked.storedPath && open.path === picked.storedPath)
+			);
+			if (already) {
+				sessionSet.focus(already.key);
 				return;
 			}
-			if (dirty) {
-				announce('Save your changes before opening another session.');
+			if (picked.switchIndex !== undefined) {
+				announce(`${picked.name} is in another workspace. Switch to it first.`);
 				return;
 			}
-			if (session.status === 'running' || session.status === 'waiting') {
-				announce('The agent is mid-turn. Wait for it to finish before opening another session.');
-				return;
-			}
-			/*
-			 * Written before the switch, because the switch is what reloads — there
-			 * is no "after" to write it in. Cleared again if the switch is refused
-			 * or fails, so a note nobody acted on cannot survive to hijack the next
-			 * ordinary launch.
-			 */
-			requestSession(picked.storedPath);
-			if (picked.switchIndex !== undefined && !(await switchWorkspace(picked.switchIndex))) {
-				clearSessionRequest();
+			if (!picked.storedPath) {
 				return;
 			}
 			announce(`Opening ${picked.name}.`);
-			window.location.reload();
+			await sessionSet.open({ requested: picked.storedPath });
 		},
-		[announce, dirty, session.status, switchWorkspace]
+		[announce, live.sessions]
 	);
 
 	const groups = useMemo(
@@ -1220,13 +1301,25 @@ export function WorkbenchController() {
 				workspace: selection,
 				branch,
 				recents,
-				liveName: session.name,
-				liveStatus: session.status,
-				liveUnread: unread,
+				/*
+				 * The live rows, built here because this is the only place holding both
+				 * the session objects and the row model. `live` in the dependency list
+				 * is what makes a status change redraw them: the collection's identity
+				 * changes on every revision, and nothing else about it does.
+				 */
+				live: live.sessions.map((open) => ({
+					id: open.key,
+					name: open.name() ?? 'New session',
+					status: open.status(),
+					unread: open.snapshot().unread,
+					live: true,
+					focused: open === live.focused,
+					storedPath: open.path,
+				})),
 				stored,
 				elsewhere,
 			}),
-		[branch, elsewhere, recents, selection, session, stored, unread]
+		[branch, elsewhere, live, recents, selection, stored]
 	);
 
 	/**
@@ -1237,21 +1330,15 @@ export function WorkbenchController() {
 	 */
 	const adeMenu = useMemo<readonly AdeMenuAction[]>(
 		() => [
-			{
-				id: 'new-session',
-				label: 'New session',
-				// One harness, one session. Saying so beats an item that does
-				// nothing, and beats hiding what the Guide says is there.
-				disabled: 'one session in this build',
-				run: () => {},
-			},
+			{ id: 'new-session', label: 'New session', run: () => void newSession() },
+			{ id: 'close-session', label: 'Close session', run: closeSession },
 			{ id: 'palette', label: 'Command palette', run: () => setCommandCenterOpen(true) },
 			{
 				id: 'debug-notification',
 				label: 'Debug notification',
-				// A design affordance rather than a feature: with one live session
-				// there is little to notify about, so this is how the surface gets
-				// looked at without waiting for a long turn to end unwatched.
+				// Kept now that background sessions raise real ones: this is still the
+				// only way to look at the surface without waiting for a long turn to
+				// end unwatched.
 				run: () => notify('This is what a notification looks like.'),
 			},
 			{ id: 'settings', label: 'Settings', disabled: 'not built yet', run: () => {} },
@@ -1267,7 +1354,7 @@ export function WorkbenchController() {
 				run: controls.close,
 			},
 		],
-		[announce, controls.available, controls.close, notify]
+		[announce, closeSession, controls.available, controls.close, newSession, notify]
 	);
 
 	// A pinned id that is no longer pinned would render an empty dock body.
@@ -1280,7 +1367,7 @@ export function WorkbenchController() {
 			titlebar={
 				<Titlebar
 					workspace={breadcrumb(selection, branch)}
-					session={session.name}
+					session={session?.name()}
 					controls={controls}
 					theme={theme}
 					onToggleTheme={() => setTheme((current) => (current === 'dark' ? 'light' : 'dark'))}
@@ -1291,20 +1378,29 @@ export function WorkbenchController() {
 				<>
 					<SessionNavigator
 						groups={groups}
-						activeId={LIVE_SESSION_ID}
+						activeId={session?.key ?? ''}
 						onSelect={(picked) => void selectSession(picked)}
 						onSwitchWorkspace={(index) => void switchWorkspace(index)}
+						onNewSession={() => void newSession()}
 					/>
-					<AgentChat
-						provider={agentProvider}
-						files={fileIds}
-						onAnnounce={announce}
-						onSession={onSessionState}
-						onOpenArtifact={openArtifact}
-						onTranscript={(search) => {
-							transcriptSearch.current = search;
-						}}
-					/>
+					{session ? (
+						<AgentChat
+							/*
+							 * Keyed by session, so the purely visual state — which
+							 * completion is highlighted, whether the file drawer is open —
+							 * resets on focus rather than leaking between conversations.
+							 * Everything that must survive is on the session itself.
+							 */
+							key={session.key}
+							session={session}
+							files={fileIds}
+							onAnnounce={announce}
+							onOpenArtifact={openArtifact}
+							onTranscript={(search) => {
+								transcriptSearch.current = search;
+							}}
+						/>
+					) : null}
 				</>
 			}
 			announcement={<span key={announcement.seq}>{announcement.message}</span>}
@@ -1376,6 +1472,26 @@ export function WorkbenchController() {
 						onSelectSession={(picked) => void selectSession(picked)}
 						searchTranscript={searchTranscript}
 						onClose={closeCommandCenter}
+					/>
+					<Confirm
+						open={closing !== undefined}
+						title="Stop this turn?"
+						message={`${
+							live.sessions.find((open) => open.key === closing)?.name() ?? 'This session'
+						} is mid-turn. Closing it stops the turn.`}
+						onCancel={() => setClosing(undefined)}
+						actions={[
+							{
+								label: 'Close and stop',
+								danger: true,
+								run: () => {
+									if (closing) {
+										dropSession(closing);
+									}
+									setClosing(undefined);
+								},
+							},
+						]}
 					/>
 					<ConfirmDiscard
 						name={inputs.find((input) => input.id === pendingCloseId)?.name}

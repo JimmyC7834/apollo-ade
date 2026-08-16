@@ -7,8 +7,10 @@
 //! Policy: one canonical root, no escaping it, no symlinks, files only,
 //! UTF-8 only, 2 MiB max, and build/dependency directories are skipped.
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use serde::Serialize;
@@ -31,6 +33,74 @@ const MAX_PREVIEW_CHARS: usize = 200;
 
 #[derive(Default)]
 pub struct WorkspaceState(Mutex<Option<PathBuf>>);
+
+/// Which root each live session is confined to.
+///
+/// **Confinement used to be ambient and this is what replaces it** — see
+/// `docs/adr/0002-a-root-per-session.md`, which supersedes 0001. `WorkspaceState`
+/// holds one root and every command resolved against whatever it held *at the
+/// moment the command ran*, so "which root am I confined to" was a property of
+/// timing. Two sessions running in two folders makes that untenable: both have to
+/// resolve at the same instant, and a switch under an in-flight turn is exactly
+/// how the session corruption fixed on 2026-08-15 happened.
+///
+/// A session's root is fixed when it is registered and is never changed, which is
+/// strictly stricter than what it replaces.
+#[derive(Default)]
+pub struct SessionRoots {
+    roots: Mutex<HashMap<String, PathBuf>>,
+    next: AtomicU64,
+}
+
+impl SessionRoots {
+    /// Mint an id for a root and remember the pair.
+    ///
+    /// **Opaque means "means nothing to the renderer", not "unguessable".** A
+    /// counter is enough: an id can only ever name a root the renderer itself
+    /// registered, through the two doors a root has always had — an OS dialog or
+    /// an index into the recents list — so guessing one grants no authority that
+    /// asking for one would not.
+    fn register(&self, root: PathBuf) -> String {
+        let id = format!("session-{}", self.next.fetch_add(1, Ordering::Relaxed));
+        self.roots.lock().unwrap().insert(id.clone(), root);
+        id
+    }
+
+    fn forget(&self, id: &str) {
+        self.roots.lock().unwrap().remove(id);
+    }
+
+    /// The root an id names, or a refusal.
+    ///
+    /// **Never falls back to the current root.** An id that has been closed, or
+    /// one from a window that has gone, would otherwise write a session's files
+    /// into whichever folder happened to be focused — the failure this table
+    /// exists to make impossible.
+    fn root(&self, id: &str) -> Result<PathBuf, String> {
+        self.roots
+            .lock()
+            .unwrap()
+            .get(id)
+            .cloned()
+            .ok_or_else(|| "unknown session".to_string())
+    }
+}
+
+/// Which root an agent command is against: its session's, or the current one.
+///
+/// `None` is the workbench's own reads — the explorer, the editor, search — which
+/// belong to whichever root is focused and always did. Only the agent passes an
+/// id, and once it does, nothing about which folder is focused can move it.
+pub(crate) fn agent_root(
+    state: &WorkspaceState,
+    roots: &SessionRoots,
+    session: Option<&str>,
+) -> Result<PathBuf, String> {
+    match session {
+        Some(id) => roots.root(id),
+        None => root_of(state),
+    }
+}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -410,6 +480,50 @@ fn read_root(
     }
 }
 
+/// The root a *read* is against, now that a session may name one.
+///
+/// Three answers, in the order of who is asking: the session's root when the
+/// agent asks, a recent root when the navigator asks by index, and the current
+/// root when the workbench asks. The three never blend — a session id that has
+/// gone stale is refused here rather than falling through to either of the
+/// others, which is the whole point of the table.
+fn read_root_for(
+    app: &tauri::AppHandle,
+    state: &tauri::State<'_, WorkspaceState>,
+    roots: &tauri::State<'_, SessionRoots>,
+    session: Option<&str>,
+    workspace: Option<usize>,
+) -> Result<PathBuf, String> {
+    match session {
+        Some(id) => roots.root(id),
+        None => read_root(app, state, workspace),
+    }
+}
+
+/// Register a root for a new session, and hand back the id it is known by.
+///
+/// The root comes from exactly where a root has always come from: the current
+/// one, or an index into the recents list. No path crosses this boundary, so
+/// this grants the renderer nothing that `switch_workspace` did not already.
+#[tauri::command]
+pub fn create_agent_session(
+    workspace: Option<usize>,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, WorkspaceState>,
+    roots: tauri::State<'_, SessionRoots>,
+) -> Result<String, String> {
+    Ok(roots.register(read_root(&app, &state, workspace)?))
+}
+
+/// Forget a session's root. Safe to call for an id that is already gone.
+///
+/// Every command that took the id starts refusing from here on, which is what
+/// makes "closed" mean something on this side rather than only in the window.
+#[tauri::command]
+pub fn close_agent_session(session: String, roots: tauri::State<'_, SessionRoots>) {
+    roots.forget(&session);
+}
+
 /// Choose the workspace root through an OS folder dialog.
 ///
 /// The dialog runs here rather than in the renderer, and the answer is written
@@ -510,11 +624,13 @@ pub async fn list_tree(state: tauri::State<'_, WorkspaceState>) -> Result<Vec<En
 #[tauri::command]
 pub fn read_file(
     id: String,
+    session: Option<String>,
     workspace: Option<usize>,
     app: tauri::AppHandle,
     state: tauri::State<'_, WorkspaceState>,
+    roots: tauri::State<'_, SessionRoots>,
 ) -> Result<String, String> {
-    let root = read_root(&app, &state, workspace)?;
+    let root = read_root_for(&app, &state, &roots, session.as_deref(), workspace)?;
     let (base, rest) = read_base(&app, &root, &id)?;
     let path = resolve(&base, &rest)?;
     let bytes = fs::read(path).map_err(|e| e.to_string())?;
@@ -546,11 +662,13 @@ pub struct PathMeta {
 #[tauri::command]
 pub fn stat_path(
     id: String,
+    session: Option<String>,
     workspace: Option<usize>,
     app: tauri::AppHandle,
     state: tauri::State<'_, WorkspaceState>,
+    roots: tauri::State<'_, SessionRoots>,
 ) -> Result<Option<PathMeta>, String> {
-    let root = read_root(&app, &state, workspace)?;
+    let root = read_root_for(&app, &state, &roots, session.as_deref(), workspace)?;
     let (base, rest) = read_base(&app, &root, &id)?;
     let candidate = Path::new(&rest);
     if candidate
@@ -704,11 +822,13 @@ fn writable_parent(root: &Path, target: &Path) -> Result<(), String> {
 pub fn agent_append_file(
     id: String,
     content: String,
+    session: Option<String>,
     state: tauri::State<'_, WorkspaceState>,
+    roots: tauri::State<'_, SessionRoots>,
 ) -> Result<(), String> {
     use std::io::Write;
 
-    let root = root_of(&state)?;
+    let root = agent_root(&state, &roots, session.as_deref())?;
     agent_may_write(&id)?;
     let target = contained(&root, &id)?;
     if content.len() as u64 > MAX_FILE_BYTES {
@@ -737,9 +857,11 @@ pub fn agent_append_file(
 #[tauri::command]
 pub fn agent_create_dir(
     id: String,
+    session: Option<String>,
     state: tauri::State<'_, WorkspaceState>,
+    roots: tauri::State<'_, SessionRoots>,
 ) -> Result<(), String> {
-    let root = root_of(&state)?;
+    let root = agent_root(&state, &roots, session.as_deref())?;
     // `agent_may_write`, not `may_write`: this was the one agent write path that
     // skipped `AGENT_PROTECTED`, so `mkdir ade.profiles.json` would make the
     // profiles file uncreatable.
@@ -767,11 +889,13 @@ pub fn agent_create_dir(
 #[tauri::command]
 pub fn agent_list_dir(
     id: String,
+    session: Option<String>,
     workspace: Option<usize>,
     app: tauri::AppHandle,
     state: tauri::State<'_, WorkspaceState>,
+    roots: tauri::State<'_, SessionRoots>,
 ) -> Result<Vec<PathMeta>, String> {
-    let root = read_root(&app, &state, workspace)?;
+    let root = read_root_for(&app, &state, &roots, session.as_deref(), workspace)?;
     let (base, rest) = read_base(&app, &root, &id)?;
     let target = contained(&base, &rest)?;
 
@@ -834,13 +958,15 @@ pub fn agent_list_dir(
 pub fn read_text_lines(
     id: String,
     max_lines: Option<usize>,
+    session: Option<String>,
     workspace: Option<usize>,
     app: tauri::AppHandle,
     state: tauri::State<'_, WorkspaceState>,
+    roots: tauri::State<'_, SessionRoots>,
 ) -> Result<Vec<String>, String> {
     use std::io::{BufRead, BufReader};
 
-    let root = read_root(&app, &state, workspace)?;
+    let root = read_root_for(&app, &state, &roots, session.as_deref(), workspace)?;
     let target = resolve_within(&root, &id, None)?;
 
     let file = fs::File::open(&target).map_err(|e| e.to_string())?;
@@ -875,9 +1001,11 @@ pub fn read_text_lines(
 pub fn agent_write_file(
     id: String,
     content: String,
+    session: Option<String>,
     state: tauri::State<'_, WorkspaceState>,
+    roots: tauri::State<'_, SessionRoots>,
 ) -> Result<(), String> {
-    let root = root_of(&state)?;
+    let root = agent_root(&state, &roots, session.as_deref())?;
     agent_may_write(&id)?;
     let candidate = Path::new(&id);
     if candidate
@@ -1225,6 +1353,59 @@ pub fn delete_entry(id: String, state: tauri::State<'_, WorkspaceState>) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The whole of ticket 46 in one test: two roots resolving at the same
+    /// instant, and a stale id that falls back to *nothing*.
+    ///
+    /// The fallback is the part worth asserting. An id that resolved to the
+    /// current root when the table did not know it would put one session's
+    /// writes into another session's folder — silently, and only when a switch
+    /// happened to be in flight, which is the class of bug that made confinement
+    /// per-session in the first place.
+    #[test]
+    fn a_session_resolves_to_the_root_it_was_born_in() {
+        let roots = SessionRoots::default();
+        let a = canonical(&std::env::temp_dir()).unwrap();
+        let b = a.join("nested-does-not-need-to-exist");
+
+        let first = roots.register(a.clone());
+        let second = roots.register(b.clone());
+        assert_ne!(first, second, "two sessions are never the same session");
+
+        // No ordering between them: both answer, and neither disturbs the other.
+        assert_eq!(roots.root(&first).unwrap(), a);
+        assert_eq!(roots.root(&second).unwrap(), b);
+        assert_eq!(roots.root(&first).unwrap(), a);
+
+        assert!(roots.root("session-never-minted").is_err());
+
+        roots.forget(&first);
+        assert!(
+            roots.root(&first).is_err(),
+            "a closed session is refused, not resolved against whatever is focused"
+        );
+        assert_eq!(roots.root(&second).unwrap(), b, "closing one keeps the other");
+    }
+
+    /// `None` is the workbench, and only the workbench.
+    ///
+    /// Asserted through `agent_root` rather than the table alone, because the
+    /// branch is where the two authorities meet: the explorer's reads follow the
+    /// focused root, and an agent's never do.
+    #[test]
+    fn only_a_sessionless_command_follows_the_focused_root() {
+        let roots = SessionRoots::default();
+        let state = WorkspaceState::default();
+        let here = canonical(&std::env::temp_dir()).unwrap();
+        *state.0.lock().unwrap() = Some(here.clone());
+
+        assert_eq!(agent_root(&state, &roots, None).unwrap(), here);
+
+        let elsewhere = here.join("somewhere-else");
+        let id = roots.register(elsewhere.clone());
+        assert_eq!(agent_root(&state, &roots, Some(&id)).unwrap(), elsewhere);
+        assert!(agent_root(&state, &roots, Some("session-gone")).is_err());
+    }
 
     #[test]
     fn canonical_leaves_no_verbatim_prefix() {

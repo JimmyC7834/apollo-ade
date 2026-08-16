@@ -1,6 +1,9 @@
 # 0001 — Multi-root confinement
 
-**Status:** accepted, and deliberately unimplemented.
+**Status:** superseded by [0002 — A root per session](0002-a-root-per-session.md) on
+2026-08-15. Its reasoning is still the reasoning; what changed is that a window now holds
+several conversations at once, so the boundary moved from "one root at a time" to "one root
+per session". The four consequences below are answered there, one by one.
 **Date:** 2026-08-10.
 **Context:** [ticket 39](../wayfinder/pi-harness/tickets/39-session-navigator.md), which
 requires this be written *before* it is needed rather than during.

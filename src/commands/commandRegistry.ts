@@ -45,6 +45,10 @@ export interface WorkbenchActions {
 	/** Set when a folder could be opened but not right now. */
 	openFolderDisabled?: string;
 	showAccessibilityHelp: () => void;
+	/** A conversation of its own, in the root you are in — ticket 47. */
+	newSession: () => void;
+	/** Stop watching the focused conversation. The file stays on disk. */
+	closeSession: () => void;
 }
 
 /*
@@ -70,6 +74,18 @@ export function buildCommands(actions: WorkbenchActions): readonly Command[] {
 					},
 				]
 			: []),
+		{
+			id: 'session.new',
+			category: 'Session',
+			title: 'New Session',
+			run: actions.newSession,
+		},
+		{
+			id: 'session.close',
+			category: 'Session',
+			title: 'Close Session',
+			run: actions.closeSession,
+		},
 		{
 			id: 'file.save',
 			category: 'File',

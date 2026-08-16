@@ -1,7 +1,10 @@
 # 46 — Rust gives each session its own root
 
 **Blocked by:** none — can start immediately.
-**Status:** ready-for-agent
+**Status:** **landed.** [ADR 0002](../../../adr/0002-a-root-per-session.md) supersedes 0001
+and answers its four recorded consequences one by one. Rust keeps a session table; agent
+filesystem and exec commands carry the id; a stale id is refused rather than resolved
+against the focused root. Two Rust tests cover the two-roots-at-once case and the refusal.
 
 The second prefactor, and the one that **reopens
 [ADR 0001](../../../adr/0001-multi-root-confinement.md)**. Writing the replacement ADR is

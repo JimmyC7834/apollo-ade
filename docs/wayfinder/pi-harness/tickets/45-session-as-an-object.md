@@ -1,7 +1,10 @@
 # 45 — A session is an object the window holds
 
 **Blocked by:** none — can start immediately.
-**Status:** ready-for-agent
+**Status:** **landed.** The three obstacles named below were the whole job: `sessionOnce`
+became an idempotent `bootstrap` on a collection, provider creation became an action rather
+than a render, and the transcript moved onto the session. Nothing changed on screen, which
+is what it promised. See the DEVLOG entry *"More than one conversation at a time"*.
 
 A prefactor, and it is deliberately not a tracer bullet: nothing changes on screen. It
 exists because every slice after it is impossible while a session is module-level state.
