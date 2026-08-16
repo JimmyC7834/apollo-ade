@@ -206,12 +206,42 @@ pub fn terminal_resize(
 
 /// Kill the shell and forget the session. The reader thread ends on its own
 /// once the PTY closes, and emits the exit event as it goes.
+///
+/// **Closing the pty is done off this thread, and that is the whole fix.** This
+/// command used to hang — reliably, on the first call — and because a
+/// synchronous command holds Tauri's dispatcher, every later `invoke` from the
+/// page hung behind it. The window went unresponsive and looked exactly like a
+/// stalled debugger connection, which is what it was blamed on three times.
+///
+/// The kill is not the slow part: `WinChild::kill` is `TerminateProcess` and no
+/// wait. The slow part is the **drop**. `Session` owns the master, a
+/// `ConPtyMasterPty` is an `Arc<Mutex<Inner>>` holding a `PsuedoCon`, and
+/// `PsuedoCon::drop` calls `ClosePseudoConsole` — which waits for the pty's
+/// output to be drained. The only thing draining it is our reader thread, and
+/// that thread spends its time in `app.emit(…)`, which needs the main thread —
+/// the thread now sitting inside this command. Each waits for the other.
+///
+/// So the teardown is handed to a blocking task and this returns. It is the
+/// sibling of the lesson `exec.rs` already wrote down about killing a shell and
+/// then waiting on its pipes: *waiting for EOF is waiting for the wrong event.*
+/// Here the wrong event is the close, and the fix is the same shape — stop
+/// waiting on the dispatcher for something the dispatcher has to service.
+///
+/// The kill itself stays here, so the caller still gets a real answer about the
+/// thing it asked for. Nothing is lost by detaching the rest: the session is
+/// already out of the map, so it is unreachable, and the reader emits the exit
+/// event as it winds down.
 #[tauri::command]
 pub fn terminal_kill(id: String, state: tauri::State<'_, TerminalState>) -> Result<(), String> {
-    let Some(mut session) = state.0.lock().unwrap().remove(&id) else {
+    // Scoped so the map's lock is released before anything else happens — a
+    // teardown holding it would block `terminal_create` for a new pane.
+    let session = state.0.lock().unwrap().remove(&id);
+    let Some(mut session) = session else {
         return Ok(()); // Already gone; killing twice is not an error.
     };
-    session.child.kill().map_err(|e| e.to_string())
+    let killed = session.child.kill().map_err(|e| e.to_string());
+    tauri::async_runtime::spawn_blocking(move || drop(session));
+    killed
 }
 
 #[cfg(test)]
@@ -289,5 +319,64 @@ mod tests {
                  vacuous here. `the_credentials_are_removed_from_the_builder` is not."
             );
         }
+    }
+
+    /// Killing a real shell and closing its pty finishes, and does not take long.
+    ///
+    /// **This covers half of the deadlock and the comment on `terminal_kill`
+    /// says which half.** The bug needs Tauri's main thread to be inside the
+    /// command while the reader thread waits on it to emit, and there is no
+    /// event loop in a unit test — so the cycle cannot form here. What this does
+    /// hold is the other end: with something draining the pty, kill-then-drop
+    /// completes promptly. If `ClosePseudoConsole` ever became slow on its own,
+    /// rather than slow because of who was waiting, this is what would say so.
+    ///
+    /// Modelled on `lsp::tests::stop_ends_a_real_server`, for the same reason: a
+    /// teardown that only *eventually* completes is the failure worth catching,
+    /// so returning at all is the assertion and the bound catches the rest.
+    #[test]
+    fn killing_a_shell_and_closing_its_pty_completes() {
+        use portable_pty::{NativePtySystem, PtySize, PtySystem};
+        use std::io::Read;
+        use std::time::Instant;
+
+        let pair = NativePtySystem::default()
+            .openpty(PtySize {
+                rows: 24,
+                cols: 80,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .expect("a pty");
+
+        let mut child = pair
+            .slave
+            .spawn_command(shell_command())
+            .expect("a shell — this test needs one on PATH");
+        drop(pair.slave);
+
+        // The drain, which is the condition the close needs. Without a reader
+        // this test would be asserting something else entirely.
+        let mut reader = pair.master.try_clone_reader().expect("a reader");
+        let pump = std::thread::spawn(move || {
+            let mut buffer = [0u8; 8192];
+            while let Ok(n) = reader.read(&mut buffer) {
+                if n == 0 {
+                    break;
+                }
+            }
+        });
+
+        let started = Instant::now();
+        child.kill().expect("kill");
+        drop(pair.master);
+        let elapsed = started.elapsed();
+
+        assert!(
+            elapsed.as_secs() < 10,
+            "kill and close should not block: took {elapsed:?}"
+        );
+        let _ = child.wait();
+        let _ = pump.join();
     }
 }
