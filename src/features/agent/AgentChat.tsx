@@ -503,6 +503,42 @@ export function AgentChat({
 	// A run outliving its view would keep emitting into dead state.
 	useEffect(() => () => runRef.current?.cancel(), []);
 
+	/*
+	 * The conversation this window opened with.
+	 *
+	 * **Once, at mount, and only into an empty transcript.** The provider is built
+	 * once per window and the session is fixed for its life — switching sessions is
+	 * a reload, not a rebind (`sessionRequest.ts`) — so re-reading it later could
+	 * only ever put history back on top of a turn just taken.
+	 *
+	 * Restored turns are `Turn`s like any other: `replayEntries` produces the
+	 * events and `applyEvent` reduces them, which is why nothing here knows what a
+	 * tool call or a compaction looks like.
+	 */
+	useEffect(() => {
+		let cancelled = false;
+		void provider.history().then((restored) => {
+			if (cancelled || restored.length === 0) {
+				return;
+			}
+			setTurns((current) =>
+				current.length > 0
+					? current
+					: restored.map((turn) =>
+							turn.events.reduce<Turn>(applyEvent, {
+								id: turn.id,
+								prompt: turn.prompt,
+								parts: [],
+								status: 'running',
+							})
+						)
+			);
+		});
+		return () => {
+			cancelled = true;
+		};
+	}, [provider]);
+
 	/**
 	 * Open a turn and return the sink its events go into.
 	 *

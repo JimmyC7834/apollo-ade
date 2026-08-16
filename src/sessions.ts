@@ -47,6 +47,20 @@ export interface Session {
 	 * fixture.
 	 */
 	readonly live: boolean;
+	/**
+	 * The file this row opens, as `listSessions` reported it. Absent on the live
+	 * row, which is already open — and that absence is what `selectSession` keys
+	 * "there is nothing to switch to" off.
+	 */
+	readonly storedPath?: string;
+	/**
+	 * Index into Rust's recent list, for a session in a root that is not the
+	 * current one. Present means opening it switches workspace first, which is
+	 * the whole of "switching a session switches you to its workspace".
+	 *
+	 * Absent for a session in the current root, where there is nowhere to go.
+	 */
+	readonly switchIndex?: number;
 }
 
 export interface WorkspaceGroup {
@@ -98,12 +112,21 @@ export const LIVE_SESSION_ID = 'live';
  * that was opened and abandoned. Neither is running — nothing but the live one
  * can be, and `live: false` is what the view keys that off.
  */
-function storedRow(stored: StoredSession): Session {
+function storedRow(stored: StoredSession, switchIndex?: number): Session {
 	return {
-		id: stored.id,
+		/*
+		 * Prefixed by root for a session elsewhere, because the id is a *react*
+		 * key and a session path is only unique within its own workspace: two
+		 * roots each holding `/.ade/sessions/--/x.jsonl` is not a contrived case,
+		 * it is what a copied checkout looks like. `storedPath` keeps the path
+		 * that is actually opened.
+		 */
+		id: switchIndex === undefined ? stored.id : `${switchIndex}:${stored.id}`,
 		name: stored.name,
 		status: stored.empty ? 'idle' : 'done',
 		live: false,
+		storedPath: stored.id,
+		switchIndex,
 	};
 }
 
@@ -114,15 +137,21 @@ function storedRow(stored: StoredSession): Session {
  *
  * The live session's name comes from its first prompt, which is the only thing
  * about a session that is naturally a name. A stored session's comes from the
- * same place, read back off disk — see `nameStored` in `agent/provider.ts`.
+ * same place, read back off disk — see `nameStored` in `agent/sessionStore.ts`.
  *
- * **The recent roots still have no sessions, and the reason has changed.** It
- * used to be that sessions did not persist; they do now, per workspace, in
- * `.ade/sessions` inside each root. What stops those rows being drawn is
- * confinement: `workspace.rs` resolves every read against the *current* root, so
- * another root's sessions cannot be read without either crossing that boundary
- * or a narrow Rust command that lists them by recents index. Neither is built,
- * and `docs/adr/0001-multi-root-confinement.md` is why the first will not be.
+ * **The recent roots now have sessions, through the narrow command rather than
+ * the wide one.** This used to say they could not: `workspace.rs` resolves every
+ * read against the current root, so the choice was between crossing that
+ * boundary and a command that reads another root *by recents index*. The second
+ * is what was built — `read_root` there, read-only — so nothing about
+ * `docs/adr/0001-multi-root-confinement.md` is reopened. One root is still the
+ * confinement boundary; it is merely possible to read the session list of a
+ * folder the user has already handed over, without spending a switch to find
+ * out what is in it.
+ *
+ * `elsewhere` is keyed by root path rather than positionally, because the recent
+ * list is reordered by every switch and a stale index would draw one workspace's
+ * conversations under another's name.
  */
 export function buildGroups(options: {
 	readonly workspace: WorkspaceSelection | undefined;
@@ -134,6 +163,8 @@ export function buildGroups(options: {
 	readonly liveUnread?: boolean;
 	/** This workspace's stored conversations, newest first. */
 	readonly stored: readonly StoredSession[];
+	/** Other recent roots' stored conversations, keyed by root path. */
+	readonly elsewhere?: ReadonlyMap<string, readonly StoredSession[]>;
 }): readonly WorkspaceGroup[] {
 	const { workspace } = options;
 	if (!workspace) {
@@ -158,7 +189,13 @@ export function buildGroups(options: {
 				 * place its status and unread flag are true. Reading it back off
 				 * disk would show the same conversation as `done` while it runs.
 				 */
-				...options.stored.filter((entry) => !entry.active).map(storedRow),
+				/*
+				 * Not `.map(storedRow)`: `map` passes the array index as the second
+				 * argument, which is `switchIndex` here — so every stored row in the
+				 * *current* root would claim to live in some other one, and opening it
+				 * would switch you there. The check caught it, which is what it is for.
+				 */
+				...options.stored.filter((entry) => !entry.active).map((entry) => storedRow(entry)),
 			],
 		},
 		/*
@@ -174,7 +211,9 @@ export function buildGroups(options: {
 							id: `recent:${recent.path}`,
 							label: recent.label,
 							switchIndex: index,
-							sessions: [],
+							sessions: (options.elsewhere?.get(recent.path) ?? []).map((entry) =>
+								storedRow(entry, index)
+							),
 						},
 					]
 		),

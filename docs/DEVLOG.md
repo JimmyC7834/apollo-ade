@@ -4792,3 +4792,77 @@ The habit that produced all three findings is the same one, and it is cheap:
 after writing an assertion, break the thing it is supposed to catch and watch it
 fail. Every assertion in this session that was never falsified turned out to be
 measuring something other than what it said.
+
+## Switching sessions, and the workspace that comes with it
+
+*2026-08-15*
+
+Asked for: pick a session and get it, and if it lives in another workspace, be
+taken there. The honest answer beforehand was that neither half existed — the
+navigator's rows announced *"Reopening one is not built yet"*, and the recent
+roots showed no sessions at all because nothing could read them.
+
+**A switch is a reload, and that is a decision rather than a shortcut.** The
+harness, the provider and the session store are built once per window around one
+`Session`; swapping that underneath them means rebuilding three things mid-life
+with a transcript on screen. The root switch already reloads for exactly this
+reason and has since ticket 31. So a switch writes down which conversation it
+wants, reloads, and `openSession` reads the note instead of taking the newest
+file. Crossing into another workspace then needs nothing extra: the root switch
+reloads too, so the note is simply still there when the new root comes up.
+
+**Another root's sessions are read by index, read-only.** `read_root` in
+`workspace.rs` takes an optional recents index on the four *read* commands and
+nothing else. The authority argument is `switch_workspace`'s, unchanged: an
+index can only name a folder the user has already handed over through an OS
+dialog, and the renderer could reach every byte under it by switching there
+anyway — reading a list without throwing away the window's state is the same
+authority spent more cheaply. Nothing about
+`docs/adr/0001-multi-root-confinement.md` is reopened; one root is still the
+boundary. The agent gains nothing either, because `ExecutionEnv` passes no index.
+
+### The half that made it usable
+
+Opening a session and showing it turned out to be two features, and only the
+first was asked for. The first cross-workspace switch worked perfectly and
+produced a window with the right root, the right session — and a blank
+transcript, because the transcript is built from events in *this* window and
+always had been. That gap was already there for every resumed launch; switching
+is merely what made it impossible to ignore.
+
+`replayEntries` maps a session's entries back to `AgentEvent`s and `AgentChat`
+reduces them with the same `applyEvent` it uses live. A second mapping straight
+to `Turn`s would have been a second copy of every rule about tool state,
+approvals and errors — the reducer already has a check suite, so the cheapest
+correct thing is to feed it. A restored turn is therefore not *like* a live one;
+it is the same structure built the same way.
+
+### Two findings from driving it
+
+**A `map` handed `storedRow` the array index as its second argument**, which is
+`switchIndex` — so every stored row in the *current* root claimed to live in
+another one, and opening it would have switched you somewhere you never chose.
+The check caught it before the app ran.
+
+**Asking for a damaged session started a blank one.** This repo holds session
+files with holes in their parent chains, left by the development double-mount.
+`getBranch()` throws on those, and the first build of this opened one candidate
+and fell straight through to `repo.create` — so picking a damaged conversation
+silently lost the healthy one you already had. Found by switching to exactly such
+a file, and it stayed found because the file count went 3 → 4. Now every
+candidate is tried in order, and landing somewhere other than where you pointed
+raises a toast, because otherwise it produces the same window a successful switch
+does. That announcement then had a bug of its own: read at mount, it ran before
+the async `openSession` had written the note, and the note was still sitting in
+storage afterwards. It is read after `listSessions`, which awaits the same
+session.
+
+### Verified in the native window
+
+The decisive test is a session that is **not** the target root's newest, because
+a fallback and a successful switch are otherwise indistinguishable. From
+`workspace-b`, the second row of `tauri-ade-prototype` opened the five-turn
+conversation containing `plum` while that root's newest was an empty session —
+which is what the fallback would have given. Same-workspace switching, the
+damaged-file toast, and a fresh turn appending to the reopened file were each
+driven the same way.

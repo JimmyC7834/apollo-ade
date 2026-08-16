@@ -58,10 +58,17 @@ export function SessionNavigator({
 			{groups.map((group) => {
 				const groupCollapsed = collapsedGroups.includes(group.id);
 				/*
-				 * A group is either a place you are (collapse its sessions) or a
-				 * place you can go (switch to it). Never both — a header that
-				 * collapses on click and switches on double-click makes switching
-				 * roots something you can do by accident.
+				 * A group's *header* is either a place you are (collapse its
+				 * sessions) or a place you can go (switch to it). Never both — a
+				 * header that collapses on click and switches on double-click makes
+				 * switching roots something you can do by accident.
+				 *
+				 * Its rows are unaffected, and now that another root's conversations
+				 * are listed under it, that separation is what keeps the two ways of
+				 * arriving somewhere distinct: the header takes you to the workspace,
+				 * a row takes you to a conversation *in* it. A workspace you have
+				 * never talked in is still reachable, which it would not be if the
+				 * header had become a disclosure triangle.
 				 */
 				const switchTo = group.switchIndex;
 				return (

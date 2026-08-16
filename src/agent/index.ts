@@ -8,7 +8,8 @@
 // is what keeps a vocabulary which breaks in minor releases every couple of
 // days from reaching the UI.
 
-import type { StoredSession } from './provider';
+import type { HistoryTurn } from './history';
+import type { StoredSession } from './sessionStore';
 import type { UndoOutcome } from './undo';
 
 export type AgentEvent =
@@ -225,8 +226,24 @@ export interface AgentProvider {
 	 * navigator is a convenience and must not be able to break the window.
 	 */
 	listSessions(): Promise<readonly StoredSession[]>;
+	/**
+	 * The open session's own conversation, as turns, for the transcript to start
+	 * from.
+	 *
+	 * **Without this, opening a session is invisible.** The harness resumes the
+	 * file either way — it has since sessions persisted — but the transcript is
+	 * built from events in this window, so a resumed conversation used to come up
+	 * blank with a model that remembered all of it. Switching sessions is what
+	 * made that impossible to ignore.
+	 *
+	 * Never rejects, for `listSessions`' reason: a corrupt or half-written file
+	 * costs you the history, not the window.
+	 */
+	history(): Promise<readonly HistoryTurn[]>;
 }
 
-export { createAgentProvider, type StoredSession } from './provider';
+export { createAgentProvider } from './provider';
+export { listSessionsIn, type StoredSession } from './sessionStore';
+export { replayEntries, type HistoryTurn } from './history';
 export { undoNote, type UndoOutcome } from './undo';
 export { loadProfileFiles, type ProfileLoad } from './profileFiles';

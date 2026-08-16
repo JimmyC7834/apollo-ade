@@ -371,6 +371,30 @@ nothing" and "rtk is on and rewrote this" are exactly the two states this file
 already warns are hard to tell apart, and under `auto` the transcript made them
 look identical.
 
+### Two limits of a reopened session, found by reviewing the switch
+
+Both are real, both are narrow, and neither is a reason to widen something else
+inside a session-switching slice.
+
+**A session over 2 MiB cannot be reopened, and never could.** `repo.open` reads
+the whole file through `readTextFile`, which is `read_file`, which caps at 2 MiB
+— and `read_text_lines` exists in `workspace.rs` precisely because "the session
+transcript is exactly the file that will pass 2 MiB". So a long enough
+conversation lists as *Untitled session* and, when picked, falls back. The fix is
+to give the session repo an uncapped read *without* uncapping the model's read
+tool, which shares the same method; that is its own change. What did change here
+is the wording: the toast says the conversation could not be reopened and no
+longer diagnoses it as damaged, because a healthy 3 MiB file fails identically.
+The largest session in this repo is 97 KB.
+
+**A turn in which the agent asked a *question* replays as a gap.**
+`applyEvent` deliberately drops the ask tool's call row — the question card is a
+better rendering of it — so replaying the call alone renders nothing, and the
+answer lives in the tool *result*, which has nowhere to go: the reducer has an
+event for asking and none for having answered. Restoring it as a pending question
+would read "Not answered" over a question that was answered, which is worse than
+the gap. Everything else in the turn restores normally.
+
 ### One finding from the review, left open on purpose
 
 The 2026-08-15 review (see the dev log) closed five things. This one was not
@@ -381,10 +405,17 @@ closed.
 subagent execution, the turn queue and four entry points; the second holds the
 transcript, the composer, profile-modal wiring and undo. Both are readable, and
 that is the tell — the comment density is doing work the structure should.
-`SessionStore` plus `listStored`/`nameStored`/`openSession` is a clean seam out
-of `provider.ts`: already a named interface, no dependency on the runner. Not
-started, because a refactor of a file this commented is a large diff and the
-governing philosophy here is that nothing ships around the wanted feature.
+**The session-store half of it has since landed, because a feature needed it.**
+`SessionStore` plus `listStored`/`nameStored`/`openSession` was the named seam
+out of `provider.ts`, and session switching had to list two workspaces and open a
+named session — both private to that file. It moved whole, as
+`agent/sessionStore.ts`, and `provider.ts` is 1,267 lines now. That is a
+move the feature paid for, not a refactor done for its own sake.
+
+What is still open is the rest: `provider.ts` after the move, and
+`AgentChat.tsx`, which this slice made slightly larger again. Not started, for
+the original reason — a refactor of a file this commented is a large diff, and
+the governing philosophy here is that nothing ships around the wanted feature.
 
 ### rtk's fetch is proven; its three other platforms are not
 
@@ -545,6 +576,12 @@ absence made the file misleading.
   forced 18,000-token window, proof that the next turn actually read less, and
   the unconfigured default that shows a raw count and never compacts.
 - **Sessions survive the window** — a conversation resumed from JSONL.
+- **Session switching**, both ways: a session in this workspace, and one in
+  another workspace that takes the root with it. The decisive case is a session
+  that is *not* the target root's newest, since a fallback looks identical
+  otherwise. A damaged file falls back and says so.
+- **A restored transcript** — the conversation on screen after a switch, and a
+  fresh turn appending to the file it came from.
 - **Profiles**: a switch mid-session leaves the model holding the new tool set,
   the next turn asks under `careful`, and profile files merge project over
   global.

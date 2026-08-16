@@ -4,7 +4,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 
-import { createAgentProvider, loadProfileFiles, type StoredSession } from '../agent';
+import { createAgentProvider, listSessionsIn, loadProfileFiles, type StoredSession } from '../agent';
 import { TOOL_ARTIFACTS, clampDock, dockSide, isToolArtifact } from '../artifacts';
 import { createChangesProvider } from '../changes';
 import { buildCommands } from '../commands/commandRegistry';
@@ -20,6 +20,7 @@ import { useLsp } from '../features/lsp/useLsp';
 import { refuseReason, type Replacement } from '../features/search/replace';
 import { SessionNavigator } from '../features/sessions/SessionNavigator';
 import { createPersistenceAdapter, type PersistedState } from '../persistence';
+import { clearSessionRequest, requestSession, takeUnopened } from '../sessionRequest';
 import { LIVE_SESSION_ID, breadcrumb, buildGroups, type Session, type SessionStatus } from '../sessions';
 import { createTerminalAdapter } from '../terminal';
 import { Confirm, Prompt } from '../ui';
@@ -119,6 +120,10 @@ export function WorkbenchController() {
 	}>({ status: 'idle', name: undefined });
 	/** This workspace's stored conversations. Empty until they are read. */
 	const [stored, setStored] = useState<readonly StoredSession[]>([]);
+	/** Other recent roots' conversations, keyed by root path. See the effect below. */
+	const [elsewhere, setElsewhere] = useState<ReadonlyMap<string, readonly StoredSession[]>>(
+		new Map()
+	);
 	const [commandCenterOpen, setCommandCenterOpen] = useState(false);
 	/*
 	 * Notifications — ticket 44. Toasts are a list rather than one slot because
@@ -881,31 +886,6 @@ export function WorkbenchController() {
 		});
 	}, []);
 
-	/**
-	 * Selecting a session, from the navigator or from a search result.
-	 *
-	 * One function because it is one decision, and the decision is still a
-	 * refusal — but no longer the same one. The rows used to be fixtures with no
-	 * harness behind them; they are now real stored conversations that this build
-	 * cannot *reopen*. Resuming one means stopping the running harness, opening
-	 * another file, and rebuilding the transcript from its entries, which is its
-	 * own slice. Saying so is what stops a row that does nothing from reading as
-	 * a row that failed.
-	 *
-	 * The live session is already what is on screen, so choosing it only clears
-	 * unread.
-	 */
-	const selectSession = useCallback(
-		(picked: Session) => {
-			if (!picked.live) {
-				announce(`${picked.name} is a stored session. Reopening one is not built yet.`);
-				return;
-			}
-			setUnread(false);
-		},
-		[announce]
-	);
-
 	const closeHelp = useCallback(() => setHelpOpen(false), []);
 	const closeCommandCenter = useCallback(() => setCommandCenterOpen(false), []);
 
@@ -1035,14 +1015,80 @@ export function WorkbenchController() {
 	useEffect(() => {
 		let cancelled = false;
 		void agentProvider.listSessions().then((sessions) => {
-			if (!cancelled) {
-				setStored(sessions);
+			if (cancelled) {
+				return;
+			}
+			setStored(sessions);
+			/*
+			 * A session was picked and could not be opened.
+			 *
+			 * **Read here rather than at mount, and the ordering is the whole
+			 * reason.** `openSession` records the failure, and it is async: a mount
+			 * effect reads `localStorage` before the provider has finished deciding
+			 * which session it got, and finds nothing. This runs after
+			 * `listSessions`, which awaits that same session — so by now the answer
+			 * exists. Measured, not reasoned: the first version was a mount effect
+			 * and the note was still sitting in storage afterwards.
+			 *
+			 * Worth saying at all because the switch otherwise *looks* successful:
+			 * right root, a conversation on screen, just not the one asked for.
+			 */
+			if (takeUnopened() !== undefined) {
+				/*
+				 * It says what happened, not why. "Damaged" was the first wording
+				 * and it was a diagnosis this code cannot make: a session over
+				 * 2 MiB fails the same way, through `read_file`'s cap, and telling
+				 * someone their healthy conversation is corrupt is worse than
+				 * telling them nothing.
+				 */
+				notify('That conversation could not be reopened. Opened the most recent one instead.');
 			}
 		});
 		return () => {
 			cancelled = true;
 		};
-	}, [agentProvider, selection]);
+	}, [agentProvider, notify, selection]);
+
+	/*
+	 * The other recent roots' conversations.
+	 *
+	 * **Sequential, capped, and after the current root's list, all for the same
+	 * reason**: these are file reads on Tauri's dispatcher, which is serialised, so
+	 * eight roots asked at once would put every other command behind a hundred and
+	 * sixty of them at start-up. One root at a time, five rows each, and the
+	 * workspace you are actually in is already on screen before any of it runs.
+	 *
+	 * Never rejects and never blocks anything: a root that has been deleted or
+	 * unmounted since it was recorded simply contributes nothing.
+	 */
+	useEffect(() => {
+		let cancelled = false;
+		void (async () => {
+			for (const [index, recent] of recents.entries()) {
+				if (cancelled) {
+					return;
+				}
+				if (recent.path === selection?.path) {
+					continue;
+				}
+				const sessions = await listSessionsIn(index);
+				if (cancelled) {
+					return;
+				}
+				/*
+				 * An empty answer is written down like any other. Skipping it left a
+				 * root's old rows on screen after its sessions were deleted — and
+				 * `openFolder` re-runs this without a reload, so it is reachable in
+				 * one page life. Picking one of those rows then asks for a file that
+				 * is not there.
+				 */
+				setElsewhere((current) => new Map(current).set(recent.path, sessions));
+			}
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, [recents, selection?.path]);
 
 	/**
 	 * Switch roots by index into that list — never by path. See
@@ -1054,24 +1100,24 @@ export function WorkbenchController() {
 	 * bound to it, so a switch underneath either loses work or races.
 	 */
 	const switchWorkspace = useCallback(
-		async (index: number) => {
+		async (index: number): Promise<boolean> => {
 			if (index >= recents.length) {
-				return;
+				return false;
 			}
 			if (dirty) {
 				announce('Save your changes before switching workspace.');
-				return;
+				return false;
 			}
 			if (session.status === 'running' || session.status === 'waiting') {
 				announce('The agent is mid-turn. Wait for it to finish before switching workspace.');
-				return;
+				return false;
 			}
 			let chosen: WorkspaceSelection;
 			try {
 				chosen = await provider.switchWorkspace(index);
 			} catch (error) {
 				announce(`Could not switch workspace. ${reason(error)}`);
-				return;
+				return false;
 			}
 			/*
 			 * **Reload, rather than reset what this callback can reach.**
@@ -1097,7 +1143,7 @@ export function WorkbenchController() {
 			 */
 			if (chosen.path !== selection?.path) {
 				window.location.reload();
-				return;
+				return true;
 			}
 			setInputs([]);
 			setActiveEditorId(undefined);
@@ -1114,8 +1160,58 @@ export function WorkbenchController() {
 					? `Switched to ${chosen.label}. Profiles: ${loaded.problems.join('. ')}`
 					: `Switched to ${chosen.label}.`
 			);
+			return true;
 		},
 		[announce, dirty, provider, recents.length, selection?.path, session.status]
+	);
+
+	/**
+	 * Selecting a session, from the navigator or from a search result.
+	 *
+	 * One function because it is one decision, and it is no longer a refusal. The
+	 * rows are real stored conversations and this opens them — including the ones
+	 * in another root, which is the whole of "switching a session switches you to
+	 * its workspace": the request is written down, the root switch happens if there
+	 * is one to do, and the note is still there when the new window comes up. See
+	 * `sessionRequest.ts` for why a reload rather than a rebind.
+	 *
+	 * **Guarded exactly as switching roots is, and for the same two reasons.** A
+	 * reload drops unsaved editors, and it drops a turn in flight along with the
+	 * harness running it. Both are refusals rather than prompts because both have
+	 * an obvious next move the user can take themselves.
+	 *
+	 * The live session is already what is on screen, so choosing it only clears
+	 * unread.
+	 */
+	const selectSession = useCallback(
+		async (picked: Session) => {
+			if (picked.live || !picked.storedPath) {
+				setUnread(false);
+				return;
+			}
+			if (dirty) {
+				announce('Save your changes before opening another session.');
+				return;
+			}
+			if (session.status === 'running' || session.status === 'waiting') {
+				announce('The agent is mid-turn. Wait for it to finish before opening another session.');
+				return;
+			}
+			/*
+			 * Written before the switch, because the switch is what reloads — there
+			 * is no "after" to write it in. Cleared again if the switch is refused
+			 * or fails, so a note nobody acted on cannot survive to hijack the next
+			 * ordinary launch.
+			 */
+			requestSession(picked.storedPath);
+			if (picked.switchIndex !== undefined && !(await switchWorkspace(picked.switchIndex))) {
+				clearSessionRequest();
+				return;
+			}
+			announce(`Opening ${picked.name}.`);
+			window.location.reload();
+		},
+		[announce, dirty, session.status, switchWorkspace]
 	);
 
 	const groups = useMemo(
@@ -1128,8 +1224,9 @@ export function WorkbenchController() {
 				liveStatus: session.status,
 				liveUnread: unread,
 				stored,
+				elsewhere,
 			}),
-		[branch, recents, selection, session, stored, unread]
+		[branch, elsewhere, recents, selection, session, stored, unread]
 	);
 
 	/**
@@ -1195,7 +1292,7 @@ export function WorkbenchController() {
 					<SessionNavigator
 						groups={groups}
 						activeId={LIVE_SESSION_ID}
-						onSelect={selectSession}
+						onSelect={(picked) => void selectSession(picked)}
 						onSwitchWorkspace={(index) => void switchWorkspace(index)}
 					/>
 					<AgentChat
@@ -1276,7 +1373,7 @@ export function WorkbenchController() {
 						groups={groups}
 						onOpenFile={(entry) => void openFile(entry.id)}
 						onOpenArtifact={showArtifact}
-						onSelectSession={selectSession}
+						onSelectSession={(picked) => void selectSession(picked)}
 						searchTranscript={searchTranscript}
 						onClose={closeCommandCenter}
 					/>

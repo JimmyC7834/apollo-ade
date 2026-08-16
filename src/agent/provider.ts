@@ -8,8 +8,6 @@
 
 import {
 	AgentHarness,
-	InMemorySessionStorage,
-	JsonlSessionRepo,
 	Session,
 	createBashTool,
 	createEditTool,
@@ -17,7 +15,6 @@ import {
 	createWriteTool,
 	type AgentHarnessEvent,
 	type ExecutionEnv,
-	type JsonlSessionMetadata,
 	type ThinkingLevel,
 } from '@earendil-works/pi-agent-core';
 import {
@@ -32,6 +29,7 @@ import { anthropicMessagesApi } from '@earendil-works/pi-ai/api/anthropic-messag
 import { googleGenerativeAIApi } from '@earendil-works/pi-ai/api/google-generative-ai.lazy';
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy';
 import type { AgentEvent, AgentProvider } from './index';
+import { replayEntries, type HistoryTurn } from './history';
 import { compactionMessage, needsCompaction, readAutoCompact } from './compaction';
 import {
 	contextWindowFor,
@@ -41,6 +39,11 @@ import {
 	thinkingLevelMapFor,
 } from './models';
 import { createMemoryEnv, createTauriEnv } from './env';
+import {
+	diskSessions,
+	memorySessions,
+	type SessionStore,
+} from './sessionStore';
 import { mapEvent } from './events';
 import { installRustFetch } from './rustFetch';
 import { cannedProvider, FIXTURE_FILES } from './canned';
@@ -143,273 +146,6 @@ async function restore(session: Session, sha: string): Promise<UndoOutcome> {
 	} catch {
 		return { ...outcome, told: false };
 	}
-}
-
-/**
- * Where the transcript lives.
- *
- * Inside the workspace, as [ticket 09](docs/wayfinder/pi-harness/tickets/09-session-store.md)
- * settled — which means no containment exemption is needed, because the agent's
- * own root already covers it.
- */
-const SESSIONS_ROOT = '/.ade/sessions';
-
-/**
- * The window's own conversation, and somewhere to put a subagent's.
- *
- * Both come from one place because they share a directory: ticket 24 chose one
- * `/.ade/sessions` over a second root once pi's own parentage fields were found,
- * and that only works if whatever opens the window's session is also what knows
- * which files are children.
- */
-interface SessionStore {
-	readonly own: Promise<Session>;
-	/** A session of a subagent's own, recorded as belonging to `own`. */
-	child(): Promise<Session>;
-	/** Every stored conversation in this workspace, newest first. */
-	list(): Promise<readonly StoredSession[]>;
-}
-
-/**
- * One stored conversation, at the width the navigator draws it.
- *
- * Metadata and a name, never entries: this is what a *list* needs, and reading
- * a transcript to show a row is how a session list becomes slower than the
- * conversation it lists.
- */
-export interface StoredSession {
-	/** The file's path under the sessions root. Stable, and unique per session. */
-	readonly id: string;
-	readonly name: string;
-	readonly startedAt: string;
-	/** True for the one this window is appending to right now. */
-	readonly active: boolean;
-	/** No user message in it — started and abandoned, rather than had. */
-	readonly empty: boolean;
-}
-
-let sessionOnce: Promise<Session<JsonlSessionMetadata>> | undefined;
-
-/**
- * One session per window, however many times the provider is built.
- *
- * React's StrictMode double-invokes `useMemo` in development, so
- * `createAgentProvider` runs twice — and both runs found no stored session and
- * both created one, leaving an empty orphan on disk at every start. Caching the
- * *promise* rather than the session is what makes the second caller wait for
- * the first rather than race it.
- *
- * This does not make concurrent writers safe in general: two windows on the
- * same workspace are two module instances, and both would open the newest
- * session and append to the same file. Nothing here prevents that, and nothing
- * needs to until sessions are something the user can pick.
- */
-function diskSessions(env: ExecutionEnv): SessionStore {
-	const repo = new JsonlSessionRepo({ fs: env, sessionsRoot: SESSIONS_ROOT });
-	const own = (sessionOnce ??= openSession(env, repo));
-	return {
-		own,
-		list: () => listStored(repo, own),
-		/*
-		 * **Both fields, and they are not the same claim.** `parentSessionPath`
-		 * because it is true and because the deferred child chat view needs the
-		 * link. `metadata.delegatedFrom` because that is what start-up filters on
-		 * — filtering on `parentSessionPath` alone would also hide a *forked*
-		 * session, and a fork is a session the user should still see on the day
-		 * forking gets a UI.
-		 */
-		child: async () => {
-			const parent = await (await own).getMetadata();
-			return repo.create({
-				cwd: '/',
-				parentSessionPath: parent.path,
-				metadata: { delegatedFrom: parent.path },
-			});
-		},
-	};
-}
-
-/**
- * How many stored sessions the navigator is told about.
- *
- * A cap rather than a page, because the work per row is a file read: naming a
- * session means opening it and finding its first user message, and an unbounded
- * list would make opening a long-lived workspace cost one parse per conversation
- * ever had in it. Twenty is the recent ones, which is what a switcher is for.
- */
-const MAX_LISTED = 20;
-
-/**
- * How far into a session to look for the message that names it.
- *
- * The first user message is near the front but not at it — a session opens with
- * tool, model and thinking-level entries, and the sample in this repo had ten
- * before the first prompt. Sixty is generous for that and still bounded, so a
- * session that somehow contains no user message costs sixty entries rather than
- * its whole transcript.
- */
-const NAME_WINDOW = 60;
-
-/**
- * What to call a stored session.
- *
- * A name the user set wins. Failing that it is the first thing they said, which
- * is the only part of a conversation that is naturally its title — the same rule
- * the live session's own name follows.
- *
- * Every failure below lands on the same answer rather than propagating: a
- * corrupt file must cost you that row's *name*, not the navigator.
- */
-async function nameStored(
-	repo: JsonlSessionRepo,
-	metadata: JsonlSessionMetadata
-): Promise<{ name: string; empty: boolean }> {
-	const untitled = { name: 'Untitled session', empty: true };
-	try {
-		const session = await repo.open(metadata);
-		const named = await session.getSessionName();
-		const entries = await session.getEntries({ limit: NAME_WINDOW });
-		/*
-		 * `content` is checked, not assumed. `AgentMessage` is a union and one of
-		 * its members — pi's bash-execution message — carries no content at all,
-		 * so a session whose first user entry is one of those has no title in it
-		 * and says so rather than failing to compile around it.
-		 */
-		const first = entries.find(
-			(entry) => entry.type === 'message' && entry.message.role === 'user' && 'content' in entry.message
-		);
-		if (named) {
-			return { name: named, empty: first === undefined };
-		}
-		if (first === undefined || first.type !== 'message' || !('content' in first.message)) {
-			return untitled;
-		}
-		return { name: summarise(contentText(first.message.content)), empty: false };
-	} catch {
-		return untitled;
-	}
-}
-
-/** A prompt, at row width: one line, and short enough not to widen anything. */
-function summarise(text: string): string {
-	const line = text.trim().split('\n')[0]?.trim() ?? '';
-	if (line === '') {
-		return 'Untitled session';
-	}
-	return line.length > 60 ? `${line.slice(0, 59)}…` : line;
-}
-
-/**
- * The workspace's stored conversations, newest first.
- *
- * **Children are excluded, for the reason `openSession` excludes them.** A
- * subagent's session is a sub-task's record, not a conversation the user had,
- * and listing them would bury the four turns someone remembers under forty they
- * never saw.
- */
-async function listStored(
-	repo: JsonlSessionRepo,
-	own: Promise<Session<JsonlSessionMetadata>>
-): Promise<readonly StoredSession[]> {
-	/*
-	 * The active path is read first and separately: if it cannot be read the
-	 * list is still worth showing, it merely marks nothing as active — and the
-	 * live row is drawn from live state regardless, so nothing disappears.
-	 */
-	let active: string | undefined;
-	try {
-		active = (await (await own).getMetadata()).path;
-	} catch {
-		active = undefined;
-	}
-
-	const stored = (await repo.list({ cwd: '/' }))
-		.filter((entry) => !entry.metadata?.delegatedFrom)
-		.slice(0, MAX_LISTED);
-
-	return await Promise.all(
-		stored.map(async (metadata) => {
-			const { name, empty } = await nameStored(repo, metadata);
-			return {
-				id: metadata.path,
-				name,
-				startedAt: metadata.createdAt,
-				active: metadata.path === active,
-				empty,
-			};
-		})
-	);
-}
-
-/**
- * The session to continue, or a new one.
- *
- * "Most recent for this workspace" is the whole selection policy, and it is a
- * placeholder for a session picker rather than a design: `repo.list()` sorts
- * newest first and `fork()` is right there, so the UI is what is missing, not
- * the capability.
- *
- * **Newest that is not a subagent's.** A child's file is written after its
- * parent's by definition, so once delegation exists "the newest file" is usually
- * a child — and the next launch would resume somebody's sub-task instead of the
- * conversation the user was having.
- *
- * Failing to open a stored session must not cost you the agent. A corrupt or
- * half-written JSONL file falls back to a fresh session — losing history is
- * bad, but refusing to run at all is worse, and the broken file is left on disk
- * rather than deleted.
- */
-async function openSession(
-	env: ExecutionEnv,
-	repo: JsonlSessionRepo
-): Promise<Session<JsonlSessionMetadata>> {
-	/*
-	 * A self-ignoring directory, so the transcript never reaches the user's
-	 * commits and their `.gitignore` is never edited by us. `git` reads a
-	 * `.gitignore` at any level, and `*` there covers everything beneath it.
-	 */
-	await env.createDir('/.ade');
-	await env.writeFile('/.ade/.gitignore', '*\n');
-
-	try {
-		const existing = await repo.list({ cwd: '/' });
-		const mine = existing.find((entry) => !entry.metadata?.delegatedFrom);
-		if (mine) {
-			const session = await repo.open(mine);
-			/*
-			 * **Opening is not enough to know it is usable.** `open` parses the
-			 * file; nothing walks the parent chain until the first turn builds a
-			 * context, and `getPathToRootOrCompaction` throws `Entry <id> not
-			 * found` there on a chain with a hole in it. That arrived as the
-			 * agent's reply to every prompt, in a build with one session and no
-			 * way to start another — so the window was unusable and the fallback
-			 * three lines below never ran.
-			 *
-			 * `getBranch()` is that same walk, done here where falling back still
-			 * costs only the history.
-			 */
-			await session.getBranch();
-			return session;
-		}
-	} catch {
-		// Fall through to a new session.
-	}
-	return repo.create({ cwd: '/' });
-}
-
-/** Browser mode's, where there is no disk and a child is simply another one. */
-function memorySessions(): SessionStore {
-	return {
-		own: Promise.resolve(new Session(new InMemorySessionStorage())),
-		child: async () => new Session(new InMemorySessionStorage()),
-		/*
-		 * Empty, not fabricated. Browser mode has no disk, so it has no stored
-		 * conversations — and a fixture list here would be the parallel fiction
-		 * ticket 10 ruled out, in the one place the navigator would look most
-		 * convincing. The live session still shows; it is the only one there is.
-		 */
-		list: () => Promise.resolve([]),
-	};
 }
 
 /*
@@ -1406,7 +1142,30 @@ function createRunner(
 		return await enqueue(async () => restore(await sessions.own, sha));
 	}
 
-	return { start, skill, template, compact, undo, listSessions: () => sessions.list() };
+	/**
+	 * The open session, as turns.
+	 *
+	 * `getBranch` rather than `getEntries`: the branch is the path the harness
+	 * itself is on, so a compacted or forked session reads back as the
+	 * conversation the model actually has rather than every entry the file holds.
+	 */
+	async function history(): Promise<readonly HistoryTurn[]> {
+		try {
+			return replayEntries(await (await sessions.own).getBranch());
+		} catch {
+			return [];
+		}
+	}
+
+	return {
+		start,
+		skill,
+		template,
+		compact,
+		undo,
+		listSessions: () => sessions.list(),
+		history,
+	};
 }
 
 /**
@@ -1497,6 +1256,9 @@ export function createAgentProvider(): AgentProvider {
 		undo: runner.undo,
 		// Empty here, for the reason `memorySessions` gives.
 		listSessions: runner.listSessions,
+		// Empty for the same reason, and by the same code path: a session in
+		// memory has entries, it simply starts with none.
+		history: runner.history,
 	};
 }
 

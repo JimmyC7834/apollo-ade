@@ -371,6 +371,45 @@ pub fn switch_workspace(
     Ok(info)
 }
 
+/// A root from the recent list, named by its index in that list.
+///
+/// Split out from `read_root` so the index arithmetic is testable without an
+/// `AppHandle`: the interesting failure is an index that names nothing, and a
+/// command that returned the *current* root for it would read one workspace
+/// while the caller believed it was reading another.
+fn recent_root(recents: &[String], index: usize) -> Result<PathBuf, String> {
+    let path = recents
+        .get(index)
+        .ok_or_else(|| "no such recent workspace".to_string())?;
+    canonical(Path::new(path)).map_err(|e| e.to_string())
+}
+
+/// Which root a read is against: the current one, or a recent one by index.
+///
+/// **This is the second root a command may touch, and it is deliberately
+/// read-only and index-only.** The authority argument is `switch_workspace`'s,
+/// unchanged: an index can only name a folder the user has already handed this
+/// app through an OS dialog, and the renderer could reach every byte under it
+/// by switching there anyway. Reading a session list without throwing away the
+/// window's own state is the same authority spent more cheaply.
+///
+/// It grants nothing to the *agent*, either. `ExecutionEnv` passes no index, so
+/// every path a tool names still resolves against the one current root — the
+/// parameter is reachable only from the navigator's own calls.
+///
+/// Containment is unaffected: whatever base comes back here goes through the
+/// same `resolve_within` / `contained` scan as the current root does.
+fn read_root(
+    app: &tauri::AppHandle,
+    state: &tauri::State<'_, WorkspaceState>,
+    workspace: Option<usize>,
+) -> Result<PathBuf, String> {
+    match workspace {
+        None => root_of(state),
+        Some(index) => recent_root(&read_recents(app), index),
+    }
+}
+
 /// Choose the workspace root through an OS folder dialog.
 ///
 /// The dialog runs here rather than in the renderer, and the answer is written
@@ -471,10 +510,11 @@ pub async fn list_tree(state: tauri::State<'_, WorkspaceState>) -> Result<Vec<En
 #[tauri::command]
 pub fn read_file(
     id: String,
+    workspace: Option<usize>,
     app: tauri::AppHandle,
     state: tauri::State<'_, WorkspaceState>,
 ) -> Result<String, String> {
-    let root = root_of(&state)?;
+    let root = read_root(&app, &state, workspace)?;
     let (base, rest) = read_base(&app, &root, &id)?;
     let path = resolve(&base, &rest)?;
     let bytes = fs::read(path).map_err(|e| e.to_string())?;
@@ -506,10 +546,11 @@ pub struct PathMeta {
 #[tauri::command]
 pub fn stat_path(
     id: String,
+    workspace: Option<usize>,
     app: tauri::AppHandle,
     state: tauri::State<'_, WorkspaceState>,
 ) -> Result<Option<PathMeta>, String> {
-    let root = root_of(&state)?;
+    let root = read_root(&app, &state, workspace)?;
     let (base, rest) = read_base(&app, &root, &id)?;
     let candidate = Path::new(&rest);
     if candidate
@@ -726,10 +767,11 @@ pub fn agent_create_dir(
 #[tauri::command]
 pub fn agent_list_dir(
     id: String,
+    workspace: Option<usize>,
     app: tauri::AppHandle,
     state: tauri::State<'_, WorkspaceState>,
 ) -> Result<Vec<PathMeta>, String> {
-    let root = root_of(&state)?;
+    let root = read_root(&app, &state, workspace)?;
     let (base, rest) = read_base(&app, &root, &id)?;
     let target = contained(&base, &rest)?;
 
@@ -792,11 +834,13 @@ pub fn agent_list_dir(
 pub fn read_text_lines(
     id: String,
     max_lines: Option<usize>,
+    workspace: Option<usize>,
+    app: tauri::AppHandle,
     state: tauri::State<'_, WorkspaceState>,
 ) -> Result<Vec<String>, String> {
     use std::io::{BufRead, BufReader};
 
-    let root = root_of(&state)?;
+    let root = read_root(&app, &state, workspace)?;
     let target = resolve_within(&root, &id, None)?;
 
     let file = fs::File::open(&target).map_err(|e| e.to_string())?;
@@ -1213,6 +1257,28 @@ mod tests {
         // `Normal` one, which is the case a naive `starts_with("/")` check misses.
         #[cfg(windows)]
         assert!(contained(&root, r"C:\Windows\System32\drivers\etc\hosts").is_err());
+    }
+
+    /// An index that names nothing must fail, not fall back.
+    ///
+    /// The dangerous failure is not an error — it is a read that quietly answers
+    /// from the *current* root while the navigator believes it is looking at
+    /// another workspace, which would draw one root's sessions under another
+    /// root's name and switch you somewhere you never chose.
+    #[test]
+    fn a_recent_root_is_the_one_the_index_names() {
+        let real = canonical(&std::env::temp_dir()).unwrap();
+        let recents = vec![
+            "\\\\no\\such\\place".to_string(),
+            real.display().to_string(),
+        ];
+
+        assert_eq!(recent_root(&recents, 1).unwrap(), real);
+        assert!(recent_root(&recents, 2).is_err(), "past the end");
+        assert!(recent_root(&[], 0).is_err(), "nothing to index");
+        // A recorded root that has since been deleted or unmounted is an error
+        // too: `canonical` is what proves it is still there.
+        assert!(recent_root(&recents, 0).is_err(), "gone from disk");
     }
 
     /// The agent may not edit the file that decides what the agent may do.

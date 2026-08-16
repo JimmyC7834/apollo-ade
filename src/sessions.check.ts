@@ -100,6 +100,73 @@ assert.equal(switchable[0].label, 'other');
 assert.equal(switchable[0].switchIndex, 1);
 assert.deepEqual(switchable[0].sessions, []);
 
+/*
+ * A recent root's own conversations, which is what makes "switching a session
+ * switches the workspace" a thing you can *do* rather than describe. Each row
+ * carries the index of the root it lives in, and the path to open once there.
+ */
+const across = buildGroups({
+	workspace,
+	branch: 'master',
+	recents,
+	liveName: 'Fix the sash',
+	liveStatus: 'idle',
+	stored,
+	elsewhere: new Map([['/tmp/other', stored.slice(1)]]),
+});
+const other = across[1];
+assert.equal(other.switchIndex, 1);
+assert.deepEqual(
+	other.sessions.map((session) => session.switchIndex),
+	[1, 1]
+);
+assert.deepEqual(
+	other.sessions.map((session) => session.storedPath),
+	['/s/2.jsonl', '/s/1.jsonl']
+);
+// Nothing over there is live, whatever it says on disk.
+assert.ok(other.sessions.every((session) => !session.live));
+
+/*
+ * **Row ids are unique across workspaces, and session paths are not.** Two
+ * checkouts of one project hold the same session filenames, so keying rows on
+ * the path alone would collide — React would draw one row for two conversations
+ * and the wrong one would be opened. The path itself survives in `storedPath`.
+ */
+const collide = buildGroups({
+	workspace,
+	branch: undefined,
+	recents,
+	liveName: undefined,
+	liveStatus: 'idle',
+	stored,
+	elsewhere: new Map([['/tmp/other', stored]]),
+});
+const ids = collide.flatMap((group) => group.sessions).map((session) => session.id);
+assert.equal(new Set(ids).size, ids.length, ids.join(' '));
+
+// The live row opens nothing: it is already open, and `selectSession` reads
+// that absence rather than a flag of its own.
+assert.equal(collide[0].sessions[0].storedPath, undefined);
+assert.equal(collide[0].sessions[1].storedPath, '/s/2.jsonl');
+// A session in the current root has nowhere to switch to.
+assert.equal(collide[0].sessions[1].switchIndex, undefined);
+
+// A root with nothing listed for it is still offered, because switching to a
+// workspace you have never had a conversation in is a normal thing to want.
+assert.deepEqual(
+	buildGroups({
+		workspace,
+		branch: undefined,
+		recents,
+		liveName: undefined,
+		liveStatus: 'idle',
+		stored,
+		elsewhere: new Map(),
+	})[1].sessions,
+	[]
+);
+
 // Two checkouts of the same project share a label, so the current root is
 // matched by path. Both of these are offered; neither is the current one.
 const twins = buildGroups({

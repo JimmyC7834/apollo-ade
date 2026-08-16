@@ -150,8 +150,21 @@ function canonicalPath(path: string): Promise<Result<string, FileError>> {
 	);
 }
 
-export function createTauriEnv(): ExecutionEnv {
+/**
+ * @param workspace Index into Rust's recent-roots list, when the reads are
+ * against a workspace this window is *not* in. Absent — always, except for the
+ * navigator's cross-workspace session listing — means the current root.
+ *
+ * **Only reads honour it**, because only the four read commands take it. An
+ * env built with an index must therefore never be written through, which is
+ * what `createReadOnlyTauriEnv` is for; nothing else should pass this directly.
+ */
+export function createTauriEnv(workspace?: number): ExecutionEnv {
 	const core = () => import('@tauri-apps/api/core');
+	// `null` rather than omitted: Tauri's argument matching is by name, and a
+	// missing key and an explicit null both arrive as `None`. Passing it always
+	// keeps the four call sites uniform.
+	const at = workspace ?? null;
 
 	/*
 	 * The single conversion point. `invoke` *rejects* on `Err` and pi requires a
@@ -179,11 +192,13 @@ export function createTauriEnv(): ExecutionEnv {
 
 	const stat = async (path: string) =>
 		attempt(path, async () =>
-			(await core()).invoke<PathMeta | null>('stat_path', { id: toId(path) })
+			(await core()).invoke<PathMeta | null>('stat_path', { id: toId(path), workspace: at })
 		);
 
 	const readText = async (path: string) =>
-		attempt(path, async () => (await core()).invoke<string>('read_file', { id: toId(path) }));
+		attempt(path, async () =>
+			(await core()).invoke<string>('read_file', { id: toId(path), workspace: at })
+		);
 
 	return {
 		...unimplementedRest(),
@@ -221,6 +236,7 @@ export function createTauriEnv(): ExecutionEnv {
 				(await core()).invoke<string[]>('read_text_lines', {
 					id: toId(path),
 					maxLines: options?.maxLines ?? null,
+					workspace: at,
 				})
 			);
 		},
@@ -242,7 +258,7 @@ export function createTauriEnv(): ExecutionEnv {
 
 		async listDir(path) {
 			const result = await attempt(path, async () =>
-				(await core()).invoke<PathMeta[]>('agent_list_dir', { id: toId(path) })
+				(await core()).invoke<PathMeta[]>('agent_list_dir', { id: toId(path), workspace: at })
 			);
 			return result.ok
 				? ok(result.value.map((meta) => ({ ...meta, path: ROOT + meta.path })))
@@ -378,6 +394,53 @@ export function createTauriEnv(): ExecutionEnv {
 			const result = await readText(path);
 			return result.ok ? ok(new TextEncoder().encode(result.value)) : result;
 		},
+	};
+}
+
+/**
+ * Another recent workspace, readable and nothing else.
+ *
+ * **The refusals are the point, not decoration.** Only the four read commands
+ * take a workspace index; every write command resolves against the *current*
+ * root. So a write through an env built for another root would land in this
+ * workspace, at a path meant for a different one, with no error anywhere —
+ * a corruption that would be found much later and blamed on something else.
+ * Refusing makes that unreachable rather than merely unused.
+ *
+ * Reads stay the ordinary ones: containment, symlink and size policy are
+ * Rust's, against whichever root the index named.
+ */
+export function createReadOnlyTauriEnv(workspace: number): ExecutionEnv {
+	const env = createTauriEnv(workspace);
+	const refuse = <T,>(path: unknown): Promise<Result<T, FileError>> =>
+		Promise.resolve(
+			err(
+				new FileError(
+					'not_supported',
+					'another workspace is read-only',
+					typeof path === 'string' ? path : ''
+				)
+			)
+		);
+	return {
+		...env,
+		/*
+		 * A shell is the widest write there is, and it inherits the *current*
+		 * root's cwd — so leaving it on this env would be a bigger hole than the
+		 * six file writes below it. Nothing reaches it today: `JsonlSessionRepo`
+		 * never execs. That is the same "merely unused" this whole function
+		 * exists to replace with "unreachable".
+		 */
+		exec: () =>
+			Promise.resolve(
+				err(new ExecutionError('shell_unavailable', 'another workspace is read-only'))
+			),
+		writeFile: (path) => refuse<void>(path),
+		appendFile: (path) => refuse<void>(path),
+		createDir: (path) => refuse<void>(path),
+		remove: (path) => refuse<void>(path),
+		createTempDir: (prefix) => refuse<string>(prefix),
+		createTempFile: (options) => refuse<string>(options?.prefix),
 	};
 }
 
