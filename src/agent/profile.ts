@@ -508,7 +508,7 @@ export type Activation =
  *
  * The switch is non-retroactive by construction: nothing here touches history.
  */
-export function activateProfile(name: string): Activation {
+function chooseable(name: string, staying: string): Activation {
 	const profile = profiles.find((candidate) => candidate.name === name);
 	if (!profile) {
 		return { ok: false, reason: `No profile named "${name}".` };
@@ -517,9 +517,139 @@ export function activateProfile(name: string): Activation {
 	if (missing.length > 0) {
 		return {
 			ok: false,
-			reason: `Profile "${name}" names things that do not exist: ${missing.join(', ')}. Staying on "${active.name}".`,
+			reason: `Profile "${name}" names things that do not exist: ${missing.join(', ')}. Staying on "${staying}".`,
 		};
 	}
+	return { ok: true, profile };
+}
+
+/**
+ * One session's profile — ticket 50.
+ *
+ * **The catalogue stays module-level and the *choice* moves here.** Profiles are
+ * read from files and from the project root, and every session in a window sees
+ * the same set; what stopped being shareable is which of them a conversation is
+ * running under. A background session mid-turn must not be retuned because
+ * somebody switched profile in another one — that is the same class of bug as a
+ * workspace switch corrupting a session, state belonging to a run being mutated
+ * from outside it.
+ *
+ * The whole profile, never just the model. Splitting them was considered and
+ * declined: a session running under one profile's tool set with another's model
+ * is a conversation nobody can reason about.
+ *
+ * Resolved by *name* on every read rather than held as an object, so a `/reload`
+ * that redefines a profile reaches the sessions already running under it.
+ */
+export interface ProfileSelection {
+	/** This session's profile, now. */
+	current(): Profile;
+	activate(name: string): Activation;
+	/** Changes to this session's choice, and to the catalogue underneath it. */
+	subscribe(listener: () => void): () => void;
+	/**
+	 * Let go of the catalogue. Called when the session closes — without it a
+	 * closed session's runner is kept alive by the store's listener set and goes
+	 * on retuning a harness nobody can reach on every `/reload`.
+	 */
+	stop(): void;
+}
+
+/**
+ * @param mine Whether a change to the catalogue belongs to *this* session's root.
+ * The catalogue is one per window and project profiles are read from a folder, so
+ * a session in another folder must not be re-resolved against a file it has never
+ * seen — including one that redefines a name it happens to share, which "auto"
+ * commonly is.
+ */
+export function createSelection(mine: () => boolean = () => true): ProfileSelection {
+	/**
+	 * The profile this session is on, by name — **captured now**, which is what
+	 * ticket 50 means by "chosen when it is created".
+	 *
+	 * It started out undefined, meaning "follow the window", and review found what
+	 * that costs: `installProfiles` reassigns the module's `active`, and focusing a
+	 * session in another folder re-reads that folder's project profiles — so every
+	 * session that had never explicitly chosen was silently retuned to another
+	 * root's first profile, model, tool set and approval mode. A background session
+	 * mid-turn is exactly what that must not happen to.
+	 */
+	let name: string = active.name;
+	/**
+	 * The profile as it was when this session chose it.
+	 *
+	 * The fallback for a name that is no longer in the catalogue — which is a
+	 * normal event now, not a corrupt one: profiles are read from the *root*, and
+	 * focusing a conversation in another folder replaces the project ones. A
+	 * background session must not be quietly moved onto the window's default
+	 * because the folder on screen changed; it keeps what it was running under.
+	 */
+	let held: Profile = active;
+	const own = new Set<() => void>();
+	const notify = () => {
+		for (const listener of own) {
+			listener();
+		}
+	};
+	/** Re-read the definition of the profile this session is on, if it moved. */
+	const resettle = () => {
+		held = profiles.find((entry) => entry.name === name) ?? held;
+	};
+	/*
+	 * The catalogue moved — `installProfiles`, which is a `/reload` or a change of
+	 * root. It matters here only when it redefines the profile *this* session is
+	 * on; the subscription is unconditional because the harness re-reads rather
+	 * than being handed a diff, and a spurious retune to the same values is free.
+	 */
+	const off = onProfileChange(() => {
+		if (!mine()) {
+			return;
+		}
+		resettle();
+		notify();
+	});
+
+	const selection: ProfileSelection = {
+		/*
+		 * The object out of the catalogue, not a copy: its identity is stable
+		 * between installs, which is what `useSyncExternalStore` requires of a
+		 * snapshot and what a fresh object on every read would break.
+		 */
+		/*
+		 * The profile as this session last resolved it — never re-read here. The
+		 * catalogue is the window's and its project half changes with the focused
+		 * folder, so resolving on every read would let another root's file with the
+		 * same profile name retune a conversation it has nothing to do with.
+		 */
+		current: () => held,
+		activate(next) {
+			const outcome = chooseable(next, selection.current().name);
+			if (outcome.ok) {
+				name = next;
+				held = outcome.profile;
+				notify();
+			}
+			return outcome;
+		},
+		subscribe(listener) {
+			own.add(listener);
+			return () => own.delete(listener);
+		},
+
+		stop() {
+			off();
+			own.clear();
+		},
+	};
+	return selection;
+}
+
+export function activateProfile(name: string): Activation {
+	const outcome = chooseable(name, active.name);
+	if (!outcome.ok) {
+		return outcome;
+	}
+	const profile = outcome.profile;
 	active = profile;
 	// An answer, so a later `installProfiles` stops choosing for you.
 	chosen = true;

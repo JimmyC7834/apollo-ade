@@ -14,6 +14,7 @@ import {
 	createReadTool,
 	createWriteTool,
 	type AgentHarnessEvent,
+	type AgentHarnessTool,
 	type ExecutionEnv,
 	type ThinkingLevel,
 } from '@earendil-works/pi-agent-core';
@@ -28,7 +29,7 @@ import {
 import { anthropicMessagesApi } from '@earendil-works/pi-ai/api/anthropic-messages.lazy';
 import { googleGenerativeAIApi } from '@earendil-works/pi-ai/api/google-generative-ai.lazy';
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy';
-import type { AgentEvent, AgentProvider } from './index';
+import type { AgentEvent, AgentProvider, SessionRoot } from './index';
 import { replayEntries, type HistoryTurn } from './history';
 import { compactionMessage, needsCompaction, readAutoCompact } from './compaction';
 import {
@@ -38,7 +39,7 @@ import {
 	reasoningFor,
 	thinkingLevelMapFor,
 } from './models';
-import { createMemoryEnv, createTauriEnv } from './env';
+import { createMemoryEnv, createTauriEnv, type NotingEnv } from './env';
 import {
 	diskSessions,
 	memorySessions,
@@ -51,6 +52,7 @@ import { cannedProvider, FIXTURE_FILES } from './canned';
 import { createGate } from './gate';
 import { resolveRtk, rewriteToolCall } from './rtk';
 import { undoNote, type UndoOutcome } from './undo';
+import { loadedRoot } from './profileFiles';
 import { isTauri } from '../native';
 import { allTemplates, onTemplatesChange, useTemplateSource } from './promptTemplates';
 import { createAskTool, createAsker } from './ask';
@@ -58,8 +60,8 @@ import { applyContributors, composeSystemPrompt } from './systemPrompt';
 import {
 	activeProfile,
 	activeToolNames,
+	createSelection,
 	listProfiles,
-	onProfileChange,
 	PROVIDER_IDS,
 	setCapabilities,
 	type ProfileModel,
@@ -99,12 +101,16 @@ async function resolveShell(): Promise<string | undefined> {
  * checkpoint is a safety net, not a precondition — failing the turn because the
  * net could not be hung would be worse than running without it.
  */
-async function checkpoint(prompt: string): Promise<string | undefined> {
+async function checkpoint(prompt: string, session: string | undefined): Promise<string | undefined> {
 	try {
 		const { invoke } = await import('@tauri-apps/api/core');
 		return (
 			(await invoke<string | null>('git_checkpoint', {
 				label: `agent: ${prompt.slice(0, 60)}`,
+				// The session's own repository. Without it a background turn would
+				// snapshot whichever folder the window happened to be showing — the
+				// same ambient-root bug ADR 0002 removed from the file commands.
+				session: session ?? null,
 			})) ?? undefined
 		);
 	} catch {
@@ -128,9 +134,16 @@ async function checkpoint(prompt: string): Promise<string | undefined> {
  * carried out in `told`, so the transcript always records the undo and says
  * plainly that the model was not informed.
  */
-async function restore(session: Session, sha: string): Promise<UndoOutcome> {
+async function restore(
+	session: Session,
+	sha: string,
+	agentSession: string | undefined
+): Promise<UndoOutcome> {
 	const { invoke } = await import('@tauri-apps/api/core');
-	const restored = await invoke<Omit<UndoOutcome, 'told'>>('git_restore_checkpoint', { sha });
+	const restored = await invoke<Omit<UndoOutcome, 'told'>>('git_restore_checkpoint', {
+		sha,
+		session: agentSession ?? null,
+	});
 	const outcome = { ...restored, told: true };
 	/*
 	 * pi's own way of putting something into the context that nobody said.
@@ -286,6 +299,45 @@ function allModels() {
  */
 type ToolContext = { env: ExecutionEnv; depth: number };
 
+/**
+ * The same environment, when it is the one that collects Rust's write notes.
+ *
+ * A shape test rather than a flag: browser mode's memory environment has no
+ * notes to give and no Rust to give them, and neither branch should have to
+ * carry a capability field to say so.
+ */
+function noting(env: ExecutionEnv): NotingEnv | undefined {
+	return 'takeNotes' in env ? (env as NotingEnv) : undefined;
+}
+
+/**
+ * The same tool, plus whatever Rust wanted said about the writes it made.
+ *
+ * **Wrapped here rather than hooked**, because pi's harness has no after-tool
+ * hook — `afterToolCall` belongs to the `Agent` underneath it, which the harness
+ * does not expose. A wrapper is also the more accurate place: it takes the notes
+ * from *this* call's own context, so a subagent's writes are noted in the
+ * subagent's transcript rather than surfacing in its parent's.
+ *
+ * It never fails the tool and never changes what the tool did. The write has
+ * already happened by the time this runs — that is ticket 51's decision, not an
+ * accident of ordering.
+ */
+function withWriteNotes<T extends AgentHarnessTool<ToolContext>>(tool: T): T {
+	return {
+		...tool,
+		async execute(toolCallId, params, signal, onUpdate, context) {
+			const result = await tool.execute(toolCallId, params, signal, onUpdate, context);
+			const notes = noting(context.env)?.takeNotes() ?? [];
+			return notes.length === 0
+				? result
+				: { ...result, content: [...result.content, ...notes.map(text)] };
+		},
+	};
+}
+
+const text = (value: string) => ({ type: 'text' as const, text: value });
+
 function createRunner(
 	env: ExecutionEnv,
 	sessions: SessionStore,
@@ -297,8 +349,43 @@ function createRunner(
 	 * False on the canned path, where the model is the script's own and swapping
 	 * it out would leave the fixture answering as something it is not.
 	 */
-	modelFollowsProfile = false
+	modelFollowsProfile = false,
+	/**
+	 * Rust's id for this session, where there is one.
+	 *
+	 * Only the git commands need it here — everything else already carries it,
+	 * inside `env`. Undefined in browser mode, where there is no repository.
+	 */
+	agentSession?: string,
+	/** The folder this session is confined to, for the test `mine` makes. */
+	agentRoot?: string
 ) {
+	/**
+	 * This session's profile — ticket 50.
+	 *
+	 * **Per runner, not per window.** Everything below reads `profile.current()`
+	 * where it used to read the module's `profile.current()`, which is the whole of
+	 * the change: a switch made in one conversation retunes that conversation's
+	 * harness and no other. A background session mid-turn is unaffected by
+	 * anything the user does elsewhere.
+	 */
+	/**
+	 * Whether a change to the window's project-scoped stores belongs to *this*
+	 * session — ticket 49's other half, and a hole review found.
+	 *
+	 * Profiles, user tools, skills and prompt templates are all read from a root,
+	 * and a window now holds sessions in several. Focusing a conversation in one
+	 * folder re-reads that folder's files, and without this test every runner
+	 * rebuilt its tool set from them — handing a folder's own `argv` manifests to
+	 * a session confined somewhere else. A reload used to make that impossible by
+	 * throwing the whole window away.
+	 */
+	const mine = () => {
+		const from = loadedRoot();
+		return from === undefined || from === agentRoot;
+	};
+	const profile = createSelection(mine);
+
 	/*
 	 * The tool set the harness is given, which is not the tool set that runs: a
 	 * profile's `tools` map picks the active subset out of it. Built once and
@@ -343,8 +430,11 @@ function createRunner(
 
 	const builtins = [
 		createReadTool(),
-		createWriteTool(),
-		createEditTool(),
+		// The two that write. `bash` writes too, but through a shell Rust does not
+		// track, and the read tool is deliberately silent: two agents reading one
+		// file is normal and a note on it would be constant noise.
+		withWriteNotes(createWriteTool()),
+		withWriteNotes(createEditTool()),
 		createBashTool(),
 		createAskTool(asker),
 		task,
@@ -359,7 +449,7 @@ function createRunner(
 	 * that knows both halves — pi's built-ins are constructed here, and the
 	 * store is what refuses a profile naming something outside the union.
 	 */
-	let tools = [...builtins, ...userToolDefinitions(gate)];
+	let tools = [...builtins, ...userToolDefinitions(gate, () => profile.current().rtk)];
 	const declare = () =>
 		setCapabilities({
 			tools: tools.map((tool) => tool.name),
@@ -370,7 +460,7 @@ function createRunner(
 
 	// At app open too, not only on a switch: the profile that is already active
 	// is the one whose first command would otherwise pay for the download.
-	if (activeProfile().rtk) {
+	if (profile.current().rtk) {
 		void resolveRtk();
 	}
 
@@ -436,9 +526,9 @@ function createRunner(
 				model,
 				// The profile the window opens on. Every later switch arrives
 				// through `onProfileChange` below.
-				thinkingLevel: thinkingFor(activeProfile().thinkingLevel),
+				thinkingLevel: thinkingFor(profile.current().thinkingLevel),
 				tools,
-				activeToolNames: activeToolNames(activeProfile()),
+				activeToolNames: activeToolNames(profile.current()),
 				// Depth 1: the main agent counts toward the nesting limit, so a
 				// child is 2 and its child is 3 and that one may not delegate.
 				toolContext: { env, depth: 1 },
@@ -458,8 +548,8 @@ function createRunner(
 					composeSystemPrompt({
 						shell,
 						skills: context.resources.skills,
-						canRead: activeToolNames(activeProfile()).includes('read'),
-						instructions: activeProfile().instructions,
+						canRead: activeToolNames(profile.current()).includes('read'),
+						instructions: profile.current().instructions,
 					}),
 			})
 	);
@@ -652,7 +742,13 @@ function createRunner(
 	 * inside the switch: `setModel` first, so the clamp that follows asks the
 	 * model being switched *to* what it supports rather than the one being left.
 	 */
-	onProfileChange((profile) => {
+	profile.subscribe(() => {
+		const chosen = profile.current();
+		/*
+		 * The selection already ignores another root's catalogue (`createSelection`
+		 * takes `mine`), so by here this is always this session's own profile —
+		 * either because it chose it, or because its own root's file redefined it.
+		 */
 		/*
 		 * Fetch rtk before anything wants it.
 		 *
@@ -662,23 +758,23 @@ function createRunner(
 		 * already happened — and `resolveRtk` memoises, so a switch after the
 		 * first is free rather than another download.
 		 */
-		if (profile.rtk) {
+		if (chosen.rtk) {
 			void resolveRtk();
 		}
 		void ready.then((harness) =>
 			enqueue(async () => {
-				if (modelFollowsProfile && profile.model.id && profile.model.id !== current.id) {
-					current = modelFor(profile.model);
+				if (modelFollowsProfile && chosen.model.id && chosen.model.id !== current.id) {
+					current = modelFor(chosen.model);
 					await harness.setModel(current);
 				}
-				await harness.setActiveTools(activeToolNames(profile));
-				await harness.setThinkingLevel(thinkingFor(profile.thinkingLevel));
+				await harness.setActiveTools(activeToolNames(chosen));
+				await harness.setThinkingLevel(thinkingFor(chosen.thinkingLevel));
 				// Which skills the *next* turn may use, and which the system prompt
 				// lists. A third field the switch has to apply, for the same reason
 				// the tool set is one: the profile names them and they are off by
 				// default, so a switch that left them alone would leave the model
 				// holding the previous profile's skills.
-				await harness.setResources(resourcesFor(profile));
+				await harness.setResources(resourcesFor(chosen));
 			})
 		);
 	});
@@ -697,9 +793,13 @@ function createRunner(
 	 * harness only needs to know by the next turn.
 	 */
 	onSkillsChange(() => {
+		// Another folder's skills are not this session's — see `mine`.
+		if (!mine()) {
+			return;
+		}
 		declare();
 		void ready.then((harness) =>
-			enqueue(() => harness.setResources(resourcesFor(activeProfile())))
+			enqueue(() => harness.setResources(resourcesFor(profile.current())))
 		);
 	});
 
@@ -711,8 +811,11 @@ function createRunner(
 	 * for why the profile does not gate them.
 	 */
 	onTemplatesChange(() => {
+		if (!mine()) {
+			return;
+		}
 		void ready.then((harness) =>
-			enqueue(() => harness.setResources(resourcesFor(activeProfile())))
+			enqueue(() => harness.setResources(resourcesFor(profile.current())))
 		);
 	});
 
@@ -729,10 +832,19 @@ function createRunner(
 	 * changing under a run in flight.
 	 */
 	onUserToolsChange(() => {
-		tools = [...builtins, ...userToolDefinitions(gate)];
+		/*
+		 * **The one with teeth.** A user tool is an argv array a folder's
+		 * `ade.profiles.json` declares, run through the gate — so installing another
+		 * root's tools into this harness would let a folder the user merely glanced
+		 * at execute commands in the folder they are working in.
+		 */
+		if (!mine()) {
+			return;
+		}
+		tools = [...builtins, ...userToolDefinitions(gate, () => profile.current().rtk)];
 		declare();
 		void ready.then((harness) =>
-			enqueue(() => harness.setTools(tools, activeToolNames(activeProfile())))
+			enqueue(() => harness.setTools(tools, activeToolNames(profile.current())))
 		);
 	});
 
@@ -798,7 +910,7 @@ function createRunner(
 		 * means exactly "the profile is where the model comes from", which is the
 		 * only condition under which the profile lacking one is a problem.
 		 */
-		if (modelFollowsProfile && !activeProfile().model.id) {
+		if (modelFollowsProfile && !profile.current().model.id) {
 			onEvent({
 				kind: 'error',
 				message:
@@ -818,7 +930,7 @@ function createRunner(
 
 		// Read at turn start, not at construction: switching to `ask` has to
 		// apply to the next turn rather than to the next window.
-		gate.begin(activeProfile().gatePolicy, onEvent);
+		gate.begin(profile.current().gatePolicy, onEvent);
 		// Point both at this turn. Anything left outstanding by a previous turn is
 		// abandoned here rather than answered by this turn's user.
 		asker.begin(onEvent);
@@ -864,7 +976,7 @@ function createRunner(
 			// result, so anything returned here displaces the gate's decision.
 			const offRtk = harness.on('tool_call', async (event): Promise<undefined> => {
 				const before = event.input.command;
-				await rewriteToolCall(event, activeProfile().rtk, (message) =>
+				await rewriteToolCall(event, profile.current().rtk, (message) =>
 					onEvent({ kind: 'error', message, code: 'rtk_unavailable' })
 				);
 				/*
@@ -947,7 +1059,7 @@ function createRunner(
 					}
 					running = harness;
 					attach(harness);
-					const sha = await checkpoint(label);
+					const sha = await checkpoint(label, agentSession);
 					if (sha) {
 						// Before the turn's own output, because that is when it was
 						// taken — and because a turn that fails still has one.
@@ -1140,7 +1252,7 @@ function createRunner(
 		if (live > 0) {
 			throw new Error('The agent is still running. Stop it first.');
 		}
-		return await enqueue(async () => restore(await sessions.own, sha));
+		return await enqueue(async () => restore(await sessions.own, sha, agentSession));
 	}
 
 	/**
@@ -1158,18 +1270,63 @@ function createRunner(
 		}
 	}
 
+	/**
+	 * Whose work an undo of this checkpoint would also revert — ticket 52.
+	 *
+	 * Rust's answer, because Rust is the only side that saw every session's
+	 * writes. Never rejects: an empty list is both "nobody else was here" and
+	 * "there is no Rust to ask", and both mean the ordinary undo.
+	 */
+	async function contention(sha: string): Promise<readonly string[]> {
+		try {
+			const { invoke } = await import('@tauri-apps/api/core');
+			return await invoke<string[]>('checkpoint_contention', {
+				sha,
+				session: agentSession ?? null,
+			});
+		} catch {
+			return [];
+		}
+	}
+
+	/**
+	 * Put something into this session's context that nobody said.
+	 *
+	 * The same mechanism `restore` uses for its own note, exposed because ticket
+	 * 52 needs it pointed at a *different* session: the conversation whose edits
+	 * somebody else's undo reverted has to be told, or it goes on believing they
+	 * are there. Through the queue, like every other session write.
+	 */
+	async function record(note: string): Promise<void> {
+		try {
+			await enqueue(async () =>
+				(await sessions.own).appendCustomMessageEntry('undo', note, false, {})
+			);
+		} catch {
+			// The transcript still shows it. A context that could not be written
+			// is the same end state `told: false` already describes.
+		}
+	}
+
 	return {
 		start,
 		skill,
 		template,
 		compact,
 		undo,
+		contention,
+		record,
+		profile,
 		listSessions: () => sessions.list(),
 		history,
 		path: () => sessions.path,
-		// Overridden on the native path, where there is a Rust session id to
-		// release. Nothing to do for a runner that has no root registered.
-		dispose: () => {},
+		/*
+		 * Overridden on the native path, where there is a Rust session id to
+		 * release as well. What is here is what every runner owes: the profile
+		 * store holds a listener per selection, and a closed session that kept one
+		 * would go on retuning a harness nobody can reach on every `/reload`.
+		 */
+		dispose: () => profile.stop(),
 	};
 }
 
@@ -1177,7 +1334,7 @@ function createRunner(
  * Which agent this window gets.
  *
  * **The branch is `isTauri()` and nothing else, and that is the fix for a real
- * bug.** It used to be `native && activeProfile().model.id`, on the premise —
+ * bug.** It used to be `native && profile.current().model.id`, on the premise —
  * stated in the comment that was here — that a model could only come from an env
  * var, which is available synchronously. That premise expired when profiles
  * became files: `ade.profiles.json` names a model, `loadProfileFiles()` reads it
@@ -1202,7 +1359,15 @@ function createRunner(
  * named — see the guard in `begin`. The fixture is browser mode's, and it says
  * so in every one of its replies.
  */
-export async function createAgentProvider(want: SessionWant = {}): Promise<AgentProvider> {
+/**
+ * @param at Which recent root this session belongs to, by index into Rust's
+ * recents list. Undefined is the root the window is in — the only case there was
+ * before ticket 49.
+ */
+export async function createAgentProvider(
+	want: SessionWant = {},
+	at?: number
+): Promise<AgentProvider> {
 	if (isTauri()) {
 		// Diverts provider hosts to Rust for every adapter, including the Google
 		// ones that refuse an injected `fetch`. Idempotent, so a window with six
@@ -1215,10 +1380,15 @@ export async function createAgentProvider(want: SessionWant = {}): Promise<Agent
 		 * is showing. Ticket 46, and `docs/adr/0002-a-root-per-session.md`.
 		 */
 		const { invoke } = await import('@tauri-apps/api/core');
-		// `workspace: null` is "the root this window is in". Registering a session
-		// against a *different* recent root is ticket 49's; the door is open on the
-		// Rust side and nothing walks through it yet.
-		const session = await invoke<string>('create_agent_session', { workspace: null });
+		/*
+		 * `workspace` is null for "the root this window is in" and an index into
+		 * the recents list for a session in another folder — ticket 49. It is an
+		 * index rather than a path for `switch_workspace`'s reason, unchanged.
+		 */
+		const created = await invoke<{ id: string; root: SessionRoot }>('create_agent_session', {
+			workspace: at ?? null,
+		});
+		const session = created.id;
 		const env = createTauriEnv({ session });
 		/*
 		 * `activeProfile().model` may still be the empty built-in here, and that
@@ -1230,7 +1400,9 @@ export async function createAgentProvider(want: SessionWant = {}): Promise<Agent
 			diskSessions(env, want),
 			allModels(),
 			modelFor(activeProfile().model),
-			true
+			true,
+			session,
+			created.root.path
 		);
 		return {
 			...runner,
@@ -1240,7 +1412,15 @@ export async function createAgentProvider(want: SessionWant = {}): Promise<Agent
 			 * refused, so a straggling write from a run that was stopped cannot land
 			 * in a folder nobody is looking at.
 			 */
-			dispose: () => void invoke('close_agent_session', { session }).catch(() => {}),
+			dispose: () => {
+				runner.dispose();
+				void invoke('close_agent_session', { session }).catch(() => {});
+			},
+			root: created.root,
+			enter: () => invoke<SessionRoot>('focus_agent_session', { session }),
+			// Never rejects: a session that could not be named still runs, it is
+			// simply called "another session" in somebody else's warning.
+			label: (name) => void invoke('label_agent_session', { session, label: name }).catch(() => {}),
 		};
 	}
 
@@ -1287,6 +1467,13 @@ export async function createAgentProvider(want: SessionWant = {}): Promise<Agent
 		// would fail on the missing `invoke` anyway. Passed through so the two
 		// providers stay the same shape.
 		undo: runner.undo,
+		// Nothing to be contended with: browser mode has one session and no
+		// repository, so no checkpoint and nobody to share a folder with.
+		contention: runner.contention,
+		record: runner.record,
+		// The canned runner has one of these like any other, and it is per session
+		// there too — browser mode simply only ever has one session.
+		profile: runner.profile,
 		// Empty here, for the reason `memorySessions` gives.
 		listSessions: runner.listSessions,
 		// Empty for the same reason, and by the same code path: a session in
@@ -1296,6 +1483,12 @@ export async function createAgentProvider(want: SessionWant = {}): Promise<Agent
 		// as "not one of the stored rows".
 		path: runner.path,
 		dispose: runner.dispose,
+		// One fixture, no folders to tell apart, and nothing to switch the
+		// workbench to. `root` undefined is what the navigator reads as "wherever
+		// this window already is".
+		enter: async () => undefined,
+		// Nothing to name it to: browser mode has one session and no Rust.
+		label: () => {},
 	};
 }
 

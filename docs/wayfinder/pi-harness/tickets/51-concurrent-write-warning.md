@@ -1,7 +1,7 @@
 # 51 — Rust tells an agent that another session wrote this file
 
 **Blocked by:** [46](46-a-root-per-session.md), [48](48-sessions-run-in-the-background.md).
-**Status:** ready-for-agent
+**Status:** landed
 
 One half of what makes concurrent turns in one folder honest. The other half is
 [ticket 52](52-undo-under-contention.md).
@@ -31,11 +31,11 @@ above it to the person reading the transcript.
 
 ## Acceptance criteria
 
-- [ ] Two sessions in one root: the second to write a file this turn gets a note naming the
+- [x] Two sessions in one root: the second to write a file this turn gets a note naming the
       other session.
-- [ ] The same session writing the same file again gets no further note.
-- [ ] Writing a file nobody else has touched produces no note.
-- [ ] Reads produce no note.
-- [ ] Sessions in different roots never warn about each other.
-- [ ] The write itself is never refused because of this.
-- [ ] Rust tests cover first-write, repeat-write and different-root.
+- [x] The same session writing the same file again gets no further note.
+- [x] Writing a file nobody else has touched produces no note.
+- [x] Reads produce no note.
+- [x] Sessions in different roots never warn about each other.
+- [x] The write itself is never refused because of this.
+- [x] Rust tests cover first-write, repeat-write and different-root.

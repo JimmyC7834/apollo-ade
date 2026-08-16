@@ -57,6 +57,14 @@ export interface ProfileModalProps {
 	readonly profile?: Profile;
 	readonly onClose: () => void;
 	readonly onAnnounce?: (message: string) => void;
+	/**
+	 * The root whose project file is being written — the focused session's.
+	 *
+	 * Saving reloads, and a reload is scoped to a folder since ticket 49: without
+	 * this the reload would look like it came from nowhere and reach every
+	 * session's harness rather than the ones in this folder.
+	 */
+	readonly root?: string;
 }
 
 interface Draft {
@@ -197,7 +205,7 @@ function SelectionPage({
 	);
 }
 
-export function ProfileModal({ open, profile, onClose, onAnnounce }: ProfileModalProps) {
+export function ProfileModal({ open, profile, onClose, onAnnounce, root }: ProfileModalProps) {
 	const [draft, setDraft] = useState<Draft>(() => draftFrom(profile));
 	const [page, setPage] = useState<'main' | 'tools' | 'skills'>('main');
 	const [saving, setSaving] = useState(false);
@@ -252,7 +260,7 @@ export function ProfileModal({ open, profile, onClose, onAnnounce }: ProfileModa
 			return;
 		}
 		setSaving(true);
-		const result = await saveProfile({
+		const result = await saveProfile(root, {
 			name,
 			model: { provider: draft.provider, id: draft.modelId.trim() },
 			thinkingLevel: draft.thinkingLevel,

@@ -108,6 +108,21 @@ function definitionsIn(text: string, source: string, problems: string[]): Declar
 let sources: ProfileSources = { projectFile: PROJECT_FILE };
 
 /**
+ * Which root the load now in flight is for — see `loadProfileFiles`.
+ *
+ * A module variable read *during* the install rather than an argument threaded
+ * through four stores, because that is exactly when it is true: every store
+ * notifies synchronously inside the load, so a listener asking here is asking
+ * about the load that woke it. A runner in another root uses it to ignore the
+ * change entirely.
+ */
+let loadingFor: string | undefined;
+
+export function loadedRoot(): string | undefined {
+	return loadingFor;
+}
+
+/**
  * The project file's contents as last read — the half of the two files this app
  * is allowed to write.
  *
@@ -151,8 +166,17 @@ export function profileSources(): ProfileSources {
  *
  * Called after the workspace root is selected, because the project file is read
  * through the root-confined commands and there is no root before then.
+ *
+ * @param root Which folder this load is *for*. **Load-bearing since ticket 49**:
+ * a window holds sessions in several roots at once, and everything read here —
+ * profiles, user tools, skills, prompt templates — is project-scoped. Without it,
+ * focusing a conversation in one folder installed that folder's tool manifests
+ * and skills into every other session's harness, including one confined to a
+ * root the user had not opened this file from. Undefined means "everyone", which
+ * is browser mode and the fixture.
  */
-export async function loadProfileFiles(): Promise<ProfileLoad> {
+export async function loadProfileFiles(root?: string): Promise<ProfileLoad> {
+	loadingFor = root;
 	const problems: string[] = [];
 	if (!isTauri()) {
 		/*
@@ -272,7 +296,11 @@ export async function loadProfileFiles(): Promise<ProfileLoad> {
  * the session and the caller is told, because a Save that silently does nothing
  * across restarts is worse than one that says it did not.
  */
-export async function saveProfile(definition: Record<string, unknown>): Promise<ProfileLoad> {
+export async function saveProfile(
+	/** The root being edited — `loadProfileFiles` says why it is carried. */
+	root: string | undefined,
+	definition: Record<string, unknown>
+): Promise<ProfileLoad> {
 	const name = definition.name;
 	const kept = project.profiles.filter(
 		(entry) => !(isRecord(entry) && entry.name === name)
@@ -319,7 +347,7 @@ export async function saveProfile(definition: Record<string, unknown>): Promise<
 	} catch (cause) {
 		return { problems: [`could not write ${PROJECT_FILE}: ${reason(cause)}`] };
 	}
-	return await loadProfileFiles();
+	return await loadProfileFiles(root);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

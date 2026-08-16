@@ -56,6 +56,15 @@ explorer, search, LSP and terminal go on using it untouched; only agent commands
 Making every command in `workspace.rs` session-keyed is a far larger diff for nothing the
 workbench can spend.
 
+**How it moves is the third door into `adopt`**, added by
+[ticket 49](../wayfinder/pi-harness/tickets/49-a-session-in-another-folder.md):
+`focus_agent_session` takes a session id and nothing else, so it can only ever reach a root
+already in the table — one this app was given through a dialog or the recents list. It is
+the narrowest of the three, and it deliberately does **not** record the root as a choice:
+`remember` reorders the recent list, and the renderer names a root by its index into that
+list, so a focus change halfway through reopening a set of sessions moved the folder every
+remaining index pointed at. Focusing is not choosing.
+
 The read-only recents-index parameter added by session switching stays as it is. It answers
 a different question — *list* another root without entering it — and it is not a session.
 
@@ -73,13 +82,18 @@ a different question — *list* another root without entering it — and it is n
   a single call site per command and by tests that assert the `None` branch follows the
   focused root and the `Some` branch never does.
 - **The renderer names roots by an opaque Rust-minted handle.** Done, as above.
-- **`git_checkpoint` is per-tree.** Unresolved, and known. Two sessions in one root produce
-  checkpoints neither conversation was alone in. A per-root turn queue was considered and
-  **declined** in favour of saying so out loud:
-  [ticket 51](../wayfinder/pi-harness/tickets/51-concurrent-write-warning.md) warns the
-  agent and [ticket 52](../wayfinder/pi-harness/tickets/52-undo-under-contention.md) makes
-  undo name whose work it also reverts. Until those land, undo in a contended root is the
-  known sharp edge.
+- **`git_checkpoint` is per-tree.** Half answered, half still true, and the split is worth
+  being exact about. The command itself is no longer ambient: it takes the session id and
+  snapshots *that session's* root, so a background turn cannot checkpoint whichever folder
+  the window happens to be showing — which is what tickets 49 and 51/52 needed and what
+  review found missing after 45–48. What remains true is that a checkpoint is of the whole
+  working tree, so two sessions in one root still produce checkpoints neither conversation
+  was alone in. A per-root turn queue was considered and **declined** in favour of saying so
+  out loud: [ticket 51](../wayfinder/pi-harness/tickets/51-concurrent-write-warning.md)
+  warns the agent and
+  [ticket 52](../wayfinder/pi-harness/tickets/52-undo-under-contention.md) makes undo name
+  whose work it also reverts. Both have landed; a per-session git worktree would make the
+  problem not exist and is still not a decision that has been made.
 - **The gate's deny list and exec cwd confinement.** `agent_exec` takes the session id and
   confines the cwd to that session's root. The deny list is unchanged and remains what it
   always was: a foot-gun guard, explicitly not a security boundary.

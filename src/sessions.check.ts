@@ -178,6 +178,37 @@ assert.deepEqual(
 assert.ok(other.sessions.every((session) => !session.live));
 
 /*
+ * **A live session in another root is listed under that root** — ticket 49. It
+ * is the reason a live row carries a root at all: before this, every open
+ * conversation was in the folder the window was in, so "the top of the current
+ * group" was the only place any of them could go.
+ *
+ * It also hides its own stored row *there*, and only there.
+ */
+const two = buildGroups({
+	workspace,
+	branch: 'master',
+	recents,
+	live: [
+		open({ root: '/tmp/ade' }),
+		open({ id: 'session-b', name: 'Over there', focused: false, root: '/tmp/other', storedPath: '/s/2.jsonl' }),
+	],
+	stored,
+	elsewhere: new Map([['/tmp/other', stored]]),
+});
+assert.deepEqual(
+	two[0].sessions.map((session) => session.id),
+	['session-a', '/s/2.jsonl', '/s/1.jsonl'],
+	'the session in another folder is not in this group'
+);
+assert.deepEqual(
+	two[1].sessions.map((session) => session.id),
+	['session-b', '1:/s/3.jsonl', '1:/s/1.jsonl'],
+	'it leads its own group, and its own file is not offered a second time'
+);
+assert.ok(two[1].sessions[0].live, 'a live row stays live in another root');
+
+/*
  * **A session open here does not hide a same-named file over there.** The two
  * are different conversations in different folders, and dropping the second one
  * would make a workspace look emptier than it is.

@@ -30,7 +30,6 @@ import {
 import { destructive, type Gate } from './gate.ts';
 import { ASK_TOOL } from './ask.ts';
 import { isTauri } from '../native.ts';
-import { activeProfile } from './profile.ts';
 import { rtkArgvFor } from './rtk.ts';
 
 /** Model-visible tool names travel in the request; keep them boring. */
@@ -382,7 +381,12 @@ export function report(argv: readonly string[], outcome: ExecOutcome): string {
  * is pi's contract for `AgentTool`, and the harness turns the throw into a
  * `tool_result` the model sees and can adapt to.
  */
-function createUserTool(tool: UserTool, gate: Gate): AgentHarnessTool<{ env: unknown }> {
+function createUserTool(
+	tool: UserTool,
+	gate: Gate,
+	// The *session's* profile, since ticket 50 — a window no longer has one.
+	rtkOn: () => boolean
+): AgentHarnessTool<{ env: unknown }> {
 	const parameters = Type.Object(
 		Object.fromEntries(Object.entries(tool.parameters).map(([key, spec]) => [key, schemaFor(spec)]))
 	) as TSchema;
@@ -411,7 +415,7 @@ function createUserTool(tool: UserTool, gate: Gate): AgentHarnessTool<{ env: unk
 			// approval question below into a later microtask, and a profile with
 			// rtk off should not have its gate timing changed by a feature it
 			// does not use.
-			if (activeProfile().rtk) {
+			if (rtkOn()) {
 				argv = [...(await rtkArgvFor(argv))];
 			}
 
@@ -539,8 +543,11 @@ export function onUserToolsChange(listener: (tools: readonly UserTool[]) => void
  * The gate is passed in rather than imported: it is the *runner's* gate, and a
  * module-level one would be a second gate answering to nothing.
  */
-export function userToolDefinitions(gate: Gate): AgentHarnessTool<{ env: unknown }>[] {
-	return tools.map((tool) => createUserTool(tool, gate));
+export function userToolDefinitions(
+	gate: Gate,
+	rtkOn: () => boolean
+): AgentHarnessTool<{ env: unknown }>[] {
+	return tools.map((tool) => createUserTool(tool, gate, rtkOn));
 }
 
 /**

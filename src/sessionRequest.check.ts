@@ -1,13 +1,17 @@
 // Run with `npm run check`.
 //
-// The storage half is three lines around `localStorage` and has nothing to get
-// wrong. `sessionCandidates` has the whole switch in it: it decides, on every
-// start-up, which conversation the window comes up in — so its ordering and its
-// tail are what stand between a stale note in `localStorage` and a window that
-// opens the wrong session, or silently starts a blank one.
+// The storage half is a few lines around `localStorage`. The one part of it with
+// a decision in it is what `takeOpenSessions` does with a record it cannot trust:
+// a half-parsed list would reopen a subset chosen by whichever field happened to
+// survive, which is worse than opening one session the way a first launch does.
+//
+// `sessionCandidates` has the whole switch in it: it decides, on every start-up,
+// which conversation the window comes up in — so its ordering and its tail are
+// what stand between a stale record and a window that opens the wrong session,
+// or silently starts a blank one.
 
 import assert from 'node:assert/strict';
-import { sessionCandidates } from './sessionRequest.ts';
+import { recordOpenSessions, sessionCandidates, takeOpenSessions } from './sessionRequest.ts';
 
 const newest = { path: '/s/3.jsonl' };
 const older = { path: '/s/2.jsonl' };
@@ -53,5 +57,43 @@ assert.deepEqual(sessionCandidates([child], '/s/child.jsonl'), [child]);
 // A workspace with nothing in it yet has nothing to try, and says so rather
 // than inventing a path — the caller creates a session instead.
 assert.deepEqual(sessionCandidates([], '/s/2.jsonl'), []);
+
+/*
+ * The set of open conversations, across a launch — ticket 53. Node has no
+ * `localStorage`, so the smallest possible one stands in: this is asserting what
+ * the module does with what it reads back, not that a browser can store a string.
+ */
+{
+	const store = new Map<string, string>();
+	(globalThis as { localStorage?: unknown }).localStorage = {
+		getItem: (key: string) => store.get(key) ?? null,
+		setItem: (key: string, value: string) => void store.set(key, value),
+		removeItem: (key: string) => void store.delete(key),
+	};
+
+	// Nothing recorded is a first launch, which opens one session as it always did.
+	assert.deepEqual(takeOpenSessions(), []);
+
+	const open = [
+		{ root: 'C:/a', path: '/s/1.jsonl' },
+		{ root: 'C:/b', path: '/s/2.jsonl', focused: true },
+	];
+	recordOpenSessions(open);
+	assert.deepEqual(takeOpenSessions(), open);
+	// **Not consumed**: this is state, not an instruction. Clearing it would mean a
+	// launch that crashed on the way up came back to nothing.
+	assert.deepEqual(takeOpenSessions(), open);
+
+	// Anything malformed contributes nothing, and one bad entry does not cost the
+	// others — the same rule the session store follows for a damaged file.
+	store.set('ade.open-sessions', JSON.stringify([{ root: 'C:/a' }, 7, null, open[1]]));
+	assert.deepEqual(takeOpenSessions(), [open[1]]);
+
+	// A record that is not a list at all, and one that is not JSON at all.
+	store.set('ade.open-sessions', JSON.stringify({ root: 'C:/a', path: '/s/1.jsonl' }));
+	assert.deepEqual(takeOpenSessions(), []);
+	store.set('ade.open-sessions', 'not json');
+	assert.deepEqual(takeOpenSessions(), []);
+}
 
 console.log('sessionRequest.check.ts ok');

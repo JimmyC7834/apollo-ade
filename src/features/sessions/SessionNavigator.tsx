@@ -10,13 +10,22 @@ export interface SessionNavigatorProps {
 	/** Switch to a workspace by its index in the recent list. Rust owns that list. */
 	readonly onSwitchWorkspace: (index: number) => void;
 	/**
-	 * Start a conversation in the workspace you are in — ticket 47.
+	 * Start a conversation in a workspace — ticket 47, widened by ticket 49.
 	 *
 	 * **Born inside the group it belongs to**, because picking where a session
-	 * goes and making it are one gesture. Only the current workspace offers it;
-	 * a session in a root this window is not in is ticket 49.
+	 * goes and making it are one gesture. Every group offers it now, not only the
+	 * one you are in: `at` is the group's index into the recent list, and
+	 * undefined is the workspace the window is already in.
 	 */
-	readonly onNewSession?: () => void;
+	readonly onNewSession?: (at?: number) => void;
+	/**
+	 * Hand this app a folder it has never been given — ticket 49.
+	 *
+	 * The OS dialog is still the only door a new root comes through, and this is
+	 * where it is offered: at the bottom of the list of roots, which is the one
+	 * place someone looks when the folder they want is not on it.
+	 */
+	readonly onChooseFolder?: () => void;
 }
 
 const STATUS_LABEL: Record<SessionStatus, string> = {
@@ -45,6 +54,7 @@ export function SessionNavigator({
 	onSelect,
 	onSwitchWorkspace,
 	onNewSession,
+	onChooseFolder,
 }: SessionNavigatorProps) {
 	const [expanded, setExpanded] = useState(false);
 	const [collapsedGroups, setCollapsedGroups] = useState<readonly string[]>([]);
@@ -164,11 +174,11 @@ export function SessionNavigator({
 									</button>
 								))}
 
-						{groupCollapsed || switchTo !== undefined || !onNewSession ? null : (
+						{groupCollapsed || !onNewSession ? null : (
 							<button
 								type="button"
 								className="ide-navigator-row"
-								onClick={onNewSession}
+								onClick={() => onNewSession(switchTo)}
 							>
 								<span className="ide-navigator-icon">
 									<Icon name="add" />
@@ -179,6 +189,14 @@ export function SessionNavigator({
 					</div>
 				);
 			})}
+			{onChooseFolder ? (
+				<button type="button" className="ide-navigator-row" onClick={onChooseFolder}>
+					<span className="ide-navigator-icon">
+						<Icon name="root-folder" />
+					</span>
+					<span className="ide-navigator-label">Choose folder…</span>
+				</button>
+			) : null}
 		</nav>
 	);
 }

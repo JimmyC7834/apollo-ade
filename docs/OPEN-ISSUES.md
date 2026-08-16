@@ -395,32 +395,46 @@ event for asking and none for having answered. Restoring it as a pending questio
 would read "Not answered" over a question that was answered, which is worse than
 the gap. Everything else in the turn restores normally.
 
-### Three sharp edges left by concurrent sessions — tickets 45–48
+### ~~Three sharp edges left by concurrent sessions~~ — closed by tickets 49, 51, 52
 
-**Two agents can edit one tree at once, and neither is told.** This is the price
-of declining a per-root turn queue, taken deliberately: the answer is a warning
-([ticket 51](wayfinder/pi-harness/tickets/51-concurrent-write-warning.md)) rather
-than a lock. Until it lands, the second writer overwrites the first silently.
+All three are answered, and the answers are warnings rather than locks, which is
+what was decided in the grilling.
 
-**Undo in a contended root restores a snapshot neither conversation was alone
-in.** `git_checkpoint` captures the whole working tree before a turn, so a
-checkpoint taken for session A already contains part of session B's work, and
-restoring it reverts B's edits too.
-[Ticket 52](wayfinder/pi-harness/tickets/52-undo-under-contention.md) is what
-makes that honest. This is the one that most deserves a per-session git worktree,
-which is the direction the other harnesses took and is not a decision that has
-been made.
+**Two agents editing one tree** are now told about each other: the second to write
+a file in its current turn gets a note naming the other conversation, appended to
+its tool result and never refusing the write —
+[ticket 51](wayfinder/pi-harness/tickets/51-concurrent-write-warning.md). It fires
+once per file per session, and never for reads.
 
-**A session in another root cannot be opened without switching workspace.** The
-navigator says so rather than pretending; the reload that used to make it work is
-gone, and doing it properly means the workbench following focus —
-[ticket 49](wayfinder/pi-harness/tickets/49-a-session-in-another-folder.md).
-Switching roots — through the navigator's headers or *Open Folder* — still
-reloads the window and still refuses while any session is mid-turn. The refusal
-on `openFolder` was **missing** and was added by review, not by use: without it
-`choose_workspace` moved Rust's current root under live sessions, and since
-`git_checkpoint` takes no session id, an undo could have reset an unrelated
-repository.
+**Undo in a contended root** confirms first, naming whose work it would also
+revert, and afterwards says so in both transcripts — the conversation whose edits
+were reverted is told in its own context too
+([ticket 52](wayfinder/pi-harness/tickets/52-undo-under-contention.md)). An
+uncontended undo is untouched, including its wording. **A per-session git worktree
+would make the problem not exist**, is the direction the other harnesses took, and
+is still not a decision that has been made.
+
+**A session in another root** opens where it lives, and focusing it brings the
+explorer, the editors, the terminal, the language server and the git commands with
+it ([ticket 49](wayfinder/pi-harness/tickets/49-a-session-in-another-folder.md)).
+The reload is gone from `openFolder` and from workspace switching, and with it both
+refusals: editors are kept per root rather than discarded, and `git_checkpoint` and
+`git_restore_checkpoint` now take the session id, so a background turn snapshots
+the tree it is editing rather than whichever folder the window is showing.
+
+### What ticket 51 cannot see
+
+The write registry is fed by `agent_write_file` and `agent_append_file`, so it
+knows about the write and edit tools and about the session store. It does **not**
+know about a file changed by a shell command — `bash` runs a real process, and
+tracking what it touched means watching the filesystem, which is a different piece
+of machinery. Two agents that both edit through `sed` will not warn each other.
+
+It also cannot see across windows in the sense that matters least and most: the
+table is per Rust process, so two *app instances* on one folder are invisible to
+each other. Both are the same shape of gap — the registry is a courtesy between
+sessions this process is running, not a lock on the filesystem, and it was never
+going to be one.
 
 ### A long-resumed session lists as *Untitled*, and its transcript disagrees
 

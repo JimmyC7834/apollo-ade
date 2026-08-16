@@ -12,7 +12,7 @@
 // possible at all (ticket 48): the sink an event arrives at belongs to the
 // session, so unmounting its view stops nothing.
 
-import type { AgentEvent, AgentProvider, AgentRun } from '../../agent';
+import type { AgentEvent, AgentProvider, AgentRun, SessionRoot } from '../../agent';
 // Explicit extensions: `liveSession.check.ts` runs this under plain node.
 import { liveStatus, type SessionStatus } from '../../sessions.ts';
 import { applyEvent, type Turn } from './transcript.ts';
@@ -67,6 +67,13 @@ export interface LiveSession {
 	/** The stored file this session appends to, once the provider has said. */
 	path: string | undefined;
 	/**
+	 * The folder this conversation lives in, fixed when it was created.
+	 *
+	 * Read from the provider rather than stored beside it, so there is one answer
+	 * and it is the one Rust minted. Undefined in browser mode.
+	 */
+	readonly root: SessionRoot | undefined;
+	/**
 	 * The run in flight, or null.
 	 *
 	 * A mutable box rather than state: nothing renders it, and it has to be
@@ -109,6 +116,7 @@ export function createLiveSession(options: {
 		key: options.key,
 		provider: options.provider,
 		path: undefined,
+		root: options.provider.root,
 		run: { current: null },
 		focused: false,
 
@@ -131,6 +139,26 @@ export function createLiveSession(options: {
 		},
 
 		begin(label) {
+			/*
+			 * What this conversation is called, told to Rust so ticket 51's warning
+			 * can name it. It is the first prompt — the session's name, not the
+			 * turn's — so this says the same thing every time.
+			 *
+			 * **Every turn, not only the first**, and that is a bug found by driving
+			 * it: a session restored from disk has its turns replayed rather than
+			 * begun, so a "first turn only" label was never sent for any conversation
+			 * that came back from a launch — and Rust's ids are minted fresh on every
+			 * page load, so the label from before the reload names an id nobody has.
+			 * The other agent's warning then read *"another session"*, which is the
+			 * one thing ticket 51 says it must not say.
+			 *
+			 * Shortened, because this is a *name* and a whole prompt is not one: it
+			 * goes into a sentence in another agent's tool result, where a paragraph
+			 * reads as noise and costs context. The navigator's rows elide the same
+			 * way, with CSS.
+			 */
+			const name = session.name() ?? label;
+			options.provider.label(name.length > 60 ? `${name.slice(0, 57)}…` : name);
 			const turn: Turn = { id: nextTurnId(state.turns), prompt: label, parts: [], status: 'running' };
 			session.patch({ turns: [...state.turns, turn], running: true });
 
@@ -188,7 +216,7 @@ export function createLiveSession(options: {
  * turn's events into another's transcript. The same trap `history.ts` hit when
  * replay was built, which is why it is solved the same way.
  */
-function nextTurnId(turns: readonly Turn[]): number {
+export function nextTurnId(turns: readonly Turn[]): number {
 	const now = Date.now();
 	const highest = turns.reduce((top, turn) => Math.max(top, turn.id), 0);
 	return highest >= now ? highest + 1 : now;

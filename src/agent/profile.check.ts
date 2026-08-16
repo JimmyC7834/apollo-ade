@@ -11,6 +11,7 @@ import {
 	activeProfile,
 	activeToolNames,
 	builtinProfiles,
+	createSelection,
 	danglingReferences,
 	installProfiles,
 	listProfiles,
@@ -230,6 +231,73 @@ const plan = builtinProfiles().find((profile) => profile.name === 'plan') as Pro
 		`said why: ${problems.join(' | ')}`
 	);
 	installProfiles([]);
+}
+
+/*
+ * **Two conversations, two profiles** — ticket 50. The catalogue is one per
+ * window and the choice is one per session, so switching in one must not reach
+ * the other, and a reload must reach both.
+ */
+{
+	installProfiles([]);
+	activateProfile('auto');
+	const a = createSelection();
+	const b = createSelection();
+	let told = 0;
+	const off = b.subscribe(() => {
+		told += 1;
+	});
+
+	// Born on whatever the window opened with — captured, not followed. That is
+	// what "chosen when it is created" means.
+	assert.equal(a.current().name, activeProfile().name);
+	assert.equal(b.current().name, activeProfile().name);
+
+	/*
+	 * **A session that never chose is still not the window's.** Focusing a
+	 * conversation in another folder re-reads that folder's project profiles, and
+	 * a selection that resolved to the module's `active` would follow — retuning a
+	 * background session's model, tools and approval mode from another root.
+	 */
+	installProfiles([{ name: 'from-another-root', gatePolicy: 'bypass' }]);
+	assert.equal(b.current().name, 'auto', 'still on the profile it was born with');
+	assert.notEqual(b.current().gatePolicy, 'bypass', 'and on its approval mode, not that one');
+	installProfiles([]);
+
+	assert.ok(a.activate('plan').ok);
+	assert.equal(a.current().name, 'plan');
+	assert.equal(b.current().name, 'auto', 'the other conversation was not retuned');
+	assert.equal(activeProfile().name, 'auto', 'nor was the window');
+
+	// A profile that does not exist is refused, and the session stays where it is.
+	const refused = a.activate('nonesuch');
+	assert.equal(refused.ok, false);
+	assert.equal(a.current().name, 'plan');
+
+	/*
+	 * A `/reload` redefines the profile a session is *running under*, and it has
+	 * to reach it — which is why a selection holds a name rather than the object
+	 * it resolved to when it was made.
+	 */
+	told = 0;
+	installProfiles([{ name: 'plan', gatePolicy: 'ask' }]);
+	assert.equal(a.current().gatePolicy, 'ask', 'the new definition, in the session');
+	assert.ok(told > 0, 'and its harness is told');
+
+	/*
+	 * **A folder change is not a profile change.** Project profiles are read from
+	 * the root, so focusing a conversation in another folder replaces them — and a
+	 * session running under one that is no longer defined keeps it rather than
+	 * being moved onto the window's default behind its own back.
+	 */
+	installProfiles([{ name: 'from-the-project', gatePolicy: 'ask' }]);
+	assert.ok(a.activate('from-the-project').ok);
+	installProfiles([]);
+	assert.equal(a.current().name, 'from-the-project', 'still on what it chose');
+	assert.equal(a.current().gatePolicy, 'ask', 'and still the definition it chose');
+
+	off();
+	activateProfile('auto');
 }
 
 console.log('agent/profile.check.ts: ok');

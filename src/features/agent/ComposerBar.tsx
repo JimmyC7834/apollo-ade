@@ -14,13 +14,7 @@ import * as Menu from '@radix-ui/react-dropdown-menu';
 import * as Popover from '@radix-ui/react-popover';
 
 import { pressure } from '../../agent/compaction';
-import {
-	activateProfile,
-	activeProfile,
-	listProfiles,
-	onProfileChange,
-	type Profile,
-} from '../../agent/profile';
+import { listProfiles, type Profile, type ProfileSelection } from '../../agent/profile';
 import { Icon } from '../../ui';
 import { profileSummary, ringDash } from './composer';
 import { formatCost, turnCost, type Usage } from './transcript';
@@ -38,6 +32,15 @@ export interface ComposerBarProps {
 	readonly onTranscript: () => void;
 	readonly transcriptDisabled: boolean;
 	readonly onAnnounce?: (message: string) => void;
+	/**
+	 * The focused conversation's profile — ticket 50.
+	 *
+	 * Passed in rather than read from the module store, because there is no
+	 * longer one active profile in a window: the control shows and changes the
+	 * profile of the session on screen, and a background session's harness is
+	 * never retuned by anything done here.
+	 */
+	readonly profile: ProfileSelection;
 	/** Open the configuration modal — on a profile to edit it, on nothing to create. */
 	readonly onEditProfile: (profile?: Profile) => void;
 }
@@ -136,15 +139,15 @@ export function ComposerBar({
 	transcriptDisabled,
 	onAnnounce,
 	onEditProfile,
+	profile: selection,
 }: ComposerBarProps) {
 	/*
-	 * The active profile, subscribed rather than read: `/profile <name>` and
+	 * This session's profile, subscribed rather than read: `/profile <name>` and
 	 * `/reload` both change it from somewhere this component cannot see, and a
 	 * summary that quietly describes the profile from two minutes ago is worse
-	 * than no summary. `onProfileChange` is the store the profile module already
-	 * exposes for exactly this.
+	 * than no summary. The selection is the store, and it is the session's own.
 	 */
-	const profile = useSyncExternalStore(onProfileChange, activeProfile);
+	const profile: Profile = useSyncExternalStore(selection.subscribe, selection.current);
 	const profiles = listProfiles();
 	/**
 	 * Whether the press that is about to select a row landed on its edit icon.
@@ -226,7 +229,7 @@ export function ComposerBar({
 										onEditProfile(candidate);
 										return;
 									}
-									const result = activateProfile(candidate.name);
+									const result = selection.activate(candidate.name);
 									onAnnounce?.(
 										result.ok
 											? `Switched to "${result.profile.name}". It applies from the next turn.`
@@ -272,7 +275,7 @@ export function ComposerBar({
 						 */}
 						<Menu.Item
 							className="ide-context-menu-item"
-							onSelect={() => onEditProfile(activeProfile())}
+							onSelect={() => onEditProfile(selection.current())}
 						>
 							<span className="ide-context-menu-mark" />
 							Edit “{profile.name}”…

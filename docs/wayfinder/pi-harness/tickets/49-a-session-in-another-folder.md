@@ -1,7 +1,7 @@
 # 49 — A session in another folder
 
 **Blocked by:** [46](46-a-root-per-session.md), [48](48-sessions-run-in-the-background.md).
-**Status:** ready-for-agent
+**Status:** landed
 
 Where the session table earns out: two conversations, two working folders, both live.
 
@@ -32,12 +32,12 @@ indexed, never named by path.
 
 ## Acceptance criteria
 
-- [ ] A session can be created in another recent root, and in a folder chosen through the
+- [x] A session can be created in another recent root, and in a folder chosen through the
       dialog.
-- [ ] Focusing it switches explorer, editors, terminal and LSP to that root.
-- [ ] Editors open in one root are still open when you focus back into it.
-- [ ] A turn running in one root continues while you focus a session in another, and its
+- [x] Focusing it switches explorer, editors, terminal and LSP to that root.
+- [x] Editors open in one root are still open when you focus back into it.
+- [x] A turn running in one root continues while you focus a session in another, and its
       file operations stay confined to its own root.
-- [ ] An agent in one session cannot read or write another session's root.
-- [ ] The navigator shows live sessions under each of their own workspace groups.
-- [ ] Driven in the native window with two roots and overlapping turns.
+- [x] An agent in one session cannot read or write another session's root.
+- [x] The navigator shows live sessions under each of their own workspace groups.
+- [x] Driven in the native window with two roots and overlapping turns.

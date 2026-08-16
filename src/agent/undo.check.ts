@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 
-import { undoNote } from './undo.ts';
+import { revertedElsewhereNote, undoNote } from './undo.ts';
 
 // The note is the only thing standing between an undo and a model that believes
 // an edit survives. Every branch of it is asserted for that reason.
@@ -45,6 +45,29 @@ import { undoNote } from './undo.ts';
 	assert.match(note, /could not be recorded in the agent's context/);
 	assert.match(note, /still\s+believes those edits exist/);
 	assert.match(note, /Say so in your next message/, 'and what to do about it');
+}
+
+{
+	// Ticket 52. An uncontended undo says nothing about other sessions — that is
+	// what "behaves exactly as it does today" means — and a contended one names
+	// them, in both directions.
+	assert.doesNotMatch(undoNote({ restored: ['a.ts'], removed: [], told: true }), /share/);
+
+	const note = undoNote({ restored: ['a.ts'], removed: [], told: true }, ['Chase a failing check']);
+	assert.match(note, /Chase a failing check/, 'names the other conversation');
+	assert.match(note, /shares this folder/, 'singular for one');
+	assert.match(note, /neither conversation was alone in/);
+
+	assert.match(
+		undoNote({ restored: [], removed: [], told: true }, ['one', 'two']),
+		/one, two, which share this folder/,
+		'plural for two'
+	);
+
+	const told = revertedElsewhereNote('Fix the sash');
+	assert.match(told, /A turn was undone in Fix the sash/);
+	assert.match(told, /reverted those edits too/);
+	assert.match(revertedElsewhereNote(undefined), /another session/);
 }
 
 console.log('undo.check.ts ok');

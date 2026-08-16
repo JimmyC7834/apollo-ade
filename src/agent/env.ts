@@ -178,8 +178,22 @@ export interface EnvRoot {
 	readonly workspace?: number;
 }
 
-export function createTauriEnv(root: EnvRoot = {}): ExecutionEnv {
+/**
+ * A native environment, and whatever Rust wanted the agent told about a write.
+ *
+ * **The note cannot ride the return value of `writeFile`** — pi's `ExecutionEnv`
+ * returns nothing useful from it and the tool composes its own result text — so
+ * it is parked here and picked up by the harness's `afterToolCall`, which runs
+ * immediately after the write that produced it. Ticket 51.
+ */
+export interface NotingEnv extends ExecutionEnv {
+	/** Anything Rust said about the writes since the last call. Clears it. */
+	takeNotes(): readonly string[];
+}
+
+export function createTauriEnv(root: EnvRoot = {}): NotingEnv {
 	const core = () => import('@tauri-apps/api/core');
+	let notes: string[] = [];
 	// `null` rather than omitted: Tauri's argument matching is by name, and a
 	// missing key and an explicit null both arrive as `None`. Passing both always
 	// keeps every call site uniform.
@@ -207,6 +221,16 @@ export function createTauriEnv(root: EnvRoot = {}): ExecutionEnv {
 			// differently anyway.
 			const code = message === 'not found' ? 'not_found' : 'unknown';
 			return err(new FileError(code, message, path));
+		}
+	}
+
+	/**
+	 * Keep whatever Rust said about a write, and give pi back the nothing it
+	 * expects. A note is never an error and never changes what the write did.
+	 */
+	function note(said: string | null): void {
+		if (said) {
+			notes.push(said);
 		}
 	}
 
@@ -267,8 +291,20 @@ export function createTauriEnv(root: EnvRoot = {}): ExecutionEnv {
 				return err(new FileError('not_supported', 'binary appends are not supported', path));
 			}
 			return attempt(path, async () =>
-				(await core()).invoke<void>('agent_append_file', { id: toId(path), content, session })
+				note(
+					await (await core()).invoke<string | null>('agent_append_file', {
+						id: toId(path),
+						content,
+						session,
+					})
+				)
 			);
+		},
+
+		takeNotes() {
+			const taken = notes;
+			notes = [];
+			return taken;
 		},
 
 		async createDir(path) {
@@ -401,7 +437,13 @@ export function createTauriEnv(root: EnvRoot = {}): ExecutionEnv {
 				);
 			}
 			return attempt(path, async () =>
-				(await core()).invoke<void>('agent_write_file', { id: toId(path), content, session })
+				note(
+					await (await core()).invoke<string | null>('agent_write_file', {
+						id: toId(path),
+						content,
+						session,
+					})
+				)
 			);
 		},
 

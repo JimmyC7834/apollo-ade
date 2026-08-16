@@ -9,6 +9,7 @@
 // days from reaching the UI.
 
 import type { HistoryTurn } from './history';
+import type { ProfileSelection } from './profile';
 import type { StoredSession } from './sessionStore';
 import type { UndoOutcome } from './undo';
 
@@ -215,6 +216,34 @@ export interface AgentProvider {
 	 */
 	undo(checkpoint: string): Promise<UndoOutcome>;
 	/**
+	 * The profile this conversation runs under — ticket 50.
+	 *
+	 * On the provider because the harness is: switching retunes *this* session's
+	 * model, tools, skills, thinking level and gate policy, and nothing else's.
+	 * The catalogue of profiles is still one per window, read from files; which
+	 * one a conversation is running is not.
+	 */
+	readonly profile: ProfileSelection;
+	/**
+	 * Which other conversations' work undoing this checkpoint would also revert.
+	 *
+	 * **Asked before the undo runs, not after** — ticket 52. A checkpoint is of
+	 * the whole working tree, so one taken before another session's edits does
+	 * not contain them and restoring it takes them back out. Empty is the
+	 * ordinary case and the one that leaves undo exactly as it was.
+	 *
+	 * Never rejects: an unanswerable question is an empty list.
+	 */
+	contention(checkpoint: string): Promise<readonly string[]>;
+	/**
+	 * Put a note into this session's context that nobody said.
+	 *
+	 * Only ticket 52 uses it, and only pointed at *another* session: the
+	 * conversation whose edits an undo elsewhere reverted must not be left
+	 * claiming them. Never rejects, for `undo`'s `told: false` reason.
+	 */
+	record(note: string): Promise<void>;
+	/**
 	 * The workspace's stored conversations, newest first, for the navigator.
 	 *
 	 * On the provider because the session store is: sessions live inside the
@@ -256,6 +285,44 @@ export interface AgentProvider {
 	 * id is refused by Rust rather than resolved against whatever is focused.
 	 */
 	dispose(): void;
+	/**
+	 * The folder this session was born in — ticket 49.
+	 *
+	 * Undefined in browser mode, where there is one fixture and nothing to tell
+	 * apart. The window draws it: a live session belongs under its own root's
+	 * group in the navigator, not under whichever root is focused.
+	 */
+	readonly root?: SessionRoot;
+	/**
+	 * Make the workbench's root this session's root, and say which it is.
+	 *
+	 * The narrowest of the three doors into a root: it names a session, not a
+	 * path and not an index, so it can only reach a folder already registered.
+	 * The *session's* confinement does not move — it never moves — what moves is
+	 * the explorer, the editors, the terminal and the language server.
+	 */
+	enter(): Promise<SessionRoot | undefined>;
+	/**
+	 * Tell Rust what this conversation is called — ticket 51.
+	 *
+	 * A session has no name until its first prompt, so it cannot be given one at
+	 * creation. Rust needs it for one sentence: the note that tells a second agent
+	 * in the same folder *which* other conversation is editing the file it just
+	 * wrote. `session-3` would not be an answer anyone could act on.
+	 */
+	label(name: string): void;
+}
+
+/**
+ * A root as the window names it.
+ *
+ * Structurally `WorkspaceSelection`, and deliberately declared here instead of
+ * imported: the agent layer is underneath the workbench and importing upward
+ * would be the start of a cycle.
+ */
+export interface SessionRoot {
+	readonly label: string;
+	readonly path: string;
 }
 
 export { createAgentProvider } from './provider';

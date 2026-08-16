@@ -40,10 +40,14 @@ export interface WorkbenchActions {
 	showEditor: () => void;
 	/** Set when the editor could be raised but has nothing to show. */
 	showEditorDisabled?: string;
-	/** Undefined where the capability does not exist at all, as in the browser. */
+	/**
+	 * Undefined where the capability does not exist at all, as in the browser.
+	 *
+	 * Never merely *disabled*: since ticket 49 a folder can always be opened —
+	 * choosing one starts a conversation there and the editors of the folder you
+	 * leave are kept rather than discarded, so there is nothing left to refuse on.
+	 */
 	openFolder: (() => void) | undefined;
-	/** Set when a folder could be opened but not right now. */
-	openFolderDisabled?: string;
 	showAccessibilityHelp: () => void;
 	/** A conversation of its own, in the root you are in — ticket 47. */
 	newSession: () => void;
@@ -69,7 +73,6 @@ export function buildCommands(actions: WorkbenchActions): readonly Command[] {
 						id: 'file.openFolder',
 						category: 'File',
 						title: 'Open Folder',
-						disabled: actions.openFolderDisabled,
 						run: openFolder,
 					},
 				]

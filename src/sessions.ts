@@ -69,6 +69,15 @@ export interface Session {
 	 * Absent for a session in the current root, where there is nowhere to go.
 	 */
 	readonly switchIndex?: number;
+	/**
+	 * Which root a *live* session is in — ticket 49.
+	 *
+	 * A window's conversations no longer share a folder, so a live row belongs
+	 * under its own workspace group rather than under whichever one is focused.
+	 * Undefined means "wherever this window is", which is browser mode and the
+	 * only case there was before.
+	 */
+	readonly root?: string;
 }
 
 export interface WorkspaceGroup {
@@ -166,7 +175,8 @@ export function buildGroups(options: {
 	 *
 	 * Built by the caller rather than from a name and a status, because there is
 	 * no longer one of them to describe — and because their statuses come from
-	 * live objects this module has no business knowing about.
+	 * live objects this module has no business knowing about. Each carries the
+	 * root it is in, which is what decides the group it lands in.
 	 */
 	readonly live: readonly Session[];
 	/** This workspace's stored conversations, newest first. */
@@ -178,30 +188,40 @@ export function buildGroups(options: {
 	if (!workspace) {
 		return [];
 	}
-	return [
-		{
-			id: workspace.path || workspace.label,
-			label: workspace.label,
-			branch: options.branch,
-			sessions: [
-				...options.live,
-				/*
-				 * A conversation already open is dropped rather than listed twice: it is
-				 * one of the rows above, drawn from live state, and live state is the
-				 * only place its status and unread flag are true. Offering the stored row
-				 * as well would invite opening one file into two harnesses, which is two
-				 * writers appending to one JSONL.
-				 */
+	/**
+	 * One root's rows: its open conversations, then its stored ones.
+	 *
+	 * A conversation already open is dropped from the stored half rather than
+	 * listed twice: it is one of the rows above, drawn from live state, and live
+	 * state is the only place its status and unread flag are true. Offering the
+	 * stored row as well would invite opening one file into two harnesses, which
+	 * is two writers appending to one JSONL.
+	 */
+	// An arrow rather than a declaration: a hoisted function is not covered by
+	// the guard above it, and TypeScript is right to say so.
+	const rowsFor = (path: string, stored: readonly StoredSession[], switchIndex?: number) => {
+		// Undefined `root` is browser mode's single fixture, which belongs to
+		// whichever root the window is in — there is only ever one.
+		const open = options.live.filter((session) => (session.root ?? workspace.path) === path);
+		return [
+			...open,
+			...stored
+				.filter((entry) => !open.some((session) => session.storedPath === entry.id))
 				/*
 				 * Not `.map(storedRow)`: `map` passes the array index as the second
 				 * argument, which is `switchIndex` here — so every stored row in the
 				 * *current* root would claim to live in some other one, and opening it
 				 * would switch you there. The check caught it, which is what it is for.
 				 */
-				...options.stored
-					.filter((entry) => !options.live.some((open) => open.storedPath === entry.id))
-					.map((entry) => storedRow(entry)),
-			],
+				.map((entry) => storedRow(entry, switchIndex)),
+		];
+	};
+	return [
+		{
+			id: workspace.path || workspace.label,
+			label: workspace.label,
+			branch: options.branch,
+			sessions: rowsFor(workspace.path, options.stored),
 		},
 		/*
 		 * Matched by path, not by label: two checkouts of the same project are a
@@ -216,9 +236,7 @@ export function buildGroups(options: {
 							id: `recent:${recent.path}`,
 							label: recent.label,
 							switchIndex: index,
-							sessions: (options.elsewhere?.get(recent.path) ?? []).map((entry) =>
-								storedRow(entry, index)
-							),
+							sessions: rowsFor(recent.path, options.elsewhere?.get(recent.path) ?? [], index),
 						},
 					]
 		),

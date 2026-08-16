@@ -8,13 +8,15 @@
 // being created, in memory, and nothing survives a reload because nothing
 // reloads.
 //
-// What remains is the part that still has to cross a boundary in *time*: a
+// What remains is two things that have to cross a boundary in *time*. One is a
 // failure that happens inside start-up code, long before anything can speak to
-// the user. [Ticket 53](docs/wayfinder/pi-harness/tickets/53-launch-reopens-sessions.md)
-// is where a persisted *set* of open sessions comes back, and it will want a
-// record of its own rather than the one-slot note this used to hold.
+// the user. The other is the record of which conversations were open when the
+// window closed — [ticket 53](docs/wayfinder/pi-harness/tickets/53-launch-reopens-sessions.md),
+// and the second job this module was always going to finish. It is a *set* now
+// rather than the one-slot note switching used to leave.
 
 const UNOPENED = 'ade.session-unopened';
+const OPEN = 'ade.open-sessions';
 
 /**
  * The session that was picked and could not be opened.
@@ -44,6 +46,61 @@ export function takeUnopened(): string | undefined {
 		return path ?? undefined;
 	} catch {
 		return undefined;
+	}
+}
+
+/**
+ * One conversation that was open, as much of it as reopening needs.
+ *
+ * The root is a **path**, and it is matched against Rust's recent list on the way
+ * back up rather than handed to Rust as one — the renderer still never names a
+ * folder, it recognises one. A root that has since been deleted, unmounted, or
+ * pushed off the end of the recents list simply matches nothing, which is how
+ * "dropped with a message, and the rest still open" happens.
+ */
+export interface OpenSession {
+	/** The root it lived in. */
+	readonly root: string;
+	/** Its file, root-relative, as `listSessions` reports it. */
+	readonly path: string;
+	readonly focused?: boolean;
+}
+
+/**
+ * Remember the set of open conversations, for the next launch.
+ *
+ * Written on every change rather than at shutdown: a desktop app is closed by
+ * the window manager, by a crash, and by the user, and only one of those is a
+ * moment anything could run in.
+ */
+export function recordOpenSessions(sessions: readonly OpenSession[]): void {
+	try {
+		localStorage.setItem(OPEN, JSON.stringify(sessions));
+	} catch {
+		// Then the next launch opens one session, which is what it did before.
+	}
+}
+
+/**
+ * What was open last time. **Not consumed**: unlike a request, this is state
+ * rather than an instruction, and clearing it would mean a launch that crashed
+ * on the way up came back to nothing.
+ *
+ * Anything malformed is no record at all. A half-parsed list would reopen a
+ * subset chosen by whichever field happened to survive.
+ */
+export function takeOpenSessions(): readonly OpenSession[] {
+	try {
+		const raw = localStorage.getItem(OPEN);
+		const parsed: unknown = raw ? JSON.parse(raw) : [];
+		return Array.isArray(parsed)
+			? parsed.filter(
+					(entry): entry is OpenSession =>
+						typeof entry?.root === 'string' && typeof entry?.path === 'string'
+				)
+			: [];
+	} catch {
+		return [];
 	}
 }
 

@@ -4992,3 +4992,173 @@ The reload-based session switch was also removed rather than left lying around.
 `sessionRequest.ts` keeps only the part that still has to cross a boundary in
 time — a start-up failure with nobody to tell yet. Ticket 53 wants a record of
 *several* open sessions, which is not what a one-slot note ever held.
+
+---
+
+## Tickets 49–53 — A conversation brings its folder with it
+
+**User outcome:** A session can live in a folder the window is not in, and
+focusing it brings the explorer, the editors, the language server and the git
+commands with it. Each conversation carries its own profile. Two agents in one
+folder are told about each other, undo says whose work it would also revert, and
+the set of conversations you had comes back when you open the app again.
+
+### The reload is gone from the last place it was
+
+Ticket 47 retired the reload for switching *sessions*; switching **roots** still
+did it, in two places, and refused while anything was dirty or mid-turn. All
+three — the reload, the dirty refusal, the mid-turn refusal — were the same
+mechanism: one ambient root, so moving it meant rebuilding everything under it.
+
+`focus_agent_session` is the third and narrowest door into `adopt`: it takes a
+session id, so it can only reach a root already registered. One effect in the
+controller is the only place a root change is applied, and it applies it *because
+the focused session changed*. Switching workspaces is now a consequence of
+focusing a conversation rather than a mode of its own — `goToWorkspace` focuses
+the session you have open there, or opens one.
+
+**Editors are kept per root rather than discarded**, stashed in a ref when the
+workbench leaves a folder and put back when it returns. That is the half of
+ticket 31 a reload could never do, and it is what removed the dirty refusal:
+unsaved work is put down and picked up, not thrown away.
+
+### Ticket 50: the profile is the session's, not the window's
+
+`profile.ts` keeps the catalogue — profiles are files, and every session in a
+window sees the same set. What moved is the *choice*: `createSelection()` per
+runner, and every `activeProfile()` inside `createRunner` became
+`profile.current()`. A switch retunes that conversation's harness and no other,
+which is the same rule ADR 0002 applies to roots: state belonging to a run is not
+mutable from outside it.
+
+A selection holds the profile's **name**, so a `/reload` that redefines it reaches
+the sessions running under it — and holds the profile object as a fallback, so a
+session in another folder is not quietly moved onto the window's default when
+focus changes and the project profiles are replaced.
+
+### Tickets 51 and 52: the sharp edge from 45–48, made honest
+
+Rust is the only side that sees every session's writes, so `Writers` lives there.
+A write records who made it and on which of that session's turns;
+`git_checkpoint` is where a turn begins, so it is the boundary rather than a
+second mechanism invented to be one. The second session to write a file *this
+turn* gets a note appended to its tool result — once per file per session, never
+a refusal, and never for reads.
+
+The note names the other conversation, which is why `label_agent_session` exists:
+Rust can see the collision but has no idea what the window calls the session that
+caused it, and `session-3` is not something an agent can say anything useful
+about.
+
+Undo asks `checkpoint_contention` before it runs. An uncontended undo is exactly
+what it was; a contended one confirms first, naming the other conversation, and
+afterwards the note in *both* transcripts says what happened — the one whose work
+was reverted is told in its own context too, or it goes on believing edits exist
+that do not.
+
+### Ticket 53: the set comes back
+
+`sessionRequest.ts` finishes its second job: a record of which conversations were
+open and which was focused, written on every change rather than at shutdown,
+because a desktop window is closed by the window manager and by crashes as well
+as by the user. Nothing resumes — a turn interrupted by quitting stays
+interrupted, and `replayEntries` already closes an unanswered tool call.
+
+The record holds each root as a **path**, matched against Rust's recent list on
+the way back up and passed on as an index. The renderer still never names a
+folder; it recognises one. A root that is gone is dropped with a message and the
+rest still open.
+
+### Three bugs found by driving it, not by thinking about it
+
+**The launch race.** `create_agent_session` with no index resolves against Rust's
+current root, and at mount `restore_workspace` may not have adopted one yet. The
+window came up with no conversation at all and *"The session could not be
+started"* in the live region. It was always a race; bootstrap is now gated on
+there being a root.
+
+**Stale recents indices.** `focus_agent_session` called `remember`, which reorders
+the recent list — and the renderer names a root by its index into that list. So
+reopening a set of sessions moved the folder that every remaining index pointed
+at, and a conversation came back in the wrong one, twice on the same file.
+Focusing is not choosing: the list moves when a root is chosen or switched to, and
+the index is now resolved immediately before each session is opened rather than
+once for the batch.
+
+**A restored session never told Rust its name.** The label was sent on a
+session's first `begin`, and a restored session's turns are *replayed* rather than
+begun — so every conversation that came back from a launch was "another session"
+in somebody else's collision warning, which is the one thing ticket 51 says it
+must not say. The label is sent on every turn now; it is always the same name.
+
+### Verified in the native window, with real model turns
+
+- A session created under another workspace's group in the navigator, and the
+  workbench following it: titlebar, branch, file tree, palette file list.
+- A turn started in the repo, then focus moved to the other folder: it kept
+  running in the background, finished with a toast naming it and an *Open*
+  action, and its transcript shows it read the repo's `package.json` while the
+  window was showing somewhere else.
+- An editor opened in one root, gone after focusing a session in the other, and
+  back when focus returned.
+- Two sessions in one folder writing `note.txt`: the second got the note, naming
+  the first by its opening prompt, and the write went through.
+- Undo in that folder: *"Undo this turn, and more"*, naming the other
+  conversation; Cancel changed nothing; confirming restored the file, wrote the
+  note into the undoing transcript, and put a matching note into the other one.
+- Two sessions in one folder on two different profiles, each stable across focus
+  changes.
+- A real process restart: both conversations back, each in its own root, focus
+  where it was left, transcripts intact, and nothing started a turn on its own.
+
+### What the review found, and it was mostly ticket 50
+
+Six real bugs, and the first two are the same one seen from two sides.
+
+**A session that never chose a profile followed the window.** `createSelection`
+started with no name, meaning "whatever `activeProfile()` says" — and
+`installProfiles` reassigns that on every root focus, because project profiles are
+read from the folder. So focusing a conversation in another folder retuned every
+other session's model, tool set, thinking level and **approval mode**. It now
+captures the profile at creation, which is what ticket 50's "chosen when it is
+created" was asking for all along.
+
+**The catalogue is still one per window**, and that was the second half: a
+selection resolving its profile *by name* on every read would pick up another
+root's file redefining a name it shares — and `auto` is a name every project file
+in this repo redefines. It re-resolves only for its own root now, and holds what
+it resolved otherwise.
+
+**User tools were the one with teeth.** A user tool is an argv array declared by a
+folder's `ade.profiles.json` and run through the gate. Every runner rebuilt its
+tool set on `onUserToolsChange`, so focusing a session in a folder you had merely
+glanced at handed that folder's tool definitions to a session confined somewhere
+else. Before this sequence a root change reloaded the window, which made it
+impossible; `mine()` makes it impossible again, and skills and prompt templates go
+through the same test.
+
+**Two `enter`s could disagree with each other.** Tauri does not order commands, so
+two quick focus changes could have Rust adopt B while React kept A — the explorer
+listing one folder while a save wrote a relative path into another. Root entry is
+a queue now, and each entry checks it is still the focused session before it
+adopts.
+
+**A checkpoint's place in the order of writes was read after `git stash create`,
+not before.** A write landing during the stash was recorded as having happened
+*before* the checkpoint, so undo would revert it with nothing said — precisely
+what ticket 52 exists to prevent.
+
+**Undo used the dialog's copy of the contention.** Confirming before the round
+trip landed would have written *"nothing else was reverted"* into a transcript
+where something was. It asks again at the moment it acts.
+
+Also fixed: the write registry keyed on the raw id, so `src/a.ts` and `src.ts`
+were two files and neither warned about the other; the synthetic "your work was
+reverted" turn used a bare `Date.now()` for its id, which `nextTurnId` exists to
+stop; a closed session left a listener in the profile store for ever; and
+reopening did not check whether a file was already open, which is how two
+harnesses ended up on one JSONL during the restore.
+
+`switch_workspace` is gone — the command, the three provider implementations and
+the `openFolderDisabled` field with it. Going to a workspace is focusing a
+conversation in it, and nothing disables opening a folder any more.

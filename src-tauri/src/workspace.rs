@@ -7,7 +7,7 @@
 //! Policy: one canonical root, no escaping it, no symlinks, files only,
 //! UTF-8 only, 2 MiB max, and build/dependency directories are skipped.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -84,6 +84,242 @@ impl SessionRoots {
             .cloned()
             .ok_or_else(|| "unknown session".to_string())
     }
+}
+
+/// Who wrote which file, so a second agent in one folder is told about the first.
+///
+/// **Rust is the only side that can hold this** — ticket 51. It sees every
+/// session's writes; a registry in the renderer would only know about the
+/// sessions that particular window built, and the write path is the boundary
+/// that has to hold anyway.
+///
+/// Three decisions, all visible in the shape of this:
+///
+/// - **Writes only.** Two agents reading one file is normal and harmless, and a
+///   note on it would be constant noise. Nothing here is consulted by a read.
+/// - **Written *this turn*.** `turn` counts each session's turns — `git_checkpoint`
+///   is where a turn begins, and is called once at the start of every one — and a
+///   write records the writer's turn number alongside it. The note fires only
+///   while that number is still current, which is the difference between "someone
+///   is working on this right now" and "someone once touched it".
+/// - **Once per file per session.** `told` is never cleared. A note on every write
+///   becomes a thing the model learns to skip past, and then the one that mattered
+///   is skipped too.
+#[derive(Default)]
+pub struct Writers(Mutex<WriterState>);
+
+#[derive(Default)]
+struct WriterState {
+    /// Session id → how many turns it has begun. Absent once the session closes,
+    /// which is what stops a conversation nobody has open from warning anybody.
+    turn: HashMap<String, u64>,
+    /// Session id → what the window calls it. The note has to name the other
+    /// conversation in words its reader could act on; `session-3` is not that.
+    label: HashMap<String, String>,
+    /// (root, root-relative path) → who wrote it last, and on which of its turns.
+    wrote: HashMap<(PathBuf, String), (String, u64)>,
+    /// (session, root, path) pairs already warned. Deliberately never pruned.
+    told: HashSet<(String, PathBuf, String)>,
+    /*
+     * Ticket 52's half: enough to answer "what else has happened in this folder
+     * since that checkpoint was taken". A counter rather than a clock, because
+     * the question is ordering and two writes in one millisecond are ordered.
+     */
+    seq: u64,
+    /// Checkpoint sha → the root it was taken in, and the count at the time.
+    checkpoints: HashMap<String, (PathBuf, u64)>,
+    /// (root, session) → the count at that session's last write there.
+    last: HashMap<(PathBuf, String), u64>,
+}
+
+impl Writers {
+    /// A turn is starting in this session.
+    fn turn_begins(&self, session: &str) {
+        *self.0.lock().unwrap().turn.entry(session.to_string()).or_default() += 1;
+    }
+
+    /// What the window calls this session, for the note to name.
+    fn name(&self, session: &str, label: &str) {
+        self.0
+            .lock()
+            .unwrap()
+            .label
+            .insert(session.to_string(), label.to_string());
+    }
+
+    /// Forget a session. Its turn is no longer current, so it warns nobody.
+    fn closed(&self, session: &str) {
+        let mut state = self.0.lock().unwrap();
+        state.turn.remove(session);
+        state.label.remove(session);
+    }
+
+    /// Record a write, and hand back the note it earns — if any.
+    ///
+    /// **Never refuses.** The write has already happened by the time this runs,
+    /// and that is the decision rather than an accident of ordering: what to do
+    /// about a collision belongs to the agent, and above it to the person reading
+    /// the transcript.
+    fn wrote(&self, root: &Path, id: &str, session: Option<&str>) -> Option<String> {
+        // A sessionless write is the workbench's own — the editor saving a file —
+        // and has nobody to warn and nothing to warn about.
+        let session = session?;
+        /*
+         * The same spelling `agent_may_write` normalises to, and for the same
+         * reason it does it: an id arrives as `src/a.ts`, `src.ts` or
+         * `/src/a.ts` depending on which tool built it, and three spellings of one
+         * file in this map is three files that never collide with each other.
+         */
+        let id = &normal(id);
+        // The agent's own session transcripts are not the user's project, and no
+        // two sessions ever write to the same one.
+        if id.starts_with(".ade/") {
+            return None;
+        }
+        let mut state = self.0.lock().unwrap();
+        let key = (root.to_path_buf(), id.to_string());
+        let note = match state.wrote.get(&key) {
+            Some((other, turn))
+                if other != session
+                    && state.turn.get(other) == Some(turn)
+                    && !state
+                        .told
+                        .contains(&(session.to_string(), key.0.clone(), key.1.clone())) =>
+            {
+                let who = state
+                    .label
+                    .get(other)
+                    .cloned()
+                    .unwrap_or_else(|| "another session".to_string());
+                state
+                    .told
+                    .insert((session.to_string(), key.0.clone(), key.1.clone()));
+                Some(format!(
+                    concat!(
+                        "Another agent session in this folder — {who} — is working on {id} in ",
+                        "its current turn and wrote it before you did. Your write went through. ",
+                        "The file may not still say what you last read, and whoever is reading ",
+                        "this transcript may not know both of you are editing it."
+                    ),
+                    who = who,
+                    id = id
+                ))
+            }
+            _ => None,
+        };
+        let mine = state.turn.get(session).copied().unwrap_or_default();
+        state.wrote.insert(key.clone(), (session.to_string(), mine));
+        state.seq += 1;
+        let now = state.seq;
+        state.last.insert((key.0, session.to_string()), now);
+        note
+    }
+
+    /// Where in the order of writes we are, for a checkpoint about to be taken.
+    fn mark(&self) -> u64 {
+        self.0.lock().unwrap().seq
+    }
+
+    /// A checkpoint was taken, at the point in the order of writes `mark` gave.
+    ///
+    /// **The mark is taken before the snapshot, not after**, and that is the whole
+    /// reason it is a separate call: `git stash create` walks the tree and takes
+    /// real time, and a write that lands while it runs would otherwise be counted
+    /// as having happened *before* the checkpoint — so undo would revert it with
+    /// no warning, which is the exact failure ticket 52 exists to prevent.
+    fn checkpoint_taken(&self, root: &Path, sha: &str, session: Option<&str>, at: u64) {
+        // A checkpoint with no session is not a turn's, and nothing asks about it.
+        if session.is_none() {
+            return;
+        }
+        self.0
+            .lock()
+            .unwrap()
+            .checkpoints
+            .insert(sha.to_string(), (root.to_path_buf(), at));
+    }
+
+    /// Which *other* sessions have written in that root since this checkpoint.
+    ///
+    /// **The question undo has to ask before it runs** — ticket 52. A checkpoint
+    /// captures the whole working tree, so restoring one taken before another
+    /// conversation's edits reverts those edits too, and puts the tree into a
+    /// state neither conversation was ever in. This is what lets the confirmation
+    /// say so, and say whose work it is.
+    ///
+    /// An empty list is the ordinary case, and it is what makes an uncontended
+    /// undo behave exactly as it did before any of this existed.
+    fn contention(&self, sha: &str, session: Option<&str>) -> Vec<String> {
+        let state = self.0.lock().unwrap();
+        let Some((root, taken)) = state.checkpoints.get(sha) else {
+            // A checkpoint from a previous run of the app. Nothing is known about
+            // what has happened since, and inventing a warning would be worse than
+            // the silence — the tree is the user's own to inspect.
+            return Vec::new();
+        };
+        let mut who: Vec<String> = state
+            .last
+            .iter()
+            .filter(|((other_root, other), at)| {
+                other_root == root && Some(other.as_str()) != session && *at > taken
+            })
+            .map(|((_, other), _)| {
+                state
+                    .label
+                    .get(other)
+                    .cloned()
+                    .unwrap_or_else(|| "another session".to_string())
+            })
+            .collect();
+        who.sort();
+        who.dedup();
+        who
+    }
+}
+
+/// Which other sessions' work an undo of this checkpoint would also revert.
+///
+/// Never fails and never refuses: it answers a question, and the answer to it is
+/// a sentence in a confirmation. See `Writers::contention`.
+#[tauri::command]
+pub fn checkpoint_contention(
+    sha: String,
+    session: Option<String>,
+    writers: tauri::State<'_, Writers>,
+) -> Vec<String> {
+    writers.contention(&sha, session.as_deref())
+}
+
+/// Where in the order of writes to this folder we are. Read before a snapshot.
+pub(crate) fn write_mark(writers: &Writers) -> u64 {
+    writers.mark()
+}
+
+/// A checkpoint was taken in this root. Called by `git_checkpoint`.
+pub(crate) fn checkpoint_taken(
+    writers: &Writers,
+    root: &Path,
+    sha: &str,
+    session: Option<&str>,
+    at: u64,
+) {
+    writers.checkpoint_taken(root, sha, session, at);
+}
+
+/// A turn is beginning. Called by `git_checkpoint`, which is where one does.
+pub(crate) fn turn_begins(writers: &Writers, session: Option<&str>) {
+    if let Some(id) = session {
+        writers.turn_begins(id);
+    }
+}
+
+/// Tell Rust what the window calls a session, so a warning can name it.
+///
+/// A session has no name until its first prompt, which is why this is its own
+/// command rather than an argument to `create_agent_session`.
+#[tauri::command]
+pub fn label_agent_session(session: String, label: String, writers: tauri::State<'_, Writers>) {
+    writers.name(&session, &label);
 }
 
 /// Which root an agent command is against: its session's, or the current one.
@@ -325,20 +561,28 @@ pub(crate) fn root_of(state: &WorkspaceState) -> Result<PathBuf, String> {
         .ok_or_else(|| "no workspace selected".to_string())
 }
 
+/// How a root is named to the renderer: its folder name and its path.
+///
+/// Naming is all this is. The renderer has always been *shown* paths — the
+/// breadcrumb is one — and the boundary 0001 drew is about which paths it may
+/// *name back*, which is still none.
+fn info_of(root: &Path) -> WorkspaceInfo {
+    WorkspaceInfo {
+        label: root
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| root.display().to_string()),
+        path: root.display().to_string(),
+    }
+}
+
 /// Adopt a directory as the workspace root. The only place a root is ever set.
 fn adopt(path: &Path, state: &WorkspaceState) -> Result<WorkspaceInfo, String> {
     let root = canonical(path).map_err(|e| e.to_string())?;
     if !root.is_dir() {
         return Err("not a directory".into());
     }
-    let label = root
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| root.display().to_string());
-    let info = WorkspaceInfo {
-        label,
-        path: root.display().to_string(),
-    };
+    let info = info_of(&root);
     *state.0.lock().unwrap() = Some(root);
     Ok(info)
 }
@@ -414,33 +658,6 @@ pub fn recent_workspaces(app: tauri::AppHandle) -> Result<Vec<WorkspaceInfo>, St
         .collect())
 }
 
-/// Switch to a root **already on the recent list**, by its index in that list.
-///
-/// The index is the whole security argument. `choose_workspace` exists so the
-/// renderer never names a root; a path parameter here would reopen exactly that
-/// hole under a friendlier name, and `set_workspace` — which does take a path —
-/// refuses outside debug builds for the same reason. An index can only reach a
-/// folder the user has already picked through an OS dialog in some earlier
-/// session, so switching grants no authority that choosing did not already.
-///
-/// One root remains the confinement boundary. It is merely a different root
-/// than it was a moment ago; see `docs/adr/0001-multi-root-confinement.md` for
-/// why more than one at a time is a different decision that has not been made.
-#[tauri::command]
-pub fn switch_workspace(
-    index: usize,
-    app: tauri::AppHandle,
-    state: tauri::State<'_, WorkspaceState>,
-) -> Result<WorkspaceInfo, String> {
-    let recents = read_recents(&app);
-    let path = recents
-        .get(index)
-        .ok_or_else(|| "no such recent workspace".to_string())?;
-    let info = adopt(Path::new(path), &state)?;
-    remember(&app, &info.path);
-    Ok(info)
-}
-
 /// A root from the recent list, named by its index in that list.
 ///
 /// Split out from `read_root` so the index arithmetic is testable without an
@@ -500,6 +717,18 @@ fn read_root_for(
     }
 }
 
+/// A session's id, and the root it was born in.
+///
+/// The root is here because the window has to draw it: ticket 49 lists live
+/// sessions under their own workspace group, and a group needs a name. It is the
+/// same `WorkspaceInfo` the recents list already hands over.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSessionInfo {
+    id: String,
+    root: WorkspaceInfo,
+}
+
 /// Register a root for a new session, and hand back the id it is known by.
 ///
 /// The root comes from exactly where a root has always come from: the current
@@ -511,8 +740,41 @@ pub fn create_agent_session(
     app: tauri::AppHandle,
     state: tauri::State<'_, WorkspaceState>,
     roots: tauri::State<'_, SessionRoots>,
-) -> Result<String, String> {
-    Ok(roots.register(read_root(&app, &state, workspace)?))
+) -> Result<AgentSessionInfo, String> {
+    let root = read_root(&app, &state, workspace)?;
+    Ok(AgentSessionInfo {
+        root: info_of(&root),
+        id: roots.register(root),
+    })
+}
+
+/// Make the workbench's current root this session's root — ticket 49.
+///
+/// **The third door into `adopt`, and the narrowest of the three.** It takes a
+/// session id rather than a path or an index, so it can only ever reach a root
+/// that is already registered — which means a root this app was already given
+/// through a dialog or the recents list. An unknown id is refused, exactly as it
+/// is everywhere else the table is consulted.
+///
+/// The session's own confinement is untouched by this and by everything else:
+/// its root was fixed at birth. What moves is the *workbench's* root, which is
+/// what "the explorer shows the folder the visible conversation is in" means.
+#[tauri::command]
+pub fn focus_agent_session(
+    session: String,
+    state: tauri::State<'_, WorkspaceState>,
+    roots: tauri::State<'_, SessionRoots>,
+) -> Result<WorkspaceInfo, String> {
+    let root = roots.root(&session)?;
+    /*
+     * **Not remembered, and that is a bug this had.** `remember` reorders the
+     * recent list, and the renderer names a root by its *index* into that list —
+     * so a focus change halfway through reopening a set of sessions moved the
+     * folder every remaining index pointed at, and a conversation came back in
+     * the wrong one. Focusing is not choosing: the list only moves when a root is
+     * chosen or switched to, which is what it always meant.
+     */
+    adopt(&root, &state)
 }
 
 /// Forget a session's root. Safe to call for an id that is already gone.
@@ -520,8 +782,14 @@ pub fn create_agent_session(
 /// Every command that took the id starts refusing from here on, which is what
 /// makes "closed" mean something on this side rather than only in the window.
 #[tauri::command]
-pub fn close_agent_session(session: String, roots: tauri::State<'_, SessionRoots>) {
+pub fn close_agent_session(
+    session: String,
+    roots: tauri::State<'_, SessionRoots>,
+    writers: tauri::State<'_, Writers>,
+) {
     roots.forget(&session);
+    // Its turn is over by definition, so it stops warning anyone from here on.
+    writers.closed(&session);
 }
 
 /// Choose the workspace root through an OS folder dialog.
@@ -743,9 +1011,18 @@ const AGENT_PROTECTED: [&str; 1] = ["ade.profiles.json"];
 /// have instead of a profile field.
 const AGENT_PROTECTED_TREES: [&str; 2] = [".agents/skills/", ".agents/commands/"];
 
+/// One spelling of a root-relative id.
+///
+/// Ids arrive as `src/a.ts`, `src\a.ts` or `/src/a.ts` depending on which tool
+/// built them, and on Windows in whatever case the model happened to type. Every
+/// comparison that treats an id as an *identity* — what may not be written, and
+/// who wrote it last — goes through here, so three spellings are one file.
+fn normal(id: &str) -> String {
+    id.replace('\\', "/").trim_start_matches('/').to_lowercase()
+}
+
 fn agent_may_write(id: &str) -> Result<(), String> {
-    let normalised = id.replace('\\', "/");
-    let normalised = normalised.trim_start_matches('/').to_lowercase();
+    let normalised = normal(id);
     if AGENT_PROTECTED.contains(&normalised.as_str()) {
         return Err("refusing to write the agent's own profile file".into());
     }
@@ -825,7 +1102,8 @@ pub fn agent_append_file(
     session: Option<String>,
     state: tauri::State<'_, WorkspaceState>,
     roots: tauri::State<'_, SessionRoots>,
-) -> Result<(), String> {
+    writers: tauri::State<'_, Writers>,
+) -> Result<Option<String>, String> {
     use std::io::Write;
 
     let root = agent_root(&state, &roots, session.as_deref())?;
@@ -850,7 +1128,8 @@ pub fn agent_append_file(
         .append(true)
         .open(&target)
         .map_err(|e| e.to_string())?;
-    file.write_all(content.as_bytes()).map_err(|e| e.to_string())
+    file.write_all(content.as_bytes()).map_err(|e| e.to_string())?;
+    Ok(writers.wrote(&root, &id, session.as_deref()))
 }
 
 /// Create a directory and its parents.
@@ -1004,7 +1283,8 @@ pub fn agent_write_file(
     session: Option<String>,
     state: tauri::State<'_, WorkspaceState>,
     roots: tauri::State<'_, SessionRoots>,
-) -> Result<(), String> {
+    writers: tauri::State<'_, Writers>,
+) -> Result<Option<String>, String> {
     let root = agent_root(&state, &roots, session.as_deref())?;
     agent_may_write(&id)?;
     let candidate = Path::new(&id);
@@ -1038,7 +1318,9 @@ pub fn agent_write_file(
         }
     }
 
-    fs::write(&target, content).map_err(|e| e.to_string())
+    fs::write(&target, content).map_err(|e| e.to_string())?;
+    // After the write, always: the note is a note, never a refusal — ticket 51.
+    Ok(writers.wrote(&root, &id, session.as_deref()))
 }
 
 /// Overwrite an existing file in the workspace.
@@ -1405,6 +1687,118 @@ mod tests {
         let id = roots.register(elsewhere.clone());
         assert_eq!(agent_root(&state, &roots, Some(&id)).unwrap(), elsewhere);
         assert!(agent_root(&state, &roots, Some("session-gone")).is_err());
+    }
+
+    /// Ticket 51, all six of its rules in one place.
+    ///
+    /// Written against `Writers` directly rather than through the commands,
+    /// because what is interesting is entirely the bookkeeping — the write itself
+    /// is `fs::write` and is never affected by any of this.
+    #[test]
+    fn the_second_session_to_write_a_file_is_told_about_the_first() {
+        let writers = Writers::default();
+        let root = PathBuf::from("/tmp/one");
+        let other = PathBuf::from("/tmp/two");
+        writers.name("session-0", "Fix the sash");
+        writers.turn_begins("session-0");
+        writers.turn_begins("session-1");
+
+        // Nobody has touched it, so there is nothing to say.
+        assert_eq!(writers.wrote(&root, "src/a.ts", Some("session-0")), None);
+
+        let note = writers
+            .wrote(&root, "src/a.ts", Some("session-1"))
+            .expect("the second writer is told");
+        // It names the other conversation and the file, which is what makes it
+        // something the agent can act on rather than a warning light.
+        assert!(note.contains("Fix the sash"), "{note}");
+        assert!(note.contains("src/a.ts"), "{note}");
+
+        // Once per file per session. A note on every write is a note nobody reads.
+        assert_eq!(writers.wrote(&root, "src/a.ts", Some("session-1")), None);
+        // One session writing its own file over and over is not a collision.
+        assert_eq!(writers.wrote(&root, "src/b.ts", Some("session-1")), None);
+        assert_eq!(writers.wrote(&root, "src/b.ts", Some("session-1")), None);
+
+        // Two folders are two projects. Same path, different root, no warning.
+        assert_eq!(writers.wrote(&root, "src/c.ts", Some("session-0")), None);
+        assert_eq!(writers.wrote(&other, "src/c.ts", Some("session-1")), None);
+
+        // "This turn", not "ever": once the writer has moved on to another turn,
+        // the collision is history rather than news.
+        assert_eq!(writers.wrote(&root, "src/d.ts", Some("session-0")), None);
+        writers.turn_begins("session-0");
+        assert_eq!(writers.wrote(&root, "src/d.ts", Some("session-1")), None);
+
+        // A closed session warns nobody, for the same reason.
+        assert_eq!(writers.wrote(&root, "src/e.ts", Some("session-0")), None);
+        writers.closed("session-0");
+        assert_eq!(writers.wrote(&root, "src/e.ts", Some("session-1")), None);
+
+        // One file, however it was spelled. Three spellings in this map would be
+        // three files that never collide, and the note would never fire.
+        assert_eq!(writers.wrote(&root, "src/g.ts", Some("session-1")), None);
+        assert!(writers.wrote(&root, r"\src\G.TS", Some("session-0")).is_some());
+
+        // The workbench saving a file is not an agent, and the agent's own
+        // transcript is not the user's project.
+        writers.turn_begins("session-2");
+        assert_eq!(writers.wrote(&root, "src/f.ts", None), None);
+        assert_eq!(writers.wrote(&root, ".ade/sessions/x.jsonl", Some("session-2")), None);
+        assert_eq!(writers.wrote(&root, ".ade/sessions/x.jsonl", Some("session-1")), None);
+    }
+
+    /// Ticket 52: what an undo would take with it, before it takes it.
+    #[test]
+    fn undo_knows_whose_work_it_would_also_revert() {
+        let writers = Writers::default();
+        let root = PathBuf::from("/tmp/one");
+        let other = PathBuf::from("/tmp/two");
+        writers.name("session-0", "Fix the sash");
+        writers.name("session-1", "Chase a failing check");
+        writers.turn_begins("session-0");
+        writers.turn_begins("session-1");
+
+        writers.wrote(&root, "src/a.ts", Some("session-0"));
+        writers.checkpoint_taken(&root, "sha-quiet", Some("session-0"), writers.mark());
+        // Nothing has happened since. This is the ordinary undo, and it must stay
+        // exactly as silent as it was before ticket 52 existed.
+        assert!(writers.contention("sha-quiet", Some("session-0")).is_empty());
+
+        // The session's own later writes are its own business.
+        writers.wrote(&root, "src/a.ts", Some("session-0"));
+        assert!(writers.contention("sha-quiet", Some("session-0")).is_empty());
+
+        // Another conversation writes in the same folder. Now the undo would take
+        // that with it, and it is named rather than merely counted.
+        writers.wrote(&root, "src/b.ts", Some("session-1"));
+        assert_eq!(
+            writers.contention("sha-quiet", Some("session-0")),
+            vec!["Chase a failing check".to_string()]
+        );
+
+        // A folder is a repository. Work in another one is not in this tree.
+        writers.checkpoint_taken(&other, "sha-elsewhere", Some("session-0"), writers.mark());
+        writers.wrote(&root, "src/c.ts", Some("session-1"));
+        assert!(writers.contention("sha-elsewhere", Some("session-0")).is_empty());
+
+        /*
+         * **The mark is taken before the snapshot.** A write that lands while
+         * `git stash create` is walking the tree must count as *after* the
+         * checkpoint, or undo reverts it with nothing said — which is the whole
+         * failure this ticket exists to prevent.
+         */
+        let at = writers.mark();
+        writers.wrote(&root, "src/slow.ts", Some("session-1"));
+        writers.checkpoint_taken(&root, "sha-slow", Some("session-0"), at);
+        assert_eq!(
+            writers.contention("sha-slow", Some("session-0")),
+            vec!["Chase a failing check".to_string()]
+        );
+
+        // A checkpoint from a previous run of the app: nothing is known about what
+        // has happened since, and a warning invented from that would be a guess.
+        assert!(writers.contention("sha-never-seen", Some("session-0")).is_empty());
     }
 
     #[test]

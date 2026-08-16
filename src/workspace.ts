@@ -53,16 +53,6 @@ export interface WorkspaceProvider {
 	 * list; this only reads it.
 	 */
 	recentWorkspaces(): Promise<readonly WorkspaceSelection[]>;
-	/**
-	 * Switch to a recent root **by its index in that list**, never by path.
-	 *
-	 * The index is the point. `chooseWorkspace` exists so this side never names
-	 * a root, and a path parameter here would reopen that hole under a
-	 * friendlier name. An index can only reach a folder the user already picked
-	 * through an OS dialog, so switching grants nothing choosing did not.
-	 * See `docs/adr/0002-a-root-per-session.md`.
-	 */
-	switchWorkspace(index: number): Promise<WorkspaceSelection>;
 	getTree(): Promise<readonly WorkspaceEntry[]>;
 	getFiles(): Promise<readonly WorkspaceEntry[]>;
 	readFile(id: string): Promise<WorkspaceFile>;
@@ -194,13 +184,9 @@ function fixtureProvider(): WorkspaceProvider {
 		async restoreWorkspace() {
 			return { label: 'fixture', path: '' };
 		},
-		// The fixture is the only root there is, so the recent list is it and
-		// switching to it is a no-op rather than an error.
+		// The fixture is the only root there is, so the recent list is it.
 		async recentWorkspaces() {
 			return [{ label: 'Fixture', path: '' }];
-		},
-		async switchWorkspace() {
-			return { label: 'Fixture', path: '' };
 		},
 		async getTree() {
 			return entries();
@@ -456,12 +442,6 @@ function fileSystemAccessProvider(pick: NonNullable<Window['showDirectoryPicker'
 		async recentWorkspaces() {
 			return root ? [{ label: root.name, path: root.name }] : [];
 		},
-		async switchWorkspace(index) {
-			if (!root || index !== 0) {
-				throw new Error('a browser folder cannot be reopened without a gesture');
-			}
-			return { label: root.name, path: root.name };
-		},
 
 		async getTree() {
 			if (!root) {
@@ -614,9 +594,6 @@ function tauriProvider(): WorkspaceProvider {
 		},
 		async recentWorkspaces() {
 			return (await core()).invoke<WorkspaceSelection[]>('recent_workspaces');
-		},
-		async switchWorkspace(index) {
-			return (await core()).invoke<WorkspaceSelection>('switch_workspace', { index });
 		},
 		getTree: tree,
 		async getFiles() {

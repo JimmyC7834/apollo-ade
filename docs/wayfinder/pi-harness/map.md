@@ -683,10 +683,23 @@ background. And **ADR 0001 is superseded by
 a property of the session, which is strictly stricter, since a root is fixed at birth rather
 than mutable underneath work in flight.
 
-**45 to 48 have landed.** The window holds several conversations, they run in the background,
-and two turns can be in flight at once — driven in the native window with real turns landing
-in two separate session files. What that leaves sharp is exactly what 51 and 52 are for: two
-agents can now edit one tree, and until those land nothing warns either of them.
+**All nine have landed.** The window holds several conversations, any of them running while
+you look at another, each in its own folder with its own profile — driven in the native
+window with real turns landing in separate session files, a background turn continuing while
+the workbench showed somewhere else, and the set of conversations coming back across a real
+process restart.
+
+**The reload is gone from the last place it was.** Switching roots was still a page reload in
+two places and still refused while anything was dirty or mid-turn; all three were the same
+mechanism, and the mechanism was one ambient root. Switching workspace is now a consequence
+of focusing a conversation, and editors are kept per root rather than discarded — the half of
+ticket 31 a reload could never do.
+
+**The sharp edge from 45–48 is closed the way it was decided: warnings, not locks.** Rust
+tells the second agent to write a file that another conversation is working on it, and undo
+names whose work it would also revert before it runs — and afterwards, in both transcripts.
+What a per-session git worktree would make *not exist* is still what it was: a decision that
+has not been made.
 
 | | | |
 |---|---|---|
@@ -694,11 +707,11 @@ agents can now edit one tree, and until those land nothing warns either of them.
 | **[46](tickets/46-a-root-per-session.md)** | Rust gives each session its own root | **landed**, ADR 0002 |
 | **[47](tickets/47-two-sessions-in-one-window.md)** | Two sessions in one window | **landed** |
 | **[48](tickets/48-sessions-run-in-the-background.md)** | A session keeps running while you look at another | **landed** |
-| **[49](tickets/49-a-session-in-another-folder.md)** | A session in another folder | 46, 48 |
-| **[50](tickets/50-profile-follows-the-session.md)** | Profile and model follow the session | 49 |
-| **[51](tickets/51-concurrent-write-warning.md)** | Rust tells an agent another session wrote this file | 46, 48 |
-| **[52](tickets/52-undo-under-contention.md)** | Undo says whose work it will also revert | 48 |
-| **[53](tickets/53-launch-reopens-sessions.md)** | Launch reopens the sessions you had | 49 |
+| **[49](tickets/49-a-session-in-another-folder.md)** | A session in another folder | **landed** |
+| **[50](tickets/50-profile-follows-the-session.md)** | Profile and model follow the session | **landed** |
+| **[51](tickets/51-concurrent-write-warning.md)** | Rust tells an agent another session wrote this file | **landed** |
+| **[52](tickets/52-undo-under-contention.md)** | Undo says whose work it will also revert | **landed** |
+| **[53](tickets/53-launch-reopens-sessions.md)** | Launch reopens the sessions you had | **landed** |
 
 45 and 46 are prefactors and break the tracer-bullet rule on purpose: neither changes
 anything on screen, and every slice after them is impossible while a session is module-level

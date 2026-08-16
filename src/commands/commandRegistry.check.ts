@@ -35,22 +35,16 @@ assert.equal(enabled.disabled, undefined);
 enabled.run();
 assert.equal(ran, 1);
 
-// Native, unsaved work: still present, carrying the reason. This is the case
-// that used to vanish from the palette entirely.
-const blocked = find({
-	...base,
-	openFolder: noop,
-	openFolderDisabled: 'Save your changes first',
-});
-assert.ok(blocked);
-assert.equal(blocked.disabled, 'Save your changes first');
+/*
+ * **Nothing disables it any more**, and the `openFolderDisabled` field is gone
+ * with the state it described: since ticket 49 a folder can always be opened —
+ * choosing one starts a conversation there, and the editors of the folder you
+ * leave are kept rather than discarded, so unsaved work is no longer a reason to
+ * refuse. The capability test above is the whole of the rule now.
+ */
+assert.equal(commandLabel(enabled), 'File: Open Folder');
 
-// A disabled reason on its own must not conjure an entry that has no capability.
-assert.equal(find({ ...base, openFolderDisabled: 'Save your changes first' }), undefined);
-
-assert.equal(commandLabel(blocked), 'File: Open Folder');
-
-// The editor command uses the same blocked-not-hidden rule: it always exists,
+// The editor command still uses the blocked-not-hidden rule: it always exists,
 // and says why when there is nothing to show.
 const editor = (actions: WorkbenchActions) =>
 	buildCommands(actions).find((command) => command.id === 'view.showEditor');

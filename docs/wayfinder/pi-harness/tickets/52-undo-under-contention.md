@@ -1,7 +1,7 @@
 # 52 — Undo says whose work it will also revert
 
 **Blocked by:** [48](48-sessions-run-in-the-background.md).
-**Status:** ready-for-agent
+**Status:** landed
 
 The other half of making concurrent turns honest, and the one no warning to an agent can
 cover — because the person pressing Undo is the user.
@@ -35,11 +35,11 @@ workspace" means — and belongs in its own ticket rather than being smuggled in
 
 ## Acceptance criteria
 
-- [ ] Undo in a root where no other session ran behaves exactly as it does today.
-- [ ] Undo whose checkpoint span overlaps another session's turns confirms first, naming
+- [x] Undo in a root where no other session ran behaves exactly as it does today.
+- [x] Undo whose checkpoint span overlaps another session's turns confirms first, naming
       that session.
-- [ ] Declining the confirmation changes nothing.
-- [ ] The note appended to the session records that another session's work was reverted.
-- [ ] A session whose work was reverted by someone else's undo is not silently left
+- [x] Declining the confirmation changes nothing.
+- [x] The note appended to the session records that another session's work was reverted.
+- [x] A session whose work was reverted by someone else's undo is not silently left
       claiming those edits in its transcript.
-- [ ] Driven in the native window with two sessions editing one tree.
+- [x] Driven in the native window with two sessions editing one tree.

@@ -29,13 +29,50 @@ export interface SessionSetView {
 	readonly revision: number;
 }
 
+/**
+ * One conversation to put back — the shape `sessionRequest.ts` writes down.
+ *
+ * Structurally `OpenSession`, and declared here rather than imported for the
+ * reason `SessionRoot` is: the record is the workbench's, and this is underneath
+ * it.
+ */
+export interface Reopen {
+	/** The folder it lived in, as a path — recognised, never handed to Rust. */
+	readonly root: string;
+	/** The session file to open, root-relative. */
+	readonly path: string;
+	readonly focused?: boolean;
+}
+
+/**
+ * Which index into Rust's recent list a root is at, *now*.
+ *
+ * Asked per session rather than once for the batch, because the list is Rust's
+ * and can be reordered by anything that adopts a root. An index resolved for the
+ * whole batch and spent one entry at a time is an index that can go stale
+ * halfway through — which it did, and a conversation came back in the wrong
+ * folder. Undefined means the root is gone.
+ */
+export type Locate = (root: string) => Promise<number | undefined>;
+
 export interface SessionSet {
 	subscribe(listener: () => void): () => void;
 	view(): SessionSetView;
-	/** The session this window comes up with. Safe to call any number of times. */
-	bootstrap(): void;
-	/** A conversation of its own. Empty, and focused as soon as it exists. */
-	open(want?: SessionWant): Promise<LiveSession | undefined>;
+	/**
+	 * The conversations this window comes up with. Safe to call any number of
+	 * times; only the first call does anything.
+	 *
+	 * @param reopen What was open when the window last closed — ticket 53. Empty
+	 * is a first launch, and opens one session exactly as it always did.
+	 */
+	bootstrap(reopen?: readonly Reopen[], locate?: Locate): void;
+	/**
+	 * A conversation of its own. Empty, and focused as soon as it exists.
+	 *
+	 * @param at Which recent root to create it in, by index — ticket 49.
+	 * Undefined is the root the window is in.
+	 */
+	open(want?: SessionWant, at?: number): Promise<LiveSession | undefined>;
 	focus(key: string): void;
 	/** Stop watching. The file stays on disk and the row stays in the navigator. */
 	close(key: string): void;
@@ -70,10 +107,10 @@ function createSessionSet(): SessionSet {
 		speak?.(session.focused ? message : `${session.name() ?? 'Session'}: ${message}`);
 	}
 
-	async function build(want: SessionWant): Promise<LiveSession | undefined> {
+	async function build(want: SessionWant, at?: number): Promise<LiveSession | undefined> {
 		let provider;
 		try {
-			provider = await createAgentProvider(want);
+			provider = await createAgentProvider(want, at);
 		} catch (cause) {
 			// Registering the root is the one part of this that can fail before
 			// anything exists to fail *into*, so it is reported rather than thrown
@@ -100,12 +137,15 @@ function createSessionSet(): SessionSet {
 				session.patch({ turns: restored.map(replay) });
 			}
 		});
-		// Which file this is, so the navigator can tell an open conversation from
-		// a stored row offering to open the same one twice.
-		void provider.path().then((path) => {
-			session.path = path;
-			publish();
-		});
+		/*
+		 * Which file this is — **awaited, not left to land later**. The navigator
+		 * uses it to tell an open conversation from a stored row offering to open
+		 * the same one, and `bootstrap` uses it to refuse opening a file that is
+		 * already open. Both of those are decisions, and a decision cannot be made
+		 * against a field that has not arrived yet.
+		 */
+		session.path = await provider.path();
+		publish();
 		return session;
 	}
 
@@ -116,23 +156,88 @@ function createSessionSet(): SessionSet {
 		},
 		view: () => view,
 
-		bootstrap() {
+		bootstrap(reopen = [], locate) {
 			if (booted) {
 				return;
 			}
 			// Set before the await, which is what makes a second call — StrictMode's,
 			// or a re-run of the effect — find it already true rather than race it.
 			booted = true;
+			if (reopen.length === 0) {
+				/*
+				 * The newest conversation in this root, which is what a launch has
+				 * always done and what a first launch still does.
+				 */
+				void set.open({});
+				return;
+			}
 			/*
-			 * The newest conversation in this root, which is what a launch has always
-			 * opened with. Coming back to the *set* of sessions you had is
-			 * [ticket 53](docs/wayfinder/pi-harness/tickets/53-launch-reopens-sessions.md);
-			 * it needs a record of several, which is not what this ever held.
+			 * The set that was open, put back — ticket 53.
+			 *
+			 * **One at a time, in order.** Each one is a provider, a harness and a
+			 * session file opened through Tauri's serialised dispatcher; asking for
+			 * six at once puts every other command at start-up behind all of them.
+			 * Order is also what makes the navigator come up in the order they were
+			 * opened rather than in whatever order the disk answered.
+			 *
+			 * **Nothing resumes.** A turn interrupted by quitting stays interrupted:
+			 * `replayEntries` closes an unanswered tool call, so a session that was
+			 * mid-turn comes back with that turn recorded as it was written rather
+			 * than with a spinner running for a run that ended yesterday.
 			 */
-			void set.open({});
+			void (async () => {
+				let focus: LiveSession | undefined;
+				const lost: string[] = [];
+				for (const entry of reopen) {
+					/*
+					 * Already open, so opening it again would put two harnesses on one
+					 * JSONL, both appending. Reachable two ways: a record with the same
+					 * file twice, and a damaged file whose candidate fallback lands on a
+					 * conversation an earlier iteration already opened.
+					 */
+					if (sessions.some((open) => open.path === entry.path)) {
+						continue;
+					}
+					// Immediately before opening it, never earlier. See `Locate`.
+					const at = await locate?.(entry.root);
+					if (at === undefined) {
+						lost.push(entry.root);
+						continue;
+					}
+					const opened = await set.open({ requested: entry.path }, at);
+					// Same rule, one step later: the fallback may have handed back a file
+					// another entry already had. Two writers on one file is worse than
+					// one conversation short.
+					if (opened && sessions.some((open) => open !== opened && open.path === opened.path)) {
+						set.close(opened.key);
+						continue;
+					}
+					if (opened && entry.focused) {
+						focus = opened;
+					}
+				}
+				if (lost.length > 0) {
+					/*
+					 * A root that has since been deleted, unmounted, or pushed off the
+					 * end of the recent list. Dropped with a message; the rest still
+					 * open, because a convenience must not be able to break the window.
+					 */
+					speak?.(
+						`${lost.length} conversation${lost.length === 1 ? '' : 's'} could not be ` +
+							`reopened: ${[...new Set(lost)].join(', ')} is no longer available.`
+					);
+				}
+				if (focus) {
+					set.focus(focus.key);
+				} else if (sessions.length === 0) {
+					// Every one of them was refused. A window with no conversation has
+					// nothing to be, so it comes up as a first launch would.
+					void set.open({});
+				}
+			})();
 		},
 
-		open: (want = { fresh: true }) => build(want),
+		open: (want = { fresh: true }, at) => build(want, at),
 
 		focus(key) {
 			const next = sessions.find((session) => session.key === key);

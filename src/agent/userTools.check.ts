@@ -173,7 +173,7 @@ const profileNamed = (name: string): Profile => {
 	const events: AgentEvent[] = [];
 	const gate = createGate();
 	gate.begin('auto', (event) => void events.push(event));
-	const [nuke] = userToolDefinitions(gate);
+	const [nuke] = userToolDefinitions(gate, () => false);
 
 	const declined = nuke.execute('c1', { dir: 'build' }, undefined, undefined, {} as never);
 	assert.equal(events.length, 1, 'the user was asked');
@@ -200,7 +200,7 @@ const profileNamed = (name: string): Profile => {
 	const events: AgentEvent[] = [];
 	const gate = createGate();
 	gate.begin('auto', (event) => void events.push(event));
-	const [grep] = userToolDefinitions(gate);
+	const [grep] = userToolDefinitions(gate, () => false);
 	await assert.rejects(
 		grep.execute('c1', { pattern: 'TODO' }, undefined, undefined, {} as never),
 		/native shell/

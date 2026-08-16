@@ -9,10 +9,14 @@ import assert from 'node:assert/strict';
 import { createLiveSession, type LiveSession } from './liveSession.ts';
 import type { AgentProvider } from '../../agent/index.ts';
 
-/** Enough of a provider to hold. Nothing here calls through it. */
-const provider = {} as AgentProvider;
-
+/**
+ * Enough of a provider to hold. Only `label` is ever called: a session tells
+ * Rust its name on the first prompt, so a second agent's collision warning has
+ * something to name — ticket 51.
+ */
 function make() {
+	const named: string[] = [];
+	const provider = { label: (name: string) => named.push(name) } as AgentProvider;
 	const said: string[] = [];
 	let changes = 0;
 	const session = createLiveSession({
@@ -23,7 +27,7 @@ function make() {
 			changes += 1;
 		},
 	});
-	return { session, said, changes: () => changes };
+	return { session, said, named, changes: () => changes };
 }
 
 // A new session is empty and idle, which is what the navigator draws it as.
@@ -54,6 +58,32 @@ function make() {
 	assert.deepEqual(said, ['Agent finished']);
 	assert.equal(session.snapshot().turns.length, 1);
 	assert.equal(session.snapshot().turns[0].status, 'complete');
+}
+
+/*
+ * **Rust is told the name on every turn, and it is always the same name** —
+ * ticket 51, where the label is the only thing that makes a collision warning
+ * name a conversation rather than a counter.
+ *
+ * On every turn rather than only the first because a *restored* session's turns
+ * are replayed, not begun: a first-turn-only label was never sent for any
+ * conversation that came back from a launch, and the other agent's warning read
+ * "another session". The name itself never moves — it is the first prompt.
+ */
+{
+	const { session, named } = make();
+	session.begin('Fix the sash');
+	session.begin('And again');
+	assert.deepEqual(named, ['Fix the sash', 'Fix the sash']);
+}
+
+// A prompt long enough to be a paragraph is a name nobody can read, in a
+// sentence somebody else's model pays for.
+{
+	const { session, named } = make();
+	session.begin('x'.repeat(200));
+	assert.equal(named[0].length, 58);
+	assert.ok(named[0].endsWith('…'));
 }
 
 // Watching it is not being told about it afterwards.

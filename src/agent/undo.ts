@@ -52,6 +52,27 @@ function count(n: number, noun: string): string {
 }
 
 /**
+ * What another session is told when somebody else's undo took its work too.
+ *
+ * The same sentence from the other side — ticket 52's last criterion: a session
+ * whose edits were reverted must not be left claiming them. It is put into that
+ * session's own context and its own transcript, because a note only the undoing
+ * conversation can see leaves the other model confidently wrong.
+ */
+export function revertedElsewhereNote(by: string | undefined): string {
+	// Elided like every other place a conversation is named by its first prompt:
+	// this goes into a model's context and a transcript line, and a paragraph
+	// there is noise that costs tokens.
+	const who = by === undefined ? 'another session' : by.length > 60 ? `${by.slice(0, 57)}…` : by;
+	return (
+		`A turn was undone in ${who}, which shares this folder. Its ` +
+		'checkpoint was taken before some of your edits, so restoring it reverted those ' +
+		'edits too. Files you wrote may no longer say what you wrote — re-read anything ' +
+		'you are relying on before you act on it.'
+	);
+}
+
+/**
  * At most three names, then how many more. The note goes into the model's
  * context on every undo, and a hundred paths there is a hundred paths of
  * context spent saying one thing.
@@ -64,11 +85,17 @@ function some(paths: readonly string[]): string {
 /**
  * What the transcript shows and the model is told, in one sentence set.
  *
- * One function for both because they must not be able to differ: a transcript
+ * One function for both, because they must not be able to differ: a transcript
  * that says one thing and a context that says another is the exact failure the
  * note exists to prevent, and two format strings is how that happens.
+ *
+ * @param alsoReverted Other live conversations whose work was in this checkpoint
+ * — ticket 52. A checkpoint captures the whole working tree, so one taken before
+ * another session's edits contains none of them and restoring it takes them
+ * back out. The note has to say so: *"undone"* alone would not be true, and the
+ * transcript is the record.
  */
-export function undoNote(outcome: UndoOutcome): string {
+export function undoNote(outcome: UndoOutcome, alsoReverted: readonly string[] = []): string {
 	const parts: string[] = [];
 	if (outcome.restored.length > 0) {
 		parts.push(`${count(outcome.restored.length, 'file')} restored (${some(outcome.restored)})`);
@@ -80,9 +107,20 @@ export function undoNote(outcome: UndoOutcome): string {
 		parts.length > 0
 			? `${parts.join(', ')}. Untracked files were not touched.`
 			: 'Nothing on disk had changed, so nothing was put back.';
+	/*
+	 * Named, not counted. The point of saying it at all is that somebody reading
+	 * the transcript afterwards can go and look at what else moved, and "another
+	 * session" is not something anyone can go and look at.
+	 */
+	const shared =
+		alsoReverted.length > 0
+			? ` This checkpoint was taken before work done in ${some(alsoReverted)}, which ` +
+				`share${alsoReverted.length === 1 ? 's' : ''} this folder — that work was reverted ` +
+				'as well, and this tree is now in a state neither conversation was alone in.'
+			: '';
 	const body =
 		'The user undid this turn. The working tree was restored to the checkpoint taken ' +
-		`before it, so edits made during it are gone from disk: ${what} ` +
+		`before it, so edits made during it are gone from disk: ${what}${shared} ` +
 		'Re-read any file before relying on what you know about its contents.';
 	/*
 	 * The failure case says what to do about it, because the person reading it is

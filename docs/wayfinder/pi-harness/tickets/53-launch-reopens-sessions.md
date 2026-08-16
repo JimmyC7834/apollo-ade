@@ -1,7 +1,7 @@
 # 53 — Launch reopens the sessions you had
 
 **Blocked by:** [49](49-a-session-in-another-folder.md).
-**Status:** ready-for-agent
+**Status:** landed
 
 ## What to build
 
@@ -25,11 +25,11 @@ break the window.
 
 ## Acceptance criteria
 
-- [ ] The set of open sessions comes back after a restart, with focus where it was.
-- [ ] Each restored session is in its own root, with its transcript.
-- [ ] No turn starts on its own at launch.
-- [ ] A session whose root is gone is dropped with a message; the others still open.
-- [ ] A session whose file is damaged or unreadable is dropped the same way, reusing the
+- [x] The set of open sessions comes back after a restart, with focus where it was.
+- [x] Each restored session is in its own root, with its transcript.
+- [x] No turn starts on its own at launch.
+- [x] A session whose root is gone is dropped with a message; the others still open.
+- [x] A session whose file is damaged or unreadable is dropped the same way, reusing the
       existing candidate-and-fallback rule rather than a second one.
-- [ ] First launch, with nothing recorded, opens one session exactly as it does today.
-- [ ] Driven in the native window across a real restart.
+- [x] First launch, with nothing recorded, opens one session exactly as it does today.
+- [x] Driven in the native window across a real restart.

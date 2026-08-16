@@ -9,7 +9,10 @@ use std::process::Command;
 
 use serde::Serialize;
 
-use crate::workspace::{resolve, root_of, WorkspaceState};
+use crate::workspace::{
+    agent_root, checkpoint_taken, resolve, root_of, turn_begins, write_mark, SessionRoots,
+    WorkspaceState, Writers,
+};
 
 #[derive(Serialize, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -333,15 +336,36 @@ mod tests {
 #[tauri::command]
 pub fn git_checkpoint(
     label: String,
+    session: Option<String>,
     state: tauri::State<'_, WorkspaceState>,
+    roots: tauri::State<'_, SessionRoots>,
+    writers: tauri::State<'_, Writers>,
 ) -> Result<Option<String>, String> {
-    let root = root_of(&state)?;
+    /*
+     * **Where a turn begins, which is the only reason this is told about it.**
+     * Ticket 51's note fires while another session's turn is still the one it
+     * wrote in, and this command is called once at the start of every turn — so
+     * it is the boundary rather than a second mechanism invented to be one.
+     * Recorded before the git work, because a folder that is not a repository
+     * still has turns.
+     */
+    turn_begins(&writers, session.as_deref());
+    // Where in the order of writes this snapshot sits, read *before* the snapshot
+    // is taken — `write_mark` says why.
+    let at = write_mark(&writers);
+    // The *session's* repository, not the focused one. A turn running in the
+    // background must snapshot the tree it is editing even while the window is
+    // showing another folder — ticket 49, and the hole review found in 45–48.
+    let root = agent_root(&state, &roots, session.as_deref())?;
     let created = git(&root, &["stash", "create"])?;
     let sha = created.trim();
     if sha.is_empty() {
         return Ok(None);
     }
     git(&root, &["stash", "store", "-m", &label, sha])?;
+    // Where this checkpoint sits in the order of writes to this folder, so undo
+    // can say whose work it would also revert — ticket 52.
+    checkpoint_taken(&writers, &root, sha, session.as_deref(), at);
     Ok(Some(sha.to_string()))
 }
 
@@ -382,9 +406,13 @@ pub struct Restored {
 #[tauri::command]
 pub fn git_restore_checkpoint(
     sha: String,
+    session: Option<String>,
     state: tauri::State<'_, WorkspaceState>,
+    roots: tauri::State<'_, SessionRoots>,
 ) -> Result<Restored, String> {
-    let root = root_of(&state)?;
+    // Undo puts back the tree the turn was taken in. Resolving against the
+    // focused root would let an undo in one conversation reset another folder.
+    let root = agent_root(&state, &roots, session.as_deref())?;
     let sha = object_id(&sha)?;
     // Refuse an id that is not a commit we could have made, before anything moves.
     git(&root, &["cat-file", "-e", &format!("{sha}^{{commit}}")])

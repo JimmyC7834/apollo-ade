@@ -1,7 +1,7 @@
 # 50 — Profile and model follow the session
 
 **Blocked by:** [49](49-a-session-in-another-folder.md).
-**Status:** ready-for-agent
+**Status:** landed
 
 ## What to build
 
@@ -27,11 +27,11 @@ the global one there, exactly as it does now.
 
 ## Acceptance criteria
 
-- [ ] Each session has its own active profile, chosen when it is created.
-- [ ] The composer shows and edits the focused session's profile; changing it retunes only
+- [x] Each session has its own active profile, chosen when it is created.
+- [x] The composer shows and edits the focused session's profile; changing it retunes only
       that session's harness.
-- [ ] A session in another root offers that root's project profiles.
-- [ ] A background session mid-turn is unaffected by a profile change made in another
+- [x] A session in another root offers that root's project profiles.
+- [x] A background session mid-turn is unaffected by a profile change made in another
       session.
-- [ ] Approval mode is per session too, since it is part of the profile.
-- [ ] `npm run check` and `npx tsc --noEmit` clean.
+- [x] Approval mode is per session too, since it is part of the profile.
+- [x] `npm run check` and `npx tsc --noEmit` clean.

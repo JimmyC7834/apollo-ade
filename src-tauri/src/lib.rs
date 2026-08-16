@@ -14,6 +14,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(workspace::WorkspaceState::default())
         .manage(workspace::SessionRoots::default())
+        .manage(workspace::Writers::default())
         .manage(terminal::TerminalState::default())
         .manage(exec::ExecState::default())
         .manage(lsp::LspState::default())
@@ -22,9 +23,11 @@ pub fn run() {
             workspace::restore_workspace,
             workspace::set_workspace,
             workspace::recent_workspaces,
-            workspace::switch_workspace,
             workspace::create_agent_session,
             workspace::close_agent_session,
+            workspace::focus_agent_session,
+            workspace::label_agent_session,
+            workspace::checkpoint_contention,
             workspace::list_tree,
             workspace::read_file,
             workspace::write_file,

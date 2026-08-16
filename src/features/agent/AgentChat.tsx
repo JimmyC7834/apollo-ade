@@ -11,10 +11,10 @@ import { parseCommand, SLASH_COMMANDS } from '../../agent/commands';
 import { complete } from '../../agent/completion';
 import { allTemplates, onTemplatesChange, templateCommands } from '../../agent/promptTemplates';
 import { pressure } from '../../agent/compaction';
-import { activateProfile, activeProfile, listProfiles, type Profile } from '../../agent/profile';
+import { listProfiles, type Profile } from '../../agent/profile';
 import { loadProfileFiles, profileSources } from '../../agent/profileFiles';
 import { delegable } from '../../agent/subagent';
-import { undoNote } from '../../agent/undo';
+import { revertedElsewhereNote, undoNote } from '../../agent/undo';
 import { allSkills, permittedSkills, skillList } from '../../agent/skills';
 import { userTools } from '../../agent/userTools';
 import { Confirm, Icon, Overlay } from '../../ui';
@@ -88,6 +88,14 @@ export interface AgentChatProps {
 	 * surface that is closed almost all of the time.
 	 */
 	readonly onTranscript?: (search: (term: string) => readonly TranscriptHit[]) => void;
+	/**
+	 * A turn was undone, and it took other conversations' work with it — ticket 52.
+	 *
+	 * Raised rather than handled, because the sessions that have to be told are
+	 * the ones this component is deliberately not holding: it renders the focused
+	 * conversation and knows nothing about the others. The controller does.
+	 */
+	readonly onUndone?: (note: string) => void;
 }
 
 /**
@@ -401,6 +409,7 @@ export function AgentChat({
 	onAnnounce,
 	onOpenArtifact,
 	onTranscript,
+	onUndone,
 }: AgentChatProps) {
 	const provider = session.provider;
 	/*
@@ -454,6 +463,14 @@ export function AgentChat({
 	 * `undefined` closes it, which is the same shape every other dialog here uses.
 	 */
 	const [undoing, setUndoing] = useState<Turn>();
+	/**
+	 * Which other conversations this undo would also revert — ticket 52.
+	 *
+	 * Read when the dialog opens rather than when it is confirmed, because it is
+	 * what the dialog has to *say*. Empty is the ordinary case and leaves the
+	 * wording exactly as it was.
+	 */
+	const [contended, setContended] = useState<readonly string[]>([]);
 	/** Which completion is selected, and whether Escape has closed the menu. */
 	const [picked, setPicked] = useState(0);
 	const [menuOpen, setMenuOpen] = useState(true);
@@ -558,17 +575,36 @@ export function AgentChat({
 	const undoTurn = useCallback(() => {
 		const turn = undoing;
 		setUndoing(undefined);
+		setContended([]);
 		if (!turn?.checkpoint) {
 			return;
 		}
-		void provider
-			.undo(turn.checkpoint)
-			.then((outcome) => {
-				const note = undoNote(outcome);
+		const checkpoint = turn.checkpoint;
+		/*
+		 * **Asked again here rather than reused from the dialog.** The dialog's copy
+		 * is for the sentence it shows and may not have landed yet — confirming
+		 * before it did would have written *"nothing else was reverted"* into a
+		 * transcript where something was, and left the other session claiming edits
+		 * that are gone. It is a local call; asking twice costs nothing.
+		 */
+		void (async () => ({
+			shared: await provider.contention(checkpoint),
+			outcome: await provider.undo(checkpoint),
+		}))()
+			.then(({ outcome, shared }) => {
+				const note = undoNote(outcome, shared);
 				setTurns((current) =>
 					current.map((item) => (item.id === turn.id ? markUndone(item, note) : item))
 				);
 				onAnnounce?.(note);
+				/*
+				 * The other side of the same event — ticket 52's last criterion. A
+				 * conversation whose edits this reverted must not be left claiming
+				 * them, and it cannot find out on its own: nothing watches the tree.
+				 */
+				if (shared.length > 0) {
+					onUndone?.(revertedElsewhereNote(session.name()));
+				}
 			})
 			.catch((cause: unknown) => {
 				/*
@@ -584,7 +620,7 @@ export function AgentChat({
 				 */
 				say(cause instanceof Error ? cause.message : String(cause));
 			});
-	}, [undoing, provider, onAnnounce, say]);
+	}, [undoing, provider, onAnnounce, onUndone, session, say]);
 
 	/*
 	 * The completion menu — ticket 21.
@@ -615,7 +651,7 @@ export function AgentChat({
 				? complete(
 						prompt,
 						{
-							skill: permittedSkills(allSkills(), activeProfile()).map((skill) => skill.name),
+							skill: permittedSkills(allSkills(), provider.profile.current()).map((skill) => skill.name),
 							profile: listProfiles().map((profile) => profile.name),
 							file: files,
 						},
@@ -739,7 +775,9 @@ export function AgentChat({
 		 */
 		if (parsed?.command.name === '/reload') {
 			const emit = beginTurn(text);
-			void loadProfileFiles()
+			// This session's root, which is the folder whose files `/reload` means —
+			// and which keeps the reload from reaching sessions in other folders.
+			void loadProfileFiles(session.root?.path)
 				.then((loaded) => {
 					const answer =
 						loaded.problems.length > 0
@@ -789,7 +827,7 @@ export function AgentChat({
 			if (!name) {
 				// Not an error: it is the discoverable half of a command whose
 				// argument nothing yet completes.
-				const answer = skillList(activeProfile());
+				const answer = skillList(provider.profile.current());
 				emit({ kind: 'text', text: answer });
 				emit({ kind: 'complete' });
 				onAnnounce?.(answer);
@@ -810,7 +848,7 @@ export function AgentChat({
 		 */
 		if (parsed?.command.name === '/skills') {
 			const emit = beginTurn(text);
-			const answer = skillList(activeProfile());
+			const answer = skillList(provider.profile.current());
 			emit({ kind: 'text', text: answer });
 			emit({ kind: 'complete' });
 			onAnnounce?.(answer);
@@ -819,7 +857,8 @@ export function AgentChat({
 
 		if (parsed?.command.name === '/profile') {
 			const emit = beginTurn(text);
-			const result = parsed.args ? activateProfile(parsed.args) : undefined;
+			// This conversation's profile, not the window's — ticket 50.
+			const result = parsed.args ? provider.profile.activate(parsed.args) : undefined;
 			const answer = result
 				? result.ok
 					? `Switched to "${result.profile.name}". It applies from the next turn; nothing already said is changed.`
@@ -827,7 +866,7 @@ export function AgentChat({
 				: [
 						...listProfiles().map(
 							(profile) =>
-								`${profile.name === activeProfile().name ? '●' : '○'} ${profile.name} — ` +
+								`${profile.name === provider.profile.current().name ? '●' : '○'} ${profile.name} — ` +
 								`${profile.model.id || 'no model'}, ${profile.gatePolicy}, ` +
 								`thinking ${profile.thinkingLevel}${profile.rtk ? ', rtk' : ''}` +
 								// Whether an agent may spawn this one — asked of the rule
@@ -1034,7 +1073,20 @@ export function AgentChat({
 								<button
 									type="button"
 									className="ide-agent-undo"
-									onClick={() => setUndoing(turn)}
+									onClick={() => {
+										setUndoing(turn);
+										/*
+										 * Asked as the dialog opens. The answer arrives in a
+										 * round trip and the dialog is already up — which is
+										 * right: the ordinary answer is "nobody", and making
+										 * every undo wait on a question that is almost always
+										 * empty would slow down the case that is not the
+										 * problem. The message re-renders when it lands.
+										 */
+										if (turn.checkpoint) {
+											void provider.contention(turn.checkpoint).then(setContended);
+										}
+									}}
 								>
 									<Icon name="discard" />
 									Undo
@@ -1232,6 +1284,7 @@ export function AgentChat({
 				)}
 				</div>
 				<ComposerBar
+					profile={provider.profile}
 					attachOpen={explorerOpen}
 					onAttach={() => setExplorerOpen((open) => !open)}
 					usage={usage}
@@ -1251,6 +1304,7 @@ export function AgentChat({
 
 			<ProfileModal
 				open={editing !== undefined}
+				root={session.root?.path}
 				profile={editing?.profile}
 				onClose={() => setEditing(undefined)}
 				onAnnounce={onAnnounce}
@@ -1267,14 +1321,30 @@ export function AgentChat({
 			 */}
 			<Confirm
 				open={undoing !== undefined}
-				title="Undo this turn"
+				title={contended.length > 0 ? 'Undo this turn, and more' : 'Undo this turn'}
 				message={
 					'Restore the files to how they were before this turn ran? Anything you edited ' +
 					'by hand since then is stashed first, so it stays recoverable from git stash ' +
 					'list. Files the agent created but never added to git are left alone. The ' +
-					'conversation is kept, and the agent is told its edits were reverted.'
+					'conversation is kept, and the agent is told its edits were reverted.' +
+					/*
+					 * **Offered with the consequence stated** — ticket 52. Disabling undo
+					 * in a contended folder would remove a feature that works; leaving it
+					 * silent is the only genuinely bad option, because the checkpoint was
+					 * taken before the other conversation's work and restoring it puts
+					 * the tree into a state neither of them was ever in.
+					 */
+					(contended.length > 0
+						? ` This checkpoint was taken before work done in ${contended.join(', ')}, ` +
+							`which share${contended.length === 1 ? 's' : ''} this folder. Undoing reverts ` +
+							'that work too, and leaves the tree in a state neither conversation was ' +
+							'alone in. Both are told.'
+						: '')
 				}
-				onCancel={() => setUndoing(undefined)}
+				onCancel={() => {
+					setUndoing(undefined);
+					setContended([]);
+				}}
 				actions={[{ label: 'Undo turn', danger: true, run: undoTurn }]}
 			/>
 

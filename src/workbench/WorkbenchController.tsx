@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 
 import { listSessionsIn, loadProfileFiles, type StoredSession } from '../agent';
+import { nextTurnId } from '../features/agent/liveSession';
 import { sessionSet } from '../features/agent/sessionSet';
 import { TOOL_ARTIFACTS, clampDock, dockSide, isToolArtifact } from '../artifacts';
 import { createChangesProvider } from '../changes';
@@ -13,6 +14,7 @@ import { EditorDialog } from '../editor/EditorDialog';
 import { isDirty, type EditorInput } from '../editor/EditorWorkbench';
 import { basename, neighbourId } from '../ids';
 import { AgentChat } from '../features/agent/AgentChat';
+import type { LiveSession } from '../features/agent/liveSession';
 import type { TranscriptHit } from '../features/agent/transcript';
 import { CommandCenter } from '../features/commandCenter/CommandCenter';
 import type { FileOperations } from '../features/explorer/ExplorerTree';
@@ -21,7 +23,7 @@ import { useLsp } from '../features/lsp/useLsp';
 import { refuseReason, type Replacement } from '../features/search/replace';
 import { SessionNavigator } from '../features/sessions/SessionNavigator';
 import { createPersistenceAdapter, type PersistedState } from '../persistence';
-import { takeUnopened } from '../sessionRequest';
+import { recordOpenSessions, takeOpenSessions, takeUnopened } from '../sessionRequest';
 import { breadcrumb, buildGroups, type Session, type SessionStatus } from '../sessions';
 import { createTerminalAdapter } from '../terminal';
 import { Confirm, Prompt } from '../ui';
@@ -213,15 +215,24 @@ export function WorkbenchController() {
 
 	const provider = useMemo(() => createWorkspaceProvider(), []);
 	/*
-	 * The window's first conversation, opened as an *action* rather than during
-	 * render — ticket 45. `bootstrap` is idempotent, which is what makes
-	 * StrictMode's double-invoked effect produce one session and one file rather
-	 * than the module-level promise cache that used to guarantee it.
+	 * What is open, for the next launch — ticket 53.
+	 *
+	 * Written on every change rather than at shutdown, because a desktop window is
+	 * closed by the window manager, by a crash and by the user, and only one of
+	 * those is a moment code could run in. Sessions without a file yet contribute
+	 * nothing: there is nothing on disk to reopen, and a blank conversation is
+	 * what a launch produces anyway.
 	 */
 	useEffect(() => {
-		sessionSet.onAnnounce(announce);
-		sessionSet.bootstrap();
-	}, [announce]);
+		const open = live.sessions.flatMap((session) =>
+			session.path && session.root
+				? [{ root: session.root.path, path: session.path, focused: session === live.focused }]
+				: []
+		);
+		if (open.length > 0) {
+			recordOpenSessions(open);
+		}
+	}, [live]);
 	const changesProvider = useMemo(() => createChangesProvider(), []);
 	const terminalAdapter = useMemo(() => createTerminalAdapter(), []);
 	const [selection, setSelection] = useState<WorkspaceSelection | undefined>(undefined);
@@ -229,6 +240,16 @@ export function WorkbenchController() {
 	const [inputs, setInputs] = useState<readonly EditorInput[]>([]);
 	const [activeEditorId, setActiveEditorId] = useState<string | undefined>(undefined);
 	const [pendingCloseId, setPendingCloseId] = useState<string | undefined>(undefined);
+	/**
+	 * The editors of every root this window has been in, put down when it left.
+	 *
+	 * A ref rather than state because nothing renders it: it is read only at the
+	 * moment a root changes, and making it state would redraw the workbench every
+	 * time a tab in a folder nobody is looking at changed.
+	 */
+	const stashed = useRef(
+		new Map<string, { inputs: readonly EditorInput[]; activeEditorId: string | undefined }>()
+	);
 	/*
 	 * The save effect below must not run before the async restore has put the
 	 * restored state back: on mount `selection` is undefined and `inputs` is
@@ -243,6 +264,46 @@ export function WorkbenchController() {
 	 * and its editors permanently. Superseded as soon as a root is chosen.
 	 */
 	const [unrestored, setUnrestored] = useState<PersistedState | undefined>(undefined);
+
+	/*
+	 * The conversations this window comes up with, opened as an *action* rather
+	 * than during render — ticket 45. `bootstrap` is idempotent, which is what
+	 * makes StrictMode's double-invoked effect produce one session and one file
+	 * rather than the module-level promise cache that used to guarantee it.
+	 */
+	useEffect(() => {
+		sessionSet.onAnnounce(announce);
+		/*
+		 * **Not before there is a root**, and that is a real failure this caught.
+		 * `create_agent_session` with no index resolves against Rust's current root,
+		 * and at mount `restore_workspace` may not have adopted one yet — the window
+		 * then came up with no conversation at all and *"The session could not be
+		 * started"* in the live region. It was always a race; it is now a gate.
+		 *
+		 * A window with no folder therefore has no session, which is the honest
+		 * state: there is nowhere to confine one. Choosing a folder makes both.
+		 */
+		if (!selection) {
+			return;
+		}
+		/*
+		 * **Recognised, not named.** The record holds each session's root as a path;
+		 * it is matched against Rust's own recent list and passed on as an *index*,
+		 * so the renderer still cannot name a folder — the rule `choose_workspace`
+		 * exists to hold, and `docs/adr/0002-a-root-per-session.md` restates.
+		 *
+		 * The match happens per session, immediately before that session is opened,
+		 * because the list is Rust's and its order is not ours to assume. Resolving
+		 * every index up front and spending them one at a time is what put a
+		 * restored conversation in the wrong folder — see `Locate`.
+		 */
+		sessionSet.bootstrap(takeOpenSessions(), async (root) => {
+			const at = (await provider.recentWorkspaces()).findIndex(
+				(recent) => recent.path === root
+			);
+			return at === -1 ? undefined : at;
+		});
+	}, [announce, provider, selection]);
 
 	/*
 	 * Restore the workspace, then the editors that lived in it. The order
@@ -293,7 +354,7 @@ export function WorkbenchController() {
 			 * of it; being second was incidental and is what left effects racing a
 			 * profile that had not arrived.
 			 */
-			const loaded = await loadProfileFiles();
+			const loaded = await loadProfileFiles(workspace.path);
 			if (cancelled) {
 				return;
 			}
@@ -337,6 +398,94 @@ export function WorkbenchController() {
 		};
 	}, [announce, provider, restored]);
 
+	/**
+	 * The workbench follows the focused conversation into its folder — ticket 49.
+	 *
+	 * **The one place a root change is applied**, and everything else that used to
+	 * do it now goes through here by focusing a session. `enter` moves Rust's
+	 * current root to this session's; the explorer, search, git, the language
+	 * server and any new terminal read that root, and everything keyed on
+	 * `selection` below reloads because it changed.
+	 *
+	 * The *session's* confinement does not move and never did — it was fixed when
+	 * the session was created. What moves is only what the user is looking at,
+	 * which is why a turn running in the folder you just left is unaffected.
+	 *
+	 * **Editors are kept per root rather than discarded**, which is the half of
+	 * ticket 31 a reload could never do. That is also what removed the last
+	 * refusal: switching used to be blocked on unsaved work because unsaved work
+	 * was about to be thrown away, and now it is put down and picked up again.
+	 */
+	const editors = useRef({ inputs, activeEditorId });
+	useEffect(() => {
+		editors.current = { inputs, activeEditorId };
+	}, [inputs, activeEditorId]);
+	/**
+	 * Entering a root, one at a time.
+	 *
+	 * **A queue, because `enter` is two facts that must not be able to disagree**:
+	 * Rust's current root, and React's `selection`. Two focus changes in quick
+	 * succession issue two `invoke`s, Tauri does not order them, and the second
+	 * could adopt while only the first's `setSelection` was applied — leaving the
+	 * explorer listing one folder while a save wrote a relative path into another.
+	 * Serialising makes the last one win on both sides.
+	 */
+	const entering = useRef(Promise.resolve());
+	const enter = useCallback(
+		(next: LiveSession, from: string | undefined) => {
+			entering.current = entering.current.then(async () => {
+				if (sessionSet.view().focused !== next) {
+					// Superseded while it waited. The focus change that replaced it is
+					// behind this one in the same queue and will adopt instead — and
+					// asking the set rather than tracking a flag means this is the same
+					// question the rest of the workbench asks.
+					return;
+				}
+				let entered;
+				try {
+					entered = await next.provider.enter();
+				} catch (error) {
+					announce(`Could not open ${next.root?.label ?? 'that folder'}. ${reason(error)}`);
+					return;
+				}
+				if (!entered) {
+					return;
+				}
+				if (from) {
+				stashed.current.set(from, editors.current);
+			}
+				const back = stashed.current.get(entered.path);
+				setInputs(back?.inputs ?? []);
+				setActiveEditorId(back?.activeEditorId);
+				setSelection(entered);
+				setUnrestored(undefined);
+				/*
+				 * Project-scoped profiles, skills and user tools are read from the
+				 * root, so arriving in one has to re-read them. This is the half of
+				 * ticket 31 most likely to be missed, and it fails quietly when it is.
+				 */
+				const loaded = await loadProfileFiles(entered.path);
+				announce(
+					loaded.problems.length > 0
+						? `${entered.label}. Profiles: ${loaded.problems.join('. ')}`
+						: `${entered.label}.`
+				);
+			});
+			return entering.current;
+		},
+		[announce]
+	);
+
+	useEffect(() => {
+		const target = session?.root?.path;
+		// `hydrated` is the restore having finished: entering a root before it
+		// would have the restore put the previous root's editors back on top.
+		if (!session || !hydrated || !target || target === selection?.path) {
+			return;
+		}
+		void enter(session, selection?.path);
+	}, [enter, hydrated, selection?.path, session]);
+
 	// The tree belongs to the selected root, so it is reloaded with it.
 	useEffect(() => {
 		if (!selection) {
@@ -357,8 +506,6 @@ export function WorkbenchController() {
 		};
 	}, [changesProvider, provider, selection]);
 
-	const dirty = inputs.some(isDirty);
-
 	/*
 	 * The paths `@` completes over — ticket 27. The tree the explorer already
 	 * draws, filtered to files, so a mention can only name something that exists
@@ -378,51 +525,48 @@ export function WorkbenchController() {
 		}
 	}, [inputs.length]);
 
+	/**
+	 * Hand this app a folder, and start a conversation in it — ticket 49.
+	 *
+	 * **The dialog is still the only door a new root comes through**, and it is
+	 * the whole of what this does that the navigator's groups do not: every other
+	 * root is already on the recent list and offers *New session* of its own.
+	 *
+	 * No reload, no refusal, and no lost editors. All three were the same
+	 * mechanism: the sessions this window held were bound to one ambient root, so
+	 * moving it under them meant rebuilding everything or reloading. A session
+	 * carries its own root now, so choosing a folder adds a conversation rather
+	 * than replacing the window — and the editors of the root you left are kept,
+	 * not discarded, which is what makes coming back cheap.
+	 */
 	const openFolder = useCallback(async () => {
-		// Switching roots discards every editor, so the guard lives here and not
-		// only on the controls that offer it. Callers may be disabled; this is
-		// what makes the operation itself safe.
-		if (dirty) {
-			return;
-		}
-		/*
-		 * **The same refusal `switchWorkspace` makes, and it was missing here.**
-		 * `choose_workspace` moves Rust's current root the moment the dialog is
-		 * answered. A session's *files* survive that — they carry their own root
-		 * now — but `git_checkpoint` and `git_restore_checkpoint` take no session
-		 * and resolve against whichever root is current, so a turn taken in a
-		 * session created before the switch would snapshot the *new* folder and an
-		 * undo would reset an unrelated repository. Found by review, not by use.
-		 */
-		if (live.sessions.some((open) => open.status() === 'running' || open.status() === 'waiting')) {
-			announce('A session is mid-turn. Wait for it to finish before opening another folder.');
-			return;
-		}
 		const chosen = await provider.chooseWorkspace();
 		if (!chosen) {
 			return;
 		}
 		/*
-		 * Reloaded for `switchWorkspace`'s reason, which applies identically here:
-		 * the sessions this window holds were built against the old root, and
-		 * rebinding them in place would mean rebuilding every provider and harness
-		 * mid-life. Start-up reads the root back from Rust, which is the proven
-		 * path. Doing this without a reload is what left a session pointing at one
-		 * folder while the checkpoint pointed at another.
+		 * `chooseWorkspace` has already moved Rust's current root, so a session
+		 * created now with no index is created *there*. Focusing it is what brings
+		 * the workbench across — see `enter`, which is the one place a root change
+		 * is applied.
 		 */
-		if (chosen.path !== selection?.path) {
-			window.location.reload();
+		if (!(await sessionSet.open({ fresh: true }))) {
+			/*
+			 * The dialog moved Rust's root and nothing came of it. Left alone, the
+			 * workbench would go on believing it is in the old folder while every
+			 * ambient-root command — the explorer's reads, an editor's save —
+			 * resolved against the new one. Put it back where the sessions are.
+			 */
+			const back = live.focused;
+			if (back) {
+				await enter(back, undefined);
+			}
 			return;
 		}
-		// Editor ids are relative to the old root, so they cannot survive.
-		// Switching is blocked while anything is dirty, so nothing is lost.
-		setInputs([]);
-		setActiveEditorId(undefined);
-		setSelection(chosen);
 		// A deliberate choice supersedes a root that failed to restore: the
 		// user has answered the question the held record was waiting on.
 		setUnrestored(undefined);
-	}, [announce, dirty, live.sessions, provider, selection?.path]);
+	}, [enter, live.focused, provider]);
 
 	const openFile = useCallback(
 		async (id: string, revealLine?: number) => {
@@ -920,11 +1064,23 @@ export function WorkbenchController() {
 	const closeHelp = useCallback(() => setHelpOpen(false), []);
 	const closeCommandCenter = useCallback(() => setCommandCenterOpen(false), []);
 
-	/** A conversation of its own, in the root you are in. Ticket 47. */
-	const newSession = useCallback(async () => {
-		announce('New session.');
-		await sessionSet.open({ fresh: true });
-	}, [announce]);
+	/**
+	 * A conversation of its own — ticket 47, in any root this app has been given
+	 * since ticket 49.
+	 *
+	 * @param at Index into the recent list. Undefined is the root you are in.
+	 */
+	const newSession = useCallback(
+		async (at?: number) => {
+			announce(
+				at === undefined
+					? 'New session.'
+					: `New session in ${recents[at]?.label ?? 'another folder'}.`
+			);
+			await sessionSet.open({ fresh: true }, at);
+		},
+		[announce, recents]
+	);
 
 	/**
 	 * Stop watching the focused conversation.
@@ -958,6 +1114,58 @@ export function WorkbenchController() {
 		dropSession(going.key);
 	}, [dropSession, live.focused]);
 
+	/**
+	 * Tell every other conversation in this folder that an undo took its work.
+	 *
+	 * **Ticket 52's last criterion, and the only part of it the chat cannot do**:
+	 * a session whose edits were reverted must not be left claiming them, and
+	 * nothing watches the working tree — it would never find out on its own. It is
+	 * put in two places for the two readers: the model's own context, so its next
+	 * answer is not built on files that no longer say what it wrote, and the
+	 * transcript, so the person who opens that conversation tomorrow can see why
+	 * its work is missing.
+	 *
+	 * Told to everyone in the root rather than only to whoever Rust named as a
+	 * writer. The narrower list is what the *confirmation* needs, because it is
+	 * naming consequences; this is a session being told the ground moved, which is
+	 * true for all of them and cheap to say.
+	 */
+	const tellTheOthers = useCallback(
+		(note: string) => {
+			for (const other of live.sessions) {
+				// A conversation with no turns has nothing to be wrong about yet, and
+				// this note would become its name.
+				if (other === live.focused || other.snapshot().turns.length === 0) {
+					continue;
+				}
+				if (other.root?.path !== live.focused?.root?.path) {
+					continue;
+				}
+				void other.provider.record(note);
+				other.setTurns((current) => [
+					...current,
+					{
+						// Never a bare `Date.now()`: a turn id is both the React key and
+						// the identity `applyEvent` matches on, and restored history can
+						// carry ids ahead of the clock. See `nextTurnId`.
+						id: nextTurnId(current),
+						/*
+						 * No prompt: nobody said this. The transcript's prompt line is
+						 * marked up as *"You said"* for screen readers, and putting a
+						 * heading there would attribute the sentence to the user. The
+						 * note is the whole row, styled as what it is.
+						 */
+						prompt: '',
+						parts: [{ kind: 'undone', note }],
+						status: 'complete',
+					},
+				]);
+				other.patch({ unread: true });
+			}
+		},
+		[live.focused, live.sessions]
+	);
+
 	const commands = useMemo(
 		() =>
 			buildCommands({
@@ -977,11 +1185,10 @@ export function WorkbenchController() {
 				// empty modal over the agent is worse than no modal.
 				showEditor: () => setEditorOpen(true),
 				showEditorDisabled: inputs.length === 0 ? 'No open editors' : undefined,
-				// The command exists wherever the capability does. Unsaved work
-				// blocks it — switching roots drops every editor — but it stays
-				// in the palette saying so rather than disappearing.
+				// The command exists wherever the capability does, and nothing
+				// disables it any more: a root change keeps the editors of the root
+				// it leaves rather than discarding them — ticket 49.
 				openFolder: provider.canChooseWorkspace ? () => void openFolder() : undefined,
-				openFolderDisabled: dirty ? 'Save your changes first' : undefined,
 				showAccessibilityHelp: () => setHelpOpen(true),
 				newSession: () => void newSession(),
 				closeSession,
@@ -995,7 +1202,6 @@ export function WorkbenchController() {
 			activeEditorId,
 			inputs,
 			provider,
-			dirty,
 			openFolder,
 		]
 	);
@@ -1085,13 +1291,18 @@ export function WorkbenchController() {
 	 * are still being read, and the answer to the old question must not overwrite
 	 * the answer to the new one.
 	 */
-	const anyProvider = live.sessions[0]?.provider;
+	/*
+	 * Asked of the *focused* session, because a provider reads the sessions of its
+	 * own root and this list is the current root's. Any session would have done
+	 * when they all shared a folder; since ticket 49 they do not.
+	 */
+	const listProvider = session?.provider;
 	useEffect(() => {
-		if (!anyProvider) {
+		if (!listProvider) {
 			return;
 		}
 		let cancelled = false;
-		void anyProvider.listSessions().then((sessions) => {
+		void listProvider.listSessions().then((sessions) => {
 			if (cancelled) {
 				return;
 			}
@@ -1130,7 +1341,7 @@ export function WorkbenchController() {
 		 * opened stops being one. Both are cheap and neither happens often — unlike
 		 * a turn ending, which is why that is still deliberately not a trigger.
 		 */
-	}, [anyProvider, live.sessions.length, notify, selection]);
+	}, [listProvider, live.sessions.length, notify, selection]);
 
 	/*
 	 * The other recent roots' conversations.
@@ -1174,84 +1385,31 @@ export function WorkbenchController() {
 	}, [recents, selection?.path]);
 
 	/**
-	 * Switch roots by index into that list — never by path. See
+	 * Go to a recent workspace, by index into that list — never by path. See
 	 * `docs/adr/0002-a-root-per-session.md`.
 	 *
-	 * Refused outright while anything is dirty or a turn is running, rather
-	 * than handled. Both are legitimate answers and this is the cheap one:
-	 * editor ids are relative to the old root and the agent's `ExecutionEnv` is
-	 * bound to it, so a switch underneath either loses work or races.
+	 * **It is no longer a mode change, and that is ticket 49's whole shape.** A
+	 * root used to be something the window was *in*, so moving it meant reloading
+	 * and taking every conversation with it. It is now a property of a session, so
+	 * going to a workspace means going to a conversation in it: the one you left
+	 * open there if there is one, and a new one if there is not. The workbench
+	 * follows because the focused session changed, not because a root did.
 	 */
-	const switchWorkspace = useCallback(
+	const goToWorkspace = useCallback(
 		async (index: number): Promise<boolean> => {
-			if (index >= recents.length) {
+			const recent = recents[index];
+			if (!recent) {
 				return false;
 			}
-			if (dirty) {
-				announce('Save your changes before switching workspace.');
-				return false;
-			}
-			/*
-			 * Still refused while *anything* is mid-turn, and now it really is
-			 * anything: a switch reloads, and a reload takes every open session with
-			 * it, not only the one on screen. Focusing a session in another root
-			 * without reloading is ticket 49; until then this stays blunt.
-			 */
-			if (live.sessions.some((open) => open.status() === 'running' || open.status() === 'waiting')) {
-				announce('A session is mid-turn. Wait for it to finish before switching workspace.');
-				return false;
-			}
-			let chosen: WorkspaceSelection;
-			try {
-				chosen = await provider.switchWorkspace(index);
-			} catch (error) {
-				announce(`Could not switch workspace. ${reason(error)}`);
-				return false;
-			}
-			/*
-			 * **Reload, rather than reset what this callback can reach.**
-			 *
-			 * Editor ids are relative to the old root and project profiles are read
-			 * from it — both were handled here. The one that was not is the agent's
-			 * session: `ExecutionEnv` sends every path to Rust, which resolves it
-			 * against whatever root is current *now*, so a `Session` opened under
-			 * the old root goes on appending under the new one. Its parent chain
-			 * then splits across two files, and every later turn dies on a parent
-			 * id that exists only in the other root — an unrecoverable window, since
-			 * this build has one session and no way to start another.
-			 *
-			 * Rebinding that from here would mean rebuilding the provider, the
-			 * harness and the session store mid-life. Reloading rebinds everything
-			 * through ordinary start-up instead, which reads the root back from
-			 * Rust — the restore path, already proven. Refusing while an editor is
-			 * dirty or a turn is running is what makes it safe to be this blunt.
-			 *
-			 * The announcement below is deliberately not made on this path: the
-			 * page is going. What replaces it is the workbench coming up on the new
-			 * root, which is the same information more plainly.
-			 */
-			if (chosen.path !== selection?.path) {
-				window.location.reload();
+			const already = live.sessions.find((open) => open.root?.path === recent.path);
+			if (already) {
+				sessionSet.focus(already.key);
 				return true;
 			}
-			setInputs([]);
-			setActiveEditorId(undefined);
-			setSelection(chosen);
-			setUnrestored(undefined);
-			/*
-			 * Project-scoped profiles, skills and user tools are read from the
-			 * root, so a switch has to re-read them. This is the half of ticket
-			 * 31 most likely to be missed, and it fails quietly when it is.
-			 */
-			const loaded = await loadProfileFiles();
-			announce(
-				loaded.problems.length > 0
-					? `Switched to ${chosen.label}. Profiles: ${loaded.problems.join('. ')}`
-					: `Switched to ${chosen.label}.`
-			);
-			return true;
+			announce(`New session in ${recent.label}.`);
+			return (await sessionSet.open({ fresh: true }, index)) !== undefined;
 		},
-		[announce, dirty, live.sessions, provider, recents.length, selection?.path]
+		[announce, live.sessions, recents]
 	);
 
 	/**
@@ -1265,13 +1423,10 @@ export function WorkbenchController() {
 	 * way to rebind a provider, a harness and a session store that were all
 	 * module-level.
 	 *
-	 * A stored conversation in this root is opened as a second session beside the
-	 * ones already here, rather than in place of them.
-	 *
-	 * A conversation in *another* root still cannot be opened, and says so. The
-	 * reload is gone and with it the only mechanism that ever made it work; doing
-	 * it properly means a session carrying its own workbench, which is
-	 * [ticket 49](docs/wayfinder/pi-harness/tickets/49-a-session-in-another-folder.md).
+	 * A stored conversation is opened as a session beside the ones already here,
+	 * rather than in place of them — in this root, or in another one, which is
+	 * ticket 49 and the only part of this that ever needed the reload. The root
+	 * is named by its index into the recent list, never by path.
 	 */
 	const selectSession = useCallback(
 		async (picked: Session) => {
@@ -1282,15 +1437,11 @@ export function WorkbenchController() {
 				sessionSet.focus(already.key);
 				return;
 			}
-			if (picked.switchIndex !== undefined) {
-				announce(`${picked.name} is in another workspace. Switch to it first.`);
-				return;
-			}
 			if (!picked.storedPath) {
 				return;
 			}
 			announce(`Opening ${picked.name}.`);
-			await sessionSet.open({ requested: picked.storedPath });
+			await sessionSet.open({ requested: picked.storedPath }, picked.switchIndex);
 		},
 		[announce, live.sessions]
 	);
@@ -1315,6 +1466,8 @@ export function WorkbenchController() {
 					live: true,
 					focused: open === live.focused,
 					storedPath: open.path,
+					// Which group it lands in. Its own root, not the focused one.
+					root: open.root?.path,
 				})),
 				stored,
 				elsewhere,
@@ -1380,8 +1533,9 @@ export function WorkbenchController() {
 						groups={groups}
 						activeId={session?.key ?? ''}
 						onSelect={(picked) => void selectSession(picked)}
-						onSwitchWorkspace={(index) => void switchWorkspace(index)}
-						onNewSession={() => void newSession()}
+						onSwitchWorkspace={(index) => void goToWorkspace(index)}
+						onNewSession={(at) => void newSession(at)}
+						onChooseFolder={provider.canChooseWorkspace ? () => void openFolder() : undefined}
 					/>
 					{session ? (
 						<AgentChat
@@ -1399,6 +1553,7 @@ export function WorkbenchController() {
 							onTranscript={(search) => {
 								transcriptSearch.current = search;
 							}}
+							onUndone={tellTheOthers}
 						/>
 					) : null}
 				</>
