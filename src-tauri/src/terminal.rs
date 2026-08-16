@@ -473,42 +473,59 @@ mod tests {
         );
     }
 
-    /// Killing a real shell and closing its pty finishes, and does not take long.
+    /// Closing a pty that is **mid-stream** returns, and does not take long.
     ///
-    /// **This covers half of the deadlock and the comment on `terminal_kill`
-    /// says which half.** The bug needs Tauri's main thread to be inside the
-    /// command while the reader thread waits on it to emit, and there is no
-    /// event loop in a unit test — so the cycle cannot form here. What this does
-    /// hold is the other end: with something draining the pty, kill-then-drop
-    /// completes promptly. If `ClosePseudoConsole` ever became slow on its own,
-    /// rather than slow because of who was waiting, this is what would say so.
+    /// This replaces a version that was weak in two ways, and the second was
+    /// the serious one.
     ///
-    /// Modelled on `lsp::tests::stop_ends_a_real_server`, for the same reason: a
-    /// teardown that only *eventually* completes is the failure worth catching,
-    /// so returning at all is the assertion and the bound catches the rest.
+    /// It killed the shell immediately after spawning it, so the shell had not
+    /// finished starting and the pty had nothing buffered — it closed an idle
+    /// pty and called that the teardown path. The real `terminal_kill` deadlock
+    /// came from a *busy* one, so it exercised the wrong case. This one answers
+    /// the `ESC[6n` cursor request the pty opens with (see the probing notes in
+    /// OPEN-ISSUES — nothing runs until something answers it), waits for a real
+    /// prompt, and only then floods the pty and closes it under load.
+    ///
+    /// **And it could not fail on the thing it claimed to test.** The shape was
+    /// `drop(master); let elapsed = started.elapsed(); assert!(elapsed < 10s)` —
+    /// so a close that blocked forever never reached the assertion at all. It
+    /// could only catch slow-but-finite, which is the one failure that was never
+    /// going to happen. The close now runs on its own thread and the main thread
+    /// waits on a channel with a deadline, so a hang fails loudly instead of
+    /// hanging the suite.
+    ///
+    /// What it still cannot reach is the deadlock's own cycle, which needs
+    /// Tauri's main thread inside the command while the reader waits on it to
+    /// emit; there is no event loop in a unit test. `terminal_kill`'s comment
+    /// carries that half.
     #[test]
-    fn killing_a_shell_and_closing_its_pty_completes() {
+    fn closing_a_busy_pty_returns() {
         use portable_pty::{NativePtySystem, PtySize, PtySystem};
-        use std::io::Read;
-        use std::time::Instant;
+        use std::io::{Read, Write};
+        use std::sync::mpsc;
+        use std::sync::Arc;
+        use std::time::{Duration, Instant};
 
         let pair = NativePtySystem::default()
-            .openpty(PtySize {
-                rows: 24,
-                cols: 80,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
+            .openpty(PtySize { rows: 24, cols: 100, pixel_width: 0, pixel_height: 0 })
             .expect("a pty");
 
         let mut child = pair
             .slave
             .spawn_command(shell_command())
             .expect("a shell — this test needs one on PATH");
+        // Adopted so a flooding shell cannot outlive a failed run.
+        let mut reaper = Reaper::new().expect("a job object");
+        if let Some(pid) = child.process_id() {
+            reaper.adopt(pid);
+        }
         drop(pair.slave);
 
-        // The drain, which is the condition the close needs. Without a reader
-        // this test would be asserting something else entirely.
+        // The drain. Counting bytes as well as consuming them, because "the pty
+        // was busy" has to be something the test can assert rather than assume.
+        let seen = Arc::new(Mutex::new(String::new()));
+        let bytes = Arc::new(Mutex::new(0usize));
+        let (text_sink, count_sink) = (seen.clone(), bytes.clone());
         let mut reader = pair.master.try_clone_reader().expect("a reader");
         let pump = std::thread::spawn(move || {
             let mut buffer = [0u8; 8192];
@@ -516,18 +533,97 @@ mod tests {
                 if n == 0 {
                     break;
                 }
+                *count_sink.lock().unwrap() += n;
+                let mut text = text_sink.lock().unwrap();
+                // Only the head is kept; the flood below is megabytes and none
+                // of it is interesting after the prompt.
+                if text.len() < 4096 {
+                    text.push_str(&String::from_utf8_lossy(&buffer[..n]));
+                }
             }
         });
 
-        let started = Instant::now();
-        child.kill().expect("kill");
-        drop(pair.master);
-        let elapsed = started.elapsed();
+        let mut writer = pair.master.take_writer().expect("a writer");
+        std::thread::sleep(Duration::from_millis(1500));
+        writer.write_all(&[0x1b, b'[', b'1', b';', b'1', b'R']).expect("dsr");
+        writer.flush().expect("flush");
 
+        // A prompt is the proof the shell is up. Without it the flood below goes
+        // nowhere and the test would close an idle pty again, quietly.
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while Instant::now() < deadline && !seen.lock().unwrap().contains("PS ") {
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        if !seen.lock().unwrap().contains("PS ") {
+            reaper.kill();
+            let _ = child.wait();
+            eprintln!("SKIPPED: the shell never produced a prompt");
+            return;
+        }
+
+        // Now make it busy.
+        writer
+            .write_all(b"1..2000000 | ForEach-Object { \"line $_\" }\r")
+            .expect("flood");
+        writer.flush().expect("flush");
+
+        /*
+         * **Wait for the load, rather than racing a clock against it.**
+         *
+         * Two earlier shapes of this were wrong, and both were caught by trying
+         * to make the test fail on purpose.
+         *
+         * A byte count after a fixed sleep is a race dressed as a threshold: a
+         * warm run moved megabytes and a cold one moved 72 KB, so it failed once
+         * and passed once. Flaky is worse than weak.
+         *
+         * Sampling "did anything move in the last 250ms" is not a race, and it is
+         * also not the property — it passes on the *echo of the command that was
+         * just typed*. Proved by falsification: replacing the flood with a silent
+         * 40-second sleep still passed, because the shell had echoed the line
+         * back. It asserted the pty was not stone dead, which was never in doubt.
+         *
+         * Waiting for a real volume with a generous deadline is neither. It is
+         * deterministic — a slow machine takes longer and still arrives — and it
+         * is false exactly when nothing is flooding, which is the case this test
+         * exists to rule out. The prompt and the echo together are a few hundred
+         * bytes, so the bar sits far above them.
+         */
+        const BUSY_BYTES: usize = 100_000;
+        let deadline = Instant::now() + Duration::from_secs(25);
+        while *bytes.lock().unwrap() < BUSY_BYTES && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let streamed = *bytes.lock().unwrap();
         assert!(
-            elapsed.as_secs() < 10,
-            "kill and close should not block: took {elapsed:?}"
+            streamed >= BUSY_BYTES,
+            "the pty should be under load before the close; only {streamed} bytes \
+             streamed in 25s, so this would have closed an idle pty"
         );
+
+        // The close, on its own thread, so a hang is a failure rather than a
+        // hung suite. This is the part the old test got wrong.
+        let (done, finished) = mpsc::channel();
+        let master = pair.master;
+        child.kill().expect("kill");
+        std::thread::spawn(move || {
+            let started = Instant::now();
+            drop(master);
+            let _ = done.send(started.elapsed());
+        });
+
+        match finished.recv_timeout(Duration::from_secs(15)) {
+            Ok(elapsed) => assert!(
+                elapsed.as_secs() < 10,
+                "closing a busy pty took {elapsed:?}"
+            ),
+            Err(_) => panic!(
+                "closing a busy pty never returned — {streamed} bytes had streamed. \
+                 This is the shape of the `terminal_kill` deadlock."
+            ),
+        }
+
+        reaper.kill();
         let _ = child.wait();
         let _ = pump.join();
     }
