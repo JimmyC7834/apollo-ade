@@ -13,6 +13,8 @@ use portable_pty::{Child, CommandBuilder, MasterPty, NativePtySystem, PtySize, P
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
+use crate::reaper::Reaper;
+
 pub const OUTPUT_EVENT: &str = "terminal://output";
 pub const EXIT_EVENT: &str = "terminal://exit";
 
@@ -67,6 +69,25 @@ struct Session {
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
     child: Box<dyn Child + Send + Sync>,
+    /// The shell's whole process tree.
+    ///
+    /// **This was the last spawn point in the app without one**, and `reaper.rs`
+    /// named it in its own documentation as the example of the thing it exists
+    /// to stop: *"`child.kill()` — what `terminal.rs` does — kills only the
+    /// direct child and leaves every descendant running."* Observed exactly that
+    /// way while chasing something else: killing the process that owned a PTY
+    /// left its `powershell.exe` alive and reparented.
+    ///
+    /// A user's shell is lower stakes than the build `exec.rs` was protecting
+    /// against — nobody's `npm run build` is left running by closing a terminal
+    /// pane — but the shape is identical, and a shell is the *easiest* place to
+    /// start something long-lived on purpose.
+    ///
+    /// It also earns something the other consumers get for free: `Reaper` sets
+    /// `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, so dropping a `Session` takes the
+    /// tree with it whether or not anyone called `terminal_kill`. Closing the
+    /// window drops `TerminalState`, which now cleans up after itself.
+    reaper: Reaper,
 }
 
 #[derive(Default)]
@@ -116,6 +137,15 @@ pub fn terminal_create(
         command.cwd(root);
     }
     let child = pair.slave.spawn_command(command).map_err(|e| e.to_string())?;
+
+    // Adopted immediately after spawn, on the same terms as `exec.rs`: anything
+    // the shell starts in the gap is still caught, because job membership is
+    // inherited, but the gap is kept as small as the API allows.
+    let mut reaper = Reaper::new().ok_or_else(|| "could not create a process job".to_string())?;
+    if let Some(pid) = child.process_id() {
+        reaper.adopt(pid);
+    }
+
     // The slave is dropped here on purpose: while this process still holds it
     // open, the reader below would never see EOF when the shell exits.
     drop(pair.slave);
@@ -164,6 +194,7 @@ pub fn terminal_create(
             master: pair.master,
             writer,
             child,
+            reaper,
         },
     );
     Ok(())
@@ -239,6 +270,12 @@ pub fn terminal_kill(id: String, state: tauri::State<'_, TerminalState>) -> Resu
     let Some(mut session) = session else {
         return Ok(()); // Already gone; killing twice is not an error.
     };
+    // The job first, then the child — the order `lsp::stop` uses, and for the
+    // same reason: the reaper is the guarantee rather than the mechanism, it
+    // takes the tree whether or not the shell cooperates, and running it first
+    // means a wedged direct child cannot delay it. `TerminateJobObject` does not
+    // block, so this stays on the command thread.
+    session.reaper.kill();
     let killed = session.child.kill().map_err(|e| e.to_string());
     tauri::async_runtime::spawn_blocking(move || drop(session));
     killed
@@ -246,7 +283,7 @@ pub fn terminal_kill(id: String, state: tauri::State<'_, TerminalState>) -> Resu
 
 #[cfg(test)]
 mod tests {
-    use super::{shell_command, strip_credentials, CommandBuilder};
+    use super::{shell_command, strip_credentials, CommandBuilder, Mutex, Reaper};
     use crate::provider::CREDENTIAL_VARS;
     use std::ffi::OsStr;
 
@@ -319,6 +356,121 @@ mod tests {
                  vacuous here. `the_credentials_are_removed_from_the_builder` is not."
             );
         }
+    }
+
+    /// Killing the shell takes what the shell started, not just the shell.
+    ///
+    /// The property `Reaper` exists for, asserted on a *terminal* for the first
+    /// time — `reaper.rs` used to name this file as the example of getting it
+    /// wrong. A shell is the easiest place in the app to start something
+    /// long-lived on purpose, so "closing the pane left it running" is not
+    /// hypothetical here.
+    ///
+    /// **This test is only possible because of the ConPTY handshake.** A pty
+    /// will not run anything until something answers its opening `ESC[6n`
+    /// cursor-position request — xterm.js does it in the app, and this has to do
+    /// it by hand. Without that the shell never reads the command and the test
+    /// silently proves nothing, which is exactly how a whole day went.
+    ///
+    /// Skipped rather than failed when the shell will not cooperate, following
+    /// `lsp::tests`: a machine where PowerShell behaves differently is not a
+    /// broken build. The grandchild cannot leak even then — `Reaper` sets
+    /// `KILL_ON_JOB_CLOSE`, so dropping it on any exit path takes the tree.
+    #[test]
+    #[cfg(windows)]
+    fn killing_the_shell_takes_its_children() {
+        use portable_pty::{NativePtySystem, PtySize, PtySystem};
+        use std::io::{Read, Write};
+        use std::sync::Arc;
+        use std::time::{Duration, Instant};
+
+        /// Is this pid still on the machine? `tasklist` rather than `OpenProcess`
+        /// so the test stays free of `unsafe`.
+        fn alive(pid: u32) -> bool {
+            std::process::Command::new("tasklist")
+                .args(["/FI", &format!("PID eq {pid}"), "/NH"])
+                .output()
+                .map(|out| String::from_utf8_lossy(&out.stdout).contains(&pid.to_string()))
+                .unwrap_or(false)
+        }
+
+        let pair = NativePtySystem::default()
+            .openpty(PtySize { rows: 30, cols: 120, pixel_width: 0, pixel_height: 0 })
+            .expect("a pty");
+        let child = pair.slave.spawn_command(shell_command()).expect("a shell");
+        let mut reaper = Reaper::new().expect("a job object");
+        if let Some(pid) = child.process_id() {
+            reaper.adopt(pid);
+        }
+        drop(pair.slave);
+
+        let seen = Arc::new(Mutex::new(String::new()));
+        let sink = seen.clone();
+        let mut reader = pair.master.try_clone_reader().expect("a reader");
+        std::thread::spawn(move || {
+            let mut buffer = [0u8; 8192];
+            while let Ok(n) = reader.read(&mut buffer) {
+                if n == 0 {
+                    break;
+                }
+                sink.lock().unwrap().push_str(&String::from_utf8_lossy(&buffer[..n]));
+            }
+        });
+
+        let mut writer = pair.master.take_writer().expect("a writer");
+        std::thread::sleep(Duration::from_millis(2000));
+        // "the cursor is at row 1, column 1" — the answer that starts the shell.
+        writer.write_all(&[0x1b, b'[', b'1', b';', b'1', b'R']).expect("dsr");
+        writer.flush().expect("flush");
+        std::thread::sleep(Duration::from_millis(2000));
+
+        writer
+            .write_all(
+                b"$p = Start-Process powershell -ArgumentList '-NoProfile','-Command',\
+                  'Start-Sleep -Seconds 300' -PassThru -WindowStyle Hidden; \
+                  Write-Output \"GRANDCHILD=$($p.Id)\"\r",
+            )
+            .expect("command");
+        writer.flush().expect("flush");
+
+        // The pid is printed twice — the echo of what was typed, then the
+        // output — so the *last* match is the one that is a number.
+        let deadline = Instant::now() + Duration::from_secs(20);
+        let mut grandchild = None;
+        while Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(500));
+            let text = seen.lock().unwrap().clone();
+            if let Some(pid) = text
+                .rsplit("GRANDCHILD=")
+                .filter_map(|rest| {
+                    let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+                    digits.parse::<u32>().ok()
+                })
+                .next()
+            {
+                grandchild = Some(pid);
+                break;
+            }
+        }
+
+        let Some(grandchild) = grandchild else {
+            reaper.kill();
+            eprintln!("SKIPPED: the shell never reported a grandchild pid");
+            return;
+        };
+        assert!(alive(grandchild), "the grandchild {grandchild} should be running");
+
+        reaper.kill();
+
+        // Termination is not instantaneous; the assertion is that it happens.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while alive(grandchild) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        assert!(
+            !alive(grandchild),
+            "the grandchild {grandchild} outlived the shell — the job did not take the tree"
+        );
     }
 
     /// Killing a real shell and closing its pty finishes, and does not take long.

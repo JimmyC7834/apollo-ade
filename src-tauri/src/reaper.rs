@@ -13,8 +13,10 @@ use std::process::Command;
 /// **Three mechanisms were tried before this one, and the first two look like
 /// they work.**
 ///
-/// `child.kill()` — what `terminal.rs` does — kills only the direct child and
-/// leaves every descendant running.
+/// `child.kill()` kills only the direct child and leaves every descendant
+/// running. `terminal.rs` used to be the example here and no longer is: it was
+/// the last spawn point in the app without a job, and closing a pane left the
+/// shell's whole tree behind.
 ///
 /// `taskkill /F /T` prints SUCCESS for each process it kills and still leaves
 /// grandchildren behind, because it kills a process before enumerating that
