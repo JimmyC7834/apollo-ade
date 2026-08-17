@@ -26,6 +26,7 @@ import { createPersistenceAdapter, type PersistedState } from '../persistence';
 import { recordOpenSessions, takeOpenSessions, takeUnopened } from '../sessionRequest';
 import { breadcrumb, buildGroups, type Session, type SessionStatus } from '../sessions';
 import { createTerminalAdapter } from '../terminal';
+import { TerminalPanel } from '../features/terminal/TerminalPanel';
 import { Confirm, Prompt } from '../ui';
 import { applyTheme, type ThemeName } from '../ui/theme';
 import {
@@ -1578,12 +1579,31 @@ export function WorkbenchController() {
 						onSelect={setActiveArtifactId}
 						onUnpin={unpin}
 					>
+						{/*
+						 * The terminal is mounted for as long as it is *pinned*, not
+						 * for as long as it is the tab in front — and hidden rather
+						 * than removed the rest of the time.
+						 *
+						 * `ArtifactView`'s subtree is swapped whole when the active
+						 * artifact changes, and unmounting a terminal kills its shell.
+						 * Rendering it in there meant every shell in every root died
+						 * the moment the user glanced at the file tree, which made
+						 * keeping them per root (ticket 31) worth nothing. Unpinning
+						 * still kills them, and that is the one place it should.
+						 */}
+						{pinned.includes(TOOL_ARTIFACTS.terminal.id) ? (
+							<div
+								className="ide-dock-layer"
+								hidden={activeArtifact !== TOOL_ARTIFACTS.terminal.id}
+							>
+								<TerminalPanel adapter={terminalAdapter} root={selection?.path} />
+							</div>
+						) : null}
 						{activeArtifact ? (
 							<ArtifactView
 								id={activeArtifact}
 								provider={provider}
 								changesProvider={changesProvider}
-								terminalAdapter={terminalAdapter}
 								entries={entries}
 								inputs={inputs}
 								activeEditorId={activeEditorId}

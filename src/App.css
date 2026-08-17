@@ -2458,6 +2458,25 @@ body {
 }
 
 /*
+ * The terminal's layer in the dock body. It exists because the terminal stays
+ * mounted while pinned rather than while active — a shell dies when its element
+ * unmounts — so it needs to be a sibling of the active artifact that takes the
+ * whole body when shown and no room at all when hidden.
+ */
+.ide-dock-layer {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	min-width: 0;
+	min-height: 0;
+	overflow: hidden;
+}
+
+.ide-dock-layer[hidden] {
+	display: none;
+}
+
+/*
  * The dock's tab is the artifact's title, so a renderer that draws its own
  * title draws it twice — the terminal did, because it used to be a panel with
  * no tab above it. Removed from the eye, kept in the accessibility tree, where

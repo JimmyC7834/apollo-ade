@@ -730,7 +730,8 @@ Nine items, accepted as a batch, now written up as **tickets 25–36**. They are
 
 **26, 27 and 30 landed in Slice 39** — the three that were unblocked, needed no new
 subsystem, and turned out to be joins between parts that already existed. **25, 28, 29 and
-32 have since landed too**, and **[31](tickets/31-workspace-switching.md) was absorbed into
+32 have since landed too**, and **[31](tickets/31-workspace-switching.md) landed with the
+terminal, having been absorbed into
 [39](tickets/39-session-navigator.md)** — it is the only real functionality in that slice.
 
 **The LSP chain is built, and [36](tickets/36-acp-direction.md) is all that is left** — a
@@ -808,7 +809,11 @@ sequencing them by that rather than by appeal is the whole value of writing them
 - **Replace across files** — [ticket 30](tickets/30-replace-across-files.md). **Landed, Slice 39** — literal, case-insensitive, per file, previewed as a `replace:` diff tab. `search_workspace` finds; nothing writes back. The
   interesting half is preview-and-confirm, not the substitution, and it wants the same
   diff surface as the gate below.
-- **Multi-workspace switching** — [ticket 31](tickets/31-workspace-switching.md). Recent roots, and a switcher.
+- **Multi-workspace switching** — [ticket 31](tickets/31-workspace-switching.md). **Landed**,
+  across three slices: 39 built the recents list and the switch, 49 made switching a
+  consequence of focusing a session and kept editors per root, and the terminal — the last
+  of its five — is answered by leaving each shell alive in the folder it was opened in and
+  showing it only there. All five decisions are recorded in the ticket.
 
   **A correction to what this map's author told the dev.** He was cautioned against this
   on the grounds that `workspace.rs` treats one root as the confinement boundary and

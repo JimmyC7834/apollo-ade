@@ -17,15 +17,12 @@ import type { Lsp } from '../features/lsp/useLsp';
 import { ProblemsView } from '../features/problems/ProblemsView';
 import { SearchView } from '../features/search/SearchView';
 import type { Replacement } from '../features/search/replace';
-import { TerminalPanel } from '../features/terminal/TerminalPanel';
-import type { TerminalAdapter } from '../terminal';
 import type { WorkspaceEntry, WorkspaceProvider } from '../workspace';
 
 export interface ArtifactViewProps {
 	readonly id: string;
 	readonly provider: WorkspaceProvider;
 	readonly changesProvider: ChangesProvider;
-	readonly terminalAdapter: TerminalAdapter;
 	readonly entries: readonly WorkspaceEntry[];
 	readonly inputs: readonly EditorInput[];
 	readonly activeEditorId: string | undefined;
@@ -44,8 +41,16 @@ export interface ArtifactViewProps {
 export function ArtifactView(props: ArtifactViewProps) {
 	const kind = toolArtifactKind(props.id);
 
+	/*
+	 * Not the terminal: it is mounted by the controller for as long as it is
+	 * *pinned*, rather than for as long as it is the tab being looked at.
+	 * Unmounting a `TerminalInstance` kills its shell, and this component's
+	 * subtree is swapped wholesale every time the active artifact changes — so
+	 * rendering it here meant a glance at the file tree killed every shell in
+	 * every root. See `WorkbenchController`.
+	 */
 	if (kind === 'terminal') {
-		return <TerminalPanel adapter={props.terminalAdapter} />;
+		return null;
 	}
 	if (kind === 'changes') {
 		return (

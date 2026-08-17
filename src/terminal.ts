@@ -2,10 +2,53 @@
 // owns an xterm.js instance and an opaque session id, and everything else
 // happens behind this adapter.
 
-import { isTauri } from './native';
+import { isTauri } from './native.ts';
 
 export type OutputListener = (id: string, data: string) => void;
 export type ExitListener = (id: string, code: number | undefined) => void;
+
+/**
+ * One shell, and the folder it was opened in — ticket 31.
+ *
+ * A PTY's working directory is set when it is spawned and never moves again, so
+ * a shell cannot follow the window into another root. It stays where it is,
+ * still running, and is shown only there. That is the same answer open editors
+ * got: put down on the way out, picked up on the way back.
+ */
+export interface TerminalSession {
+	readonly id: string;
+	readonly name: string;
+	readonly exited: boolean;
+	/** Undefined before a workspace is chosen: the shell is in the app's own directory. */
+	readonly root: string | undefined;
+}
+
+/** The shells belonging to `root`, oldest first. */
+export function terminalsIn(
+	sessions: readonly TerminalSession[],
+	root: string | undefined
+): readonly TerminalSession[] {
+	return sessions.filter((session) => session.root === root);
+}
+
+/**
+ * Which tab is on screen in `root`: the one remembered there if it is still
+ * open, and otherwise the most recent shell in that folder.
+ *
+ * `remembered` is checked against this root's shells rather than trusted,
+ * because the id it holds after a switch is the *other* folder's — which is
+ * exactly the stale handle the ticket asks not to be left with.
+ */
+export function activeIn(
+	sessions: readonly TerminalSession[],
+	root: string | undefined,
+	remembered: string | undefined
+): string | undefined {
+	const mine = terminalsIn(sessions, root);
+	return mine.some((session) => session.id === remembered)
+		? remembered
+		: mine[mine.length - 1]?.id;
+}
 
 export interface TerminalAdapter {
 	/** True when sessions are real shells rather than the echo fallback. */
