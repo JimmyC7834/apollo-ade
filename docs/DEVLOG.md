@@ -5438,3 +5438,60 @@ which is a thing the navigator already has in hand.
 fills it. A stringly-typed sentinel is the sort of thing this repo's rules push back on; it
 is one producer and one consumer, both named in the comment, and the alternative was a second
 row type for a field that is undefined for a few hundred milliseconds.
+
+## Slice 41e — One harness per file (60)
+
+**User outcome.** Clicking a conversation the harness cannot replay no longer duplicates a
+row, and never puts two harnesses on one transcript.
+
+### Added
+
+One guard in `sessionSet.build`. One after-the-fact cleanup in `bootstrap` deleted.
+
+### UI extracted / reused
+
+None.
+
+### Adapters and dependencies
+
+None.
+
+### Security boundary
+
+Untouched — but this is the closest thing to a data-integrity fix in the batch. Two harnesses
+appending to one JSONL is the failure `SessionStore.path` was awaited to prevent, and the
+click path had no guard at all.
+
+### Accessibility behavior
+
+Unchanged. The fallback is still announced.
+
+### Validation performed
+
+`npm run check` clean. Driven in the native window against this repo's real sessions: clicking
+the last row — the oldest conversation, from 2026-08-05 — announced *"That conversation could
+not be reopened. Opened the most recent one instead."*, so the fallback fired for real. The
+group held four rows before and four after, one marked current, the clicked row still stored.
+
+### What was *not* validated
+
+The pre-fix behaviour, captured directly. It was inferred from the code and from the same
+announcement firing; the fifth row was not photographed on the old build.
+
+No check covers the guard. `sessionSet`'s only route in is an async provider factory that
+talks to Rust, and there is no seam a check could reach without inventing one. The pure half
+of this batch is checked; this half was driven.
+
+### Caveats and deviations
+
+**The third comment in this batch that described an intent the code had stopped serving.**
+`bootstrap` names this exact case — *"a damaged file whose candidate fallback lands on a
+conversation an earlier iteration already opened"* — and handled it by opening the duplicate
+and closing it a step later, which leaves two writers coexisting for the length of a close.
+It did nothing for a click. The first two were the composer's width cap in 55 and the awaited
+session path in 59.
+
+**The damaged files are still on disk and still unopenable.** Nothing here repairs a JSONL
+with a hole in its parent chain; the fallback and its announcement are the whole of the
+answer, as they were before. What changed is only that landing on an already-open conversation
+is no longer a second harness.

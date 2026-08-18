@@ -736,6 +736,7 @@ result rather than from charting it, and it is small on purpose.
 | **[57](tickets/57-the-strip-is-only-icons.md)** | The strip is only icons | **landed** |
 | **[58](tickets/58-abandoned-is-not-a-conversation.md)** | An abandoned session is not a conversation | **landed**, one criterion part-verified |
 | **[59](tickets/59-one-row-while-it-opens.md)** | One row while it opens | **landed** |
+| **[60](tickets/60-one-harness-per-file.md)** | One harness per file | **landed** |
 
 **54 is a bug, not a decision**, and it is on the map only because it will come back: one
 Rust spawn site out of six sets `CREATE_NO_WINDOW`, so everything else the ADE runs flashes
@@ -760,6 +761,16 @@ that is ADR 0002 and it holds throughout.
 **One shortcut is taken deliberately in 56 and is marked in it**: an archived session is
 not browsable from the app. The signal to build the Archived group is someone going looking
 for one, not the symmetry of having a round trip.
+
+**60 is the same bug reported twice, and the second report was the real one.** 59 fixed a
+duplicate row caused by a session being published before its path arrived; the duplicate came
+back, and only on the *last* row of a workspace. That is the oldest conversation, which is the
+one likeliest to have a JSONL the harness cannot replay — and a file that cannot be replayed
+falls back to another conversation, usually the newest, which is usually already open. Two
+live sessions on one file: two identical rows, and two harnesses appending to the same
+transcript. `bootstrap` had a comment naming this exact case and cleaned up after it a step
+later; nothing guarded the click. The refusal now sits where both facts are known at once,
+which 59 is what made possible.
 
 **59 is one defect wearing two faces, and the comment above it already knew.** A session was
 added to the window's collection and focused — both of which publish — *before* its file path

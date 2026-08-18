@@ -139,6 +139,35 @@ function createSessionSet(): SessionSet {
 		 * bought none of what the intent was for.
 		 */
 		session.path = await provider.path();
+
+		/*
+		 * **One harness per file, checked here because here is where it is
+		 * knowable** — ticket 60.
+		 *
+		 * `openSession` tries every candidate and falls back to another
+		 * conversation when the one asked for cannot be replayed — a file with a
+		 * hole in its parent chain, which this repo has and which the *oldest*
+		 * sessions are the likeliest to be. So asking for one conversation can
+		 * hand back a different one, and that one may already be open.
+		 *
+		 * The result was two live sessions on one JSONL: two identical rows in the
+		 * navigator, and two harnesses appending to the same file — which is the
+		 * half that is not cosmetic. Clicking the last row in a workspace was the
+		 * reliable way to see it, because the last row is the oldest.
+		 *
+		 * `bootstrap` already knew: it opened, noticed, and closed the duplicate a
+		 * step later. That left the two writers coexisting for the length of a
+		 * close, and it did nothing at all for a *click*, which is the other way
+		 * in. Refusing before the session joins the collection covers both, and it
+		 * is only possible because the path is resolved first — see above.
+		 */
+		const already = sessions.find((open) => session.path !== undefined && open.path === session.path);
+		if (already) {
+			provider.dispose();
+			set.focus(already.key);
+			return already;
+		}
+
 		sessions = [...sessions, session];
 		set.focus(session.key);
 
@@ -216,14 +245,15 @@ function createSessionSet(): SessionSet {
 						lost.push(entry.root);
 						continue;
 					}
+					/*
+					 * The fallback may hand back a file an earlier entry already had.
+					 * `build` refuses that and returns the session already holding it,
+					 * so what comes back here is always the one live session for this
+					 * file — which is why there is no duplicate to close afterwards any
+					 * more, and why the guard above is now only an optimisation that
+					 * saves opening a provider at all.
+					 */
 					const opened = await set.open({ requested: entry.path }, at);
-					// Same rule, one step later: the fallback may have handed back a file
-					// another entry already had. Two writers on one file is worse than
-					// one conversation short.
-					if (opened && sessions.some((open) => open !== opened && open.path === opened.path)) {
-						set.close(opened.key);
-						continue;
-					}
 					if (opened && entry.focused) {
 						focus = opened;
 					}
