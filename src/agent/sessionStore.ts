@@ -63,8 +63,6 @@ export interface StoredSession {
 	readonly id: string;
 	readonly name: string;
 	readonly startedAt: string;
-	/** No user message in it — started and abandoned, rather than had. */
-	readonly empty: boolean;
 }
 
 /**
@@ -132,6 +130,21 @@ const MAX_LISTED = 20;
  * switcher is actually for — and switching there shows all twenty.
  */
 const MAX_LISTED_ELSEWHERE = 5;
+
+/**
+ * How many session files may be read to fill a capped list — ticket 58.
+ *
+ * The cap counts *rows*, and abandoned sessions are dropped after they are
+ * named, so applying it first would let a run of them push real conversations
+ * off the end: twenty abandoned sessions in a row would leave an empty list in
+ * a workspace full of conversations. Applying no cap at all is the unbounded
+ * read the cap exists to prevent.
+ *
+ * So the cap is on rows and this is the ceiling on reads. Three to one is an
+ * allowance, not a measurement — an abandoned session is rarer than a real one,
+ * and a workspace where it is not has little to list either way.
+ */
+const SCAN_RATIO = 3;
 
 /**
  * How far into a session to look for the message that names it.
@@ -212,14 +225,31 @@ async function listStored(
 ): Promise<readonly StoredSession[]> {
 	const stored = (await repo.list({ cwd: '/' }))
 		.filter((entry) => !entry.metadata?.delegatedFrom)
-		.slice(0, limit);
+		.slice(0, limit * SCAN_RATIO);
 
-	return await Promise.all(
+	const named = await Promise.all(
 		stored.map(async (metadata) => {
 			const { name, empty } = await nameStored(repo, metadata);
 			return { id: metadata.path, name, startedAt: metadata.createdAt, empty };
 		})
 	);
+	/*
+	 * **Started and abandoned is not a conversation** — ticket 58. A session
+	 * file is written the moment one is opened, so every glance at a workspace
+	 * left an `Untitled session` behind, and they accumulated faster than anyone
+	 * would remove them. They were also the one row that could not be removed
+	 * while it was the one you were in.
+	 *
+	 * Filtered on the way out rather than deleted: the file is small and the
+	 * store's write path is pi's, so not-listing is the whole of what "not
+	 * saved" has to mean here. The cost is that the files stay on disk, unread
+	 * by anything. If that ever matters, deleting an empty session's file when
+	 * it closes is the change.
+	 */
+	return named
+		.filter((entry) => !entry.empty)
+		.slice(0, limit)
+		.map(({ id, name, startedAt }) => ({ id, name, startedAt }));
 }
 
 /**

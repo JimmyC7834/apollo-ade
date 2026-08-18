@@ -5321,3 +5321,62 @@ pointer leaves, which is exactly when nobody is looking at it.
 The Shell Guide's 32px collapsed width is deliberately deviated from. It was 32px *including
 a border this app no longer draws*; 28px keeps what the figure was for, which is a strip the
 width of one icon.
+
+## Slice 41c — An abandoned session is not a conversation (58)
+
+**User outcome.** Clicking `+` and thinking better of it no longer leaves anything behind,
+and switching workspaces no longer reshuffles the list you switched with.
+
+### Added
+
+Nothing. One filter, one ordering change, and a field deleted.
+
+### UI extracted / reused
+
+None.
+
+### Adapters and dependencies
+
+None.
+
+### Security boundary
+
+Untouched. Nothing is deleted from disk, so no write path is involved at all.
+
+### Accessibility behavior
+
+Unchanged.
+
+### Validation performed
+
+`npm run check` clean. Driven in the native window:
+
+- The navigator's group order matched `recent-workspaces` exactly, with the current root
+  second rather than hoisted, and opening a conversation in the *third* entry left all six
+  groups where they were.
+- A real 124-byte empty session file — the one ticket 56's archive had moved out — was
+  copied back under a newer name so it sorted first. After a reload it appeared nowhere,
+  and the workspace still listed its four real conversations. The probe was removed after.
+
+### What was *not* validated
+
+Closing an empty session through the UI. `Close session` lives on the ADE menu and the
+palette and neither opens under a synthetic click, so the gesture was not exercised — only
+its consequence, which is the half that changed.
+
+### Caveats and deviations
+
+**The files are not deleted, and that is the deliberate shortcut.** A session's write path is
+pi's, and deleting one in another root would need a write door the window does not have — a
+door 56 declined to open for archive and delete, and this is not a better reason. Not-listing
+is the whole of what "not saved" means here.
+
+**That shortcut has one real cost and it is handled, not ignored.** The list is capped at
+twenty *rows* and rows are dropped after they are named, so abandoned sessions would push
+real conversations off the end — twenty in a row would empty the list of a busy workspace.
+The cap stays on rows and `SCAN_RATIO` bounds how many files may be read to fill it. Three to
+one is an allowance rather than a measurement, and it is written down as one.
+
+**`StoredSession.empty` is gone**, and with it the `idle` status a stored row could carry. It
+distinguished had from opened-and-abandoned, and there are no abandoned rows to distinguish
+any more.

@@ -734,6 +734,7 @@ result rather than from charting it, and it is small on purpose.
 | **[55](tickets/55-navigator-is-part-of-the-chat.md)** | The navigator reads as part of the chat | **landed** |
 | **[56](tickets/56-archive-and-delete-a-session.md)** | Archive and delete a session | **landed** |
 | **[57](tickets/57-the-strip-is-only-icons.md)** | The strip is only icons | **landed** |
+| **[58](tickets/58-abandoned-is-not-a-conversation.md)** | An abandoned session is not a conversation | **landed**, one criterion part-verified |
 
 **54 is a bug, not a decision**, and it is on the map only because it will come back: one
 Rust spawn site out of six sets `CREATE_NO_WINDOW`, so everything else the ADE runs flashes
@@ -758,6 +759,15 @@ that is ADR 0002 and it holds throughout.
 **One shortcut is taken deliberately in 56 and is marked in it**: an archived session is
 not browsable from the app. The signal to build the Archived group is someone going looking
 for one, not the symmetry of having a round trip.
+
+**58 is two things the list got wrong that no amount of reading it would show.** A session
+file is written the moment one is opened, so every `+` clicked and thought better of left an
+`Untitled session` behind — and while one is the conversation you are *in* it is live, so 56
+correctly offers no way to remove it: the row most worth removing was the one row with no
+button. A session nobody said anything in is not a conversation and is not listed, which
+makes closing it the whole of removing it. And the navigator drew the current workspace
+first, so arriving somewhere reordered the list you had just navigated by position; it keeps
+Rust's order now, which only a *chosen* folder moves.
 
 **57 is what using 55 and 56 for an hour found**, which is the same way this batch started.
 Three of its four items are consequences the tickets that caused them did not see: removing

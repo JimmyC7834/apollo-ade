@@ -190,7 +190,12 @@ function storedRow(stored: StoredSession, switchIndex?: number): Session {
 		 */
 		id: switchIndex === undefined ? stored.id : `${switchIndex}:${stored.id}`,
 		name: stored.name,
-		status: stored.empty ? 'idle' : 'done',
+		/*
+		 * Always `done`. It used to be `done` or `idle` — had, versus opened and
+		 * abandoned — and ticket 58 stopped listing the abandoned ones, so the
+		 * second answer described a row that no longer arrives here.
+		 */
+		status: 'done',
 		live: false,
 		storedPath: stored.id,
 		switchIndex,
@@ -269,31 +274,40 @@ export function buildGroups(options: {
 				.map((entry) => storedRow(entry, switchIndex)),
 		];
 	};
-	return [
-		{
-			id: workspace.path || workspace.label,
-			label: workspace.label,
-			branch: options.branch,
-			sessions: rowsFor(workspace.path, options.stored),
-		},
-		/*
-		 * Matched by path, not by label: two checkouts of the same project are a
-		 * normal thing to have open and they share a label. `switchIndex` is the
-		 * index into the *unfiltered* list, because that is the list Rust indexes.
-		 */
-		...options.recents.flatMap((recent, index) =>
-			recent.path === workspace.path
-				? []
-				: [
-						{
-							id: `recent:${recent.path}`,
-							label: recent.label,
-							switchIndex: index,
-							sessions: rowsFor(recent.path, options.elsewhere?.get(recent.path) ?? [], index),
-						},
-					]
-		),
-	];
+	const current = {
+		id: workspace.path || workspace.label,
+		label: workspace.label,
+		branch: options.branch,
+		sessions: rowsFor(workspace.path, options.stored),
+	};
+	/*
+	 * **Rust's order, kept** — ticket 58. The current workspace used to be
+	 * hoisted to the top and the rest listed under it, so arriving somewhere
+	 * moved its group to the front and every other group down one. A list you
+	 * navigate by position must not reorder itself when you arrive; the recent
+	 * list only moves when a folder is *chosen*, which is what `remember` in
+	 * `workspace.rs` has always meant.
+	 *
+	 * Matched by path, not by label: two checkouts of the same project are a
+	 * normal thing to have open and they share a label. `switchIndex` is the
+	 * index into the *unfiltered* list, because that is the list Rust indexes.
+	 */
+	const groups = options.recents.map((recent, index) =>
+		recent.path === workspace.path
+			? current
+			: {
+					id: `recent:${recent.path}`,
+					label: recent.label,
+					switchIndex: index,
+					sessions: rowsFor(recent.path, options.elsewhere?.get(recent.path) ?? [], index),
+				}
+	);
+	/*
+	 * A root the window is in that the recent list does not name — a restore
+	 * whose recents file was lost. It has no position to keep, so it goes first
+	 * rather than not at all.
+	 */
+	return groups.includes(current) ? groups : [current, ...groups];
 }
 
 /** `workspace/branch`, or the workspace alone when there is no branch. */

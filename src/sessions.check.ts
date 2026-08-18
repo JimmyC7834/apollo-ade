@@ -21,9 +21,9 @@ import {
 
 /** A stored row as `listSessions` hands them over: newest first. */
 const stored: readonly StoredSession[] = [
-	{ id: '/s/3.jsonl', name: 'Fix the sash', startedAt: '2026-08-05T03:00:00Z', empty: false },
-	{ id: '/s/2.jsonl', name: 'Chase a failing check', startedAt: '2026-08-04T03:00:00Z', empty: false },
-	{ id: '/s/1.jsonl', name: 'Untitled session', startedAt: '2026-08-03T03:00:00Z', empty: true },
+	{ id: '/s/3.jsonl', name: 'Fix the sash', startedAt: '2026-08-05T03:00:00Z' },
+	{ id: '/s/2.jsonl', name: 'Chase a failing check', startedAt: '2026-08-04T03:00:00Z' },
+	{ id: '/s/1.jsonl', name: 'Reword the note', startedAt: '2026-08-03T03:00:00Z' },
 ];
 
 /** The window's open conversations, as the controller builds them. */
@@ -47,8 +47,9 @@ assert.equal(liveStatus({ running: false, blocked: false, turns: 0 }), 'idle');
 assert.equal(liveStatus({ running: false, blocked: false, turns: 1 }), 'done');
 
 const workspace = { label: 'ade', path: '/tmp/ade' };
-// Rust's list always has the current root at the top, since switching to one
-// pushes it there. The current root must not also appear as somewhere to go.
+// The current root must not also appear as somewhere to go. It is *not* always
+// at the top of Rust's list — only choosing a folder reorders that list, and
+// ticket 58 stopped the navigator hoisting it. See `stable` below.
 const recents = [workspace, { label: 'other', path: '/tmp/other' }];
 const groups = buildGroups({
 	workspace,
@@ -128,10 +129,14 @@ assert.deepEqual(
 	['session-a', '/s/3.jsonl', '/s/2.jsonl', '/s/1.jsonl']
 );
 
-// Had, versus opened and abandoned. That is the whole of what the marker says
-// about a session nothing is attached to.
+/*
+ * Every stored row is `done`, and there is no second answer any more. It used
+ * to be `done` or `idle` — had, versus opened and abandoned — and ticket 58
+ * stopped listing the abandoned ones at all, so the distinction described rows
+ * that no longer reach here.
+ */
 assert.equal(groups[0].sessions[1].status, 'done');
-assert.equal(groups[0].sessions[2].status, 'idle');
+assert.equal(groups[0].sessions[2].status, 'done');
 assert.equal(groups[0].sessions[1].name, 'Chase a failing check');
 
 // A workspace whose sessions could not be read, or has none, shows the open rows
@@ -338,5 +343,48 @@ assert.ok(!archiveMove('/.ade/sessions/x.jsonl').to.startsWith('.ade/sessions/')
 // Real paths carry a per-cwd bucket. Only the file name survives, so nothing
 // lands outside the archive folder.
 assert.equal(archiveMove('/.ade/sessions/----/b.jsonl').to, '.ade/archive/b.jsonl');
+
+/*
+ * Ticket 58 — the list does not reshuffle under the pointer.
+ *
+ * The current workspace keeps Rust's position for it instead of being hoisted
+ * to the top, because a list you navigate by position must not reorder itself
+ * every time you arrive somewhere. `recents` above has the current root first,
+ * so it cannot show the difference; this one has it second.
+ */
+const elsewhereFirst = [{ label: 'other', path: '/tmp/other' }, workspace];
+const stable = buildGroups({
+	workspace,
+	branch: 'master',
+	recents: elsewhereFirst,
+	live: [open()],
+	stored,
+});
+assert.deepEqual(
+	stable.map((group) => group.label),
+	['other', 'ade']
+);
+// Still the one with nowhere to go, wherever in the order it sits — and the
+// other one's `switchIndex` is still its index into Rust's list.
+assert.equal(stable[1].switchIndex, undefined);
+assert.equal(stable[0].switchIndex, 0);
+
+/*
+ * A root the window is in that the recent list does not name — a restore whose
+ * recents file was lost. It has no position to keep, so it goes first rather
+ * than nowhere at all.
+ */
+const orphan = buildGroups({
+	workspace: { label: 'unlisted', path: '/tmp/unlisted' },
+	branch: 'master',
+	recents: elsewhereFirst,
+	live: [open()],
+	stored,
+});
+assert.deepEqual(
+	orphan.map((group) => group.label),
+	['unlisted', 'other', 'ade']
+);
+assert.equal(orphan[0].switchIndex, undefined);
 
 console.log('sessions.check.ts: ok');
