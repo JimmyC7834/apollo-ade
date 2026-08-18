@@ -735,6 +735,7 @@ result rather than from charting it, and it is small on purpose.
 | **[56](tickets/56-archive-and-delete-a-session.md)** | Archive and delete a session | **landed** |
 | **[57](tickets/57-the-strip-is-only-icons.md)** | The strip is only icons | **landed** |
 | **[58](tickets/58-abandoned-is-not-a-conversation.md)** | An abandoned session is not a conversation | **landed**, one criterion part-verified |
+| **[59](tickets/59-one-row-while-it-opens.md)** | One row while it opens | **landed** |
 
 **54 is a bug, not a decision**, and it is on the map only because it will come back: one
 Rust spawn site out of six sets `CREATE_NO_WINDOW`, so everything else the ADE runs flashes
@@ -759,6 +760,14 @@ that is ADR 0002 and it holds throughout.
 **One shortcut is taken deliberately in 56 and is marked in it**: an archived session is
 not browsable from the app. The signal to build the Archived group is someone going looking
 for one, not the symmetry of having a round trip.
+
+**59 is one defect wearing two faces, and the comment above it already knew.** A session was
+added to the window's collection and focused — both of which publish — *before* its file path
+was awaited, so for one file read the navigator held a conversation it could not match to the
+row it had just been opened from, and drew both. The same session had no name yet either, so
+the extra row read `New session`. The comment above that await said the path was "awaited,
+not left to land later" and gave exactly the right reason; awaiting it after publishing
+bought none of it.
 
 **58 is two things the list got wrong that no amount of reading it would show.** A session
 file is written the moment one is opened, so every `+` clicked and thought better of left an

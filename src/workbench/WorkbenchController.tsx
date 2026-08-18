@@ -1514,7 +1514,9 @@ export function WorkbenchController() {
 				 */
 				live: live.sessions.map((open) => ({
 					id: open.key,
-					name: open.name() ?? 'New session',
+					// Empty means "not known yet" — `buildGroups` fills it from the
+					// stored row being opened, or falls back to `New session`.
+					name: open.name() ?? '',
 					status: open.status(),
 					unread: open.snapshot().unread,
 					live: true,

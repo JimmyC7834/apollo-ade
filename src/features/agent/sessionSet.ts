@@ -124,6 +124,21 @@ function createSessionSet(): SessionSet {
 			announce,
 			changed: publish,
 		});
+		/*
+		 * Which file this is — **before it joins the collection, not after**. The
+		 * navigator uses it to tell an open conversation from a stored row
+		 * offering to open the same one, and `bootstrap` uses it to refuse opening
+		 * a file that is already open. Both of those are decisions, and a decision
+		 * cannot be made against a field that has not arrived yet.
+		 *
+		 * It used to be awaited *below* the two lines that publish, which meant the
+		 * decision was made twice and wrongly the first time: for the length of one
+		 * file read the window held a session with no path, so the navigator could
+		 * not match it to the row it had just been opened from and drew both —
+		 * ticket 59. Awaiting it was always the intent; doing so after publishing
+		 * bought none of what the intent was for.
+		 */
+		session.path = await provider.path();
 		sessions = [...sessions, session];
 		set.focus(session.key);
 
@@ -131,20 +146,17 @@ function createSessionSet(): SessionSet {
 		 * History, once, into an empty transcript. Without it a resumed session
 		 * comes up blank with a model that remembers all of it — the transcript is
 		 * built from events in this window, and a resumed one has none.
+		 *
+		 * **Not awaited, and that is why the row borrows a name.** A session has no
+		 * name of its own until this lands, so waiting for it would hold a clicked
+		 * conversation off screen for a file read. `buildGroups` fills the gap from
+		 * the stored row instead.
 		 */
 		void provider.history().then((restored) => {
 			if (restored.length > 0 && session.snapshot().turns.length === 0) {
 				session.patch({ turns: restored.map(replay) });
 			}
 		});
-		/*
-		 * Which file this is — **awaited, not left to land later**. The navigator
-		 * uses it to tell an open conversation from a stored row offering to open
-		 * the same one, and `bootstrap` uses it to refuse opening a file that is
-		 * already open. Both of those are decisions, and a decision cannot be made
-		 * against a field that has not arrived yet.
-		 */
-		session.path = await provider.path();
 		publish();
 		return session;
 	}

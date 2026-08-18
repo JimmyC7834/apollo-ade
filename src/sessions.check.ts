@@ -387,4 +387,39 @@ assert.deepEqual(
 );
 assert.equal(orphan[0].switchIndex, undefined);
 
+/*
+ * Ticket 59 — a conversation being opened is one row, with its own name.
+ *
+ * A live session has no name of its own until its history has replayed, and
+ * that is a file read. Both of these held the same defect from the other side:
+ * for the length of that read the row read `New session`, which is the label
+ * for a conversation nobody has said anything in — while the row it was opened
+ * from sat above it saying what it actually was.
+ */
+const opening = buildGroups({
+	workspace,
+	branch: 'master',
+	recents,
+	// No name yet, and the file it is opening is one of the stored rows.
+	live: [open({ name: '', storedPath: '/s/2.jsonl' })],
+	stored,
+})[0].sessions;
+// It borrows the name of the row it hides rather than showing a placeholder.
+assert.equal(opening[0].name, 'Chase a failing check');
+// And it is still one row: the stored one it came from is not listed beside it.
+assert.equal(opening.filter((row) => row.storedPath === '/s/2.jsonl').length, 1);
+
+/*
+ * A genuinely new conversation has no stored row to borrow from, and `New
+ * session` is the right label there — which is the whole reason it exists.
+ */
+const born = buildGroups({
+	workspace,
+	branch: 'master',
+	recents,
+	live: [open({ name: '', storedPath: undefined })],
+	stored,
+})[0].sessions;
+assert.equal(born[0].name, 'New session');
+
 console.log('sessions.check.ts: ok');

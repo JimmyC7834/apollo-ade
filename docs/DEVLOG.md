@@ -5380,3 +5380,61 @@ one is an allowance rather than a measurement, and it is written down as one.
 **`StoredSession.empty` is gone**, and with it the `idle` status a stored row could carry. It
 distinguished had from opened-and-abandoned, and there are no abandoned rows to distinguish
 any more.
+
+## Slice 41d — One row while it opens (59)
+
+**User outcome.** Clicking a conversation opens it in place. Nothing appears beside it and
+its name does not change under the pointer.
+
+### Added
+
+Nothing. Two lines moved and one fallback relocated.
+
+### UI extracted / reused
+
+None.
+
+### Adapters and dependencies
+
+None.
+
+### Security boundary
+
+Untouched.
+
+### Accessibility behavior
+
+Unchanged, and slightly better by accident: the live region no longer announces a row
+appearing and disappearing.
+
+### Validation performed
+
+`npm run check` clean. In the native window, a `MutationObserver` recorded every DOM change
+across the navigator for six seconds through a click on a stored conversation: exactly one
+distinct row list throughout — same eleven rows before, during and after — so no row was
+added and no name changed. The clicked row ended up live, correctly named, transcript
+replayed.
+
+### What was *not* validated
+
+The defect itself, on the build before the fix. It was diagnosed from the code and the
+mechanism is unambiguous, but the "two rows" state was never captured on the old build for
+comparison.
+
+### Caveats and deviations
+
+**The comment was right and the code was not.** `build` said the session's path was
+*"awaited, not left to land later"*, and gave the correct reason — the navigator's match and
+`bootstrap`'s refusal are decisions that cannot be made against a field that has not arrived.
+It was awaited *below* the two lines that publish, so the decision was made twice and wrongly
+the first time. This is the second time in this batch a comment described an intent the code
+had stopped serving; the first was the composer's width cap in 55.
+
+**History is deliberately still not awaited.** Waiting for it would trade a flicker for a
+stall on every click. The name gap it leaves is filled from the stored row being opened,
+which is a thing the navigator already has in hand.
+
+**`Session.name` now carries a sentinel**: empty means "not known yet", and `buildGroups`
+fills it. A stringly-typed sentinel is the sort of thing this repo's rules push back on; it
+is one producer and one consumer, both named in the comment, and the alternative was a second
+row type for a field that is undefined for a few hundred milliseconds.

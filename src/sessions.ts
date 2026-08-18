@@ -260,7 +260,28 @@ export function buildGroups(options: {
 	const rowsFor = (path: string, stored: readonly StoredSession[], switchIndex?: number) => {
 		// Undefined `root` is browser mode's single fixture, which belongs to
 		// whichever root the window is in — there is only ever one.
-		const open = options.live.filter((session) => (session.root ?? workspace.path) === path);
+		const here = options.live.filter((session) => (session.root ?? workspace.path) === path);
+		/*
+		 * **An empty name means "not known yet", and it is filled from the row
+		 * this conversation was opened from** — ticket 59.
+		 *
+		 * A live session has no name until its history has replayed, which is a
+		 * file read. For that moment the row read `New session`, which is the
+		 * label for a conversation nobody has said anything in — so clicking a
+		 * conversation renamed it to something it was not, and then back.
+		 *
+		 * `New session` survives for the case it was written for: a conversation
+		 * that is genuinely new has no stored row to borrow from.
+		 */
+		const open = here.map((session) =>
+			session.name
+				? session
+				: {
+						...session,
+						name:
+							stored.find((entry) => entry.id === session.storedPath)?.name ?? 'New session',
+					}
+		);
 		return [
 			...open,
 			...stored
