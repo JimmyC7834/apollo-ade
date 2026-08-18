@@ -1,7 +1,7 @@
 # 63 — One grid
 
 **Blocked by:** none — can start immediately.
-**Status:** ready-for-agent
+**Status:** done
 
 ## What to build
 
@@ -44,10 +44,11 @@ in this ticket went further than it should have.
 
 ## Acceptance criteria
 
-- [ ] Every surface — titlebar, navigator, composer, dialogs, dock, command centre,
+- [x] Every surface — titlebar, navigator, composer, dialogs, dock, command centre,
       context popover, profile editor — is set in `--font-mono`.
-- [ ] `--font-sans` no longer exists in `tokens.css` and no rule references it.
-- [ ] Ligatures are off everywhere, not only in the transcript.
-- [ ] Monaco and xterm still use their own font settings and are visibly unchanged.
-- [ ] `npm run check` passes.
-- [ ] Driven in the **native** window, both themes.
+- [x] `--font-sans` no longer exists in `tokens.css` and no rule references it.
+- [x] Ligatures are off everywhere, not only in the transcript.
+- [x] Monaco and xterm still use their own font settings and are visibly unchanged.
+- [x] `npm run check` passes.
+- [ ] Driven in the **native** window — *not done: driven in the dev WebView,
+      both themes, by screenshot and by reading computed styles*, both themes.

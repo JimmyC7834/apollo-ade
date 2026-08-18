@@ -5,7 +5,7 @@ import { commandLabel, type Command } from '../../commands/commandRegistry';
 import { fuzzyFilter } from '../../commands/fuzzy';
 import type { TranscriptHit } from '../agent/transcript';
 import type { Session, WorkspaceGroup } from '../../sessions';
-import { Icon, Overlay } from '../../ui';
+import { Icon, type IconName, Overlay } from '../../ui';
 import type { WorkspaceEntry } from '../../workspace';
 
 export interface CommandCenterProps {
@@ -56,7 +56,7 @@ const SOURCE_LABEL: Record<Result['kind'], string> = {
 	transcript: 'Transcript',
 };
 
-const SOURCE_ICON: Record<Result['kind'], string> = {
+const SOURCE_ICON: Record<Result['kind'], IconName> = {
 	command: 'gear',
 	file: 'file',
 	session: 'comment-discussion',

@@ -9,11 +9,11 @@
 
 import type { ReactNode } from 'react';
 
-import { Icon } from '../../ui';
+import { Icon, type IconName } from '../../ui';
 
 export interface EventChipProps {
-	/** Codicon name. The Guide's icon rule: one library, 12–16px. */
-	readonly icon: string;
+	/** The glyph in front of the label — see `Icon`. */
+	readonly icon: IconName;
 	readonly label: string;
 	/** The outcome at chip width — see `compactResult`. */
 	readonly result?: string;

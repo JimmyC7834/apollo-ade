@@ -19,6 +19,8 @@
  * Replace surface. Giving them ids rather than a boolean apiece is what lets
  * the dock hold "whatever is pinned" as a list instead of a set of flags.
  */
+import type { IconName } from './ui/Icon';
+
 export type ToolArtifactKind =
 	| 'terminal'
 	| 'changes'
@@ -30,8 +32,8 @@ export type ToolArtifactKind =
 export interface ArtifactRef {
 	readonly id: string;
 	readonly title: string;
-	/** Codicon name. The Guide's icon rule: one library, 12–16px. */
-	readonly icon: string;
+	/** The glyph this artifact is drawn with — see `Icon`. */
+	readonly icon: IconName;
 }
 
 export const TOOL_ARTIFACTS: Record<ToolArtifactKind, ArtifactRef> = {

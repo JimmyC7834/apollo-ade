@@ -1,7 +1,7 @@
-import { Icon } from './Icon';
+import { Icon, type IconName } from './Icon';
 
 export interface IconButtonProps {
-	readonly icon: string;
+	readonly icon: IconName;
 	/** Required: an icon-only control is unusable without an accessible name. */
 	readonly label: string;
 	readonly onClick: () => void;

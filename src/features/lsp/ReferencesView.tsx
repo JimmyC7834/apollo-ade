@@ -34,7 +34,7 @@ export function ReferencesView({ symbol, references, onOpen }: ReferencesViewPro
 					icon: 'file',
 					expandable: true,
 				},
-				...file.references.map((reference, index) => ({
+				...file.references.map((reference, index): TreeNode => ({
 					// Two references can share a line, so the index is what keeps
 					// rows distinct — the same rule the problems tree follows.
 					id: `${file.id}#${index}`,

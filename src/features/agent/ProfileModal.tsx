@@ -97,7 +97,7 @@ function draftFrom(profile: Profile | undefined): Draft {
  * One selection row.
  *
  * **No native checkbox, and real checkbox semantics anyway.** The Guide asks for
- * a bare row with a Codicon check when it is on and nothing when it is off — a
+ * a bare row with a check glyph when it is on and nothing when it is off — a
  * state a sighted reader can see and nobody else can. Radix's Checkbox gives the
  * row `role="checkbox"`, `aria-checked` and Space to toggle, so the visual is
  * the Guide's and the semantics are the platform's. A click handler on a `div`

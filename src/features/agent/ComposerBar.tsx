@@ -71,7 +71,7 @@ function ContextRing({ usage, spent }: { readonly usage: Usage | undefined; read
 				className={meter?.warn ? 'ide-bar-button ide-bar-button-warn' : 'ide-bar-button'}
 				aria-label={label}
 			>
-				<svg className="ide-ring" viewBox="0 0 18 18" width="18" height="18" aria-hidden="true">
+				<svg className="ide-ring" viewBox="0 0 18 18" width="13" height="13" aria-hidden="true">
 					<circle className="ide-ring-track" cx="9" cy="9" r={RING_RADIUS} />
 					<circle
 						className="ide-ring-fill"

@@ -153,13 +153,12 @@ export function WorkbenchTree({
 
 	return (
 		<div className="ide-tree" role="tree" aria-label={label} ref={listRef}>
-			{rows.map(({ node, depth }, index) => {
+			{rows.map(({ node, depth, guides }, index) => {
 				const isOpen = expanded.has(node.id);
 				return (
 					<div
 						key={node.id}
 						className={`ide-tree-row${node.id === activeId ? ' ide-tree-row-active' : ''}`}
-						style={{ paddingLeft: `${depth * 12 + 6}px` }}
 						role="treeitem"
 						tabIndex={node.id === tabbableId ? 0 : -1}
 						aria-level={depth + 1}
@@ -179,6 +178,21 @@ export function WorkbenchTree({
 							onContextMenu(node.id, event.clientX, event.clientY);
 						}}
 					>
+						{/*
+						 * The indent, and the guides drawn down it: one cell per column,
+						 * `data-on` where the branch carries on below this row. Cells
+						 * rather than padding because a guide has to be a rule — see
+						 * `.ide-tree-guide` in `App.css` for why not `│`.
+						 */}
+						{guides.map((on, column) => (
+							<span
+								key={column}
+								className="ide-tree-guide"
+								aria-hidden={true}
+								data-on={on ? '' : undefined}
+								data-connector={column === guides.length - 1 ? '' : undefined}
+							/>
+						))}
 						<span className="ide-tree-twistie">
 							{node.expandable ? (
 								<Icon name={isOpen ? 'chevron-down' : 'chevron-right'} />

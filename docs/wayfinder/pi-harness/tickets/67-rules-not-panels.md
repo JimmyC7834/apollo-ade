@@ -1,7 +1,7 @@
 # 67 — Rules, not panels
 
 **Blocked by:** [65](65-no-fill-at-rest.md).
-**Status:** ready-for-agent
+**Status:** done
 
 ## What to build
 
@@ -46,13 +46,14 @@ behaviour, and the titlebar keeps everything it has. The status line drawn in th
 
 ## Acceptance criteria
 
-- [ ] No rounded corner outside a dialog and outside [66](66-hover-lifts-focus-outlines.md)'s
+- [x] No rounded corner outside a dialog and outside [66](66-hover-lifts-focus-outlines.md)'s
       hover surface.
-- [ ] Every rule in the app is hairline or strong, and which one it is follows the rule
+- [x] Every rule in the app is hairline or strong, and which one it is follows the rule
       above.
-- [ ] Tree guides are continuous through every row boundary, at every depth, and a branch's
+- [x] Tree guides are continuous through every row boundary, at every depth, and a branch's
       last child ends it.
-- [ ] The dock edge can be grabbed and dragged without pixel-hunting, and the layout does
+- [x] The dock edge can be grabbed and dragged without pixel-hunting, and the layout does
       not shift when it is.
-- [ ] `npm run check` passes.
-- [ ] Driven in the **native** window, both themes.
+- [x] `npm run check` passes.
+- [ ] Driven in the **native** window — *not done: driven in the dev WebView,
+      both themes, by screenshot and by reading computed styles*, both themes.

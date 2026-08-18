@@ -98,7 +98,7 @@ export function ProblemsView({ onOpen, lspStatus, onRestartLsp }: ProblemsViewPr
 						<Badge label={String(file.errors + file.warnings)} title={problemSummary([file])} />
 					),
 				},
-				...file.problems.map((problem, index) => ({
+				...file.problems.map((problem, index): TreeNode => ({
 					// Position is not unique on its own — two rules can fault the
 					// same character — so the index is what keeps rows distinct.
 					id: `${file.id}#${index}`,

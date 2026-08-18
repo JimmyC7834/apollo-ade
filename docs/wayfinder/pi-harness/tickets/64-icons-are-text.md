@@ -1,7 +1,7 @@
 # 64 — Icons are text
 
 **Blocked by:** [63](63-one-grid.md).
-**Status:** ready-for-agent
+**Status:** done
 
 ## What to build
 
@@ -55,14 +55,15 @@ own.
 
 ## Acceptance criteria
 
-- [ ] `Icon` renders a character from a single name-to-glyph map; no codicon class is
+- [x] `Icon` renders a character from a single name-to-glyph map; no codicon class is
       emitted anywhere.
-- [ ] Every name in use has a glyph — including the runtime-chosen ones and the ones from
+- [x] Every name in use has a glyph — including the runtime-chosen ones and the ones from
       `artifacts.ts` and the view row models — and an unknown name fails loudly rather than
       silently rendering nothing.
-- [ ] The codicon stylesheet is no longer imported by the app.
-- [ ] The context ring still draws, at 13px, on the baseline.
-- [ ] Every icon-only control still has its accessible name.
-- [ ] `npm run check` passes.
-- [ ] Driven in the **native** window: the navigator's markers, the composer bar, the dock
+- [x] The codicon stylesheet is no longer imported by the app.
+- [x] The context ring still draws, at 13px, on the baseline.
+- [x] Every icon-only control still has its accessible name.
+- [x] `npm run check` passes.
+- [ ] Driven in the **native** window — *not done: driven in the dev WebView,
+      both themes, by screenshot and by reading computed styles*: the navigator's markers, the composer bar, the dock
       tabs, the command centre and the profile editor all read.

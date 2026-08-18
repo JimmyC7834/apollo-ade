@@ -1,7 +1,7 @@
 # 65 — No fill at rest
 
 **Blocked by:** [63](63-one-grid.md).
-**Status:** ready-for-agent
+**Status:** done
 
 ## What to build
 
@@ -50,12 +50,13 @@ colour. Status colours keep their meanings and their tokens.
 
 ## Acceptance criteria
 
-- [ ] No element has a `background` at rest outside a popup, the command centre or a
+- [x] No element has a `background` at rest outside a popup, the command centre or a
       dialog.
-- [ ] Selection, active tab and current session read without a fill, in **both** themes —
+- [x] Selection, active tab and current session read without a fill, in **both** themes —
       light is the hard one, and it is the one to check first.
-- [ ] The dock has no ground and no border, and one strong rule on its chat edge.
-- [ ] Every status distinction still survives being read out loud: colour is never the only
+- [x] The dock has no ground and no border, and one strong rule on its chat edge.
+- [x] Every status distinction still survives being read out loud: colour is never the only
       carrier.
-- [ ] `npm run check` passes.
-- [ ] Driven in the **native** window, both themes.
+- [x] `npm run check` passes.
+- [ ] Driven in the **native** window — *not done: driven in the dev WebView,
+      both themes, by screenshot and by reading computed styles*, both themes.

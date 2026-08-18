@@ -19,13 +19,64 @@ body {
 	overflow: hidden;
 	background: var(--background);
 	color: var(--foreground);
-	font-family: var(--font-sans);
+	/*
+	 * One face, one grid, no ligatures. The whole application is a terminal, so
+	 * there is no second family to fall back to and `!=` stays two columns wide.
+	 */
+	font-family: var(--font-mono);
+	font-variant-ligatures: none;
 	font-size: var(--text-base);
 }
 
 :focus-visible {
 	outline: var(--ring-width) solid var(--ring);
 	outline-offset: -1px;
+}
+
+/*
+ * Square, everywhere, one rule. Stated as a blanket rather than element by
+ * element because the claim really is that broad: nothing in this application
+ * is a rounded box, and a list would only be a list of exceptions waiting to be
+ * forgotten when the next surface is added.
+ *
+ * Two carve-outs, both in the `:not()` because there is no overriding a radius
+ * back — `revert` goes to the user-agent value, not to the author rule this one
+ * displaced, so a second rule would have to restate every radius by hand and
+ * then keep up with them:
+ *
+ * One carve-out, in the `:not()` because there is no overriding a radius back:
+ * **dialogs**. A modal is a window, and a window has corners.
+ *
+ * `:root` is what gives it the weight to beat the class rules it displaces. The
+ * one thing that outranks it is the hover surface, which restates the radius at
+ * a higher weight further down — the pointer is deliberately *not* excluded
+ * here, because excluding it would round every ancestor of the pointer too.
+ *
+ * The list is boxes. A span drawn as a dot or a marker is a shape rather than a
+ * box and keeps whatever radius makes it that shape.
+ */
+:root
+	:is(p, div, pre, code, details, summary, button, textarea, input, li, ul, ol):not(
+		dialog,
+		dialog *
+	) {
+	border-radius: 0;
+}
+
+/*
+ * Icons are characters now (see `Icon.tsx`), so they need what a codicon's
+ * stylesheet used to give them: one column of their own, so a row of them lines
+ * up whether the glyph inside is `+` or `⏎`, and no selection, because an icon
+ * is not text you copy.
+ */
+.ide-icon {
+	flex: none;
+	display: inline-block;
+	/* `min-width`, not `width`: a glyph that falls back to another face can be
+	   wider than a cell, and pushing its neighbour is better than sitting on it. */
+	min-width: 1ch;
+	text-align: center;
+	user-select: none;
 }
 
 /*
@@ -119,7 +170,6 @@ body {
 .ide-region-sidebar {
 	flex: none;
 	max-width: calc(100% - var(--region-min));
-	background: var(--sidebar);
 }
 
 .ide-region-main {
@@ -157,7 +207,6 @@ body {
 .ide-region-panel {
 	flex: none;
 	max-height: calc(100% - var(--region-min));
-	background: var(--card);
 }
 
 /* Titlebar */
@@ -167,8 +216,7 @@ body {
 	align-items: center;
 	flex: none;
 	height: var(--titlebar-height);
-	background: var(--sidebar);
-	border-bottom: 1px solid var(--border);
+	border-bottom: 1px solid var(--border-strong);
 }
 
 /*
@@ -191,9 +239,9 @@ body {
 	cursor: pointer;
 }
 
-.ide-titlebar-menu:hover,
 .ide-titlebar-menu[data-state='open'] {
-	background: var(--accent);
+	color: var(--foreground);
+	font-weight: 700;
 }
 
 .ide-context-menu-item-note {
@@ -267,8 +315,9 @@ body {
 	cursor: pointer;
 }
 
-.ide-icon-button:hover {
-	background: var(--accent);
+/* Danger is a colour, not a fill. The lift below is the same as any button's. */
+.ide-icon-button-danger:hover {
+	color: var(--destructive);
 }
 
 .ide-icon-button[aria-pressed='false'] {
@@ -280,20 +329,10 @@ body {
 	cursor: default;
 }
 
-.ide-icon-button:disabled:hover {
-	background: transparent;
-}
-
 /* Each window control is exactly as wide as the titlebar is tall. */
 .ide-window-controls .ide-icon-button {
 	width: var(--titlebar-height);
 	height: var(--titlebar-height);
-	border-radius: 0;
-}
-
-.ide-icon-button-danger:hover {
-	background: var(--destructive);
-	color: var(--destructive-foreground);
 }
 
 .ide-button {
@@ -306,18 +345,10 @@ body {
 	cursor: pointer;
 }
 
-.ide-button:hover {
-	background: var(--accent);
-}
-
 /* Disabled is a semantic role, so it renders the same wherever a button is. */
 .ide-button:disabled {
 	color: var(--foreground-subtle);
 	cursor: default;
-}
-
-.ide-button:disabled:hover {
-	background: transparent;
 }
 
 /* Pane */
@@ -364,25 +395,42 @@ body {
 
 /* Sashes — quiet at rest, visible on hover and focus. */
 
+/*
+ * The sash: 1px of rule inside 9px of grab, pulled back by its own negative
+ * margin so the extra width costs no layout. A 1px drag target is a rule you
+ * can see and cannot use, which is the bug this shape exists to avoid.
+ */
 .ide-sash {
 	flex: none;
-	background: transparent;
+	position: relative;
+	/* Above its neighbours, since the grab area overhangs both of them. */
+	z-index: 1;
 	transition: background 80ms linear;
 }
 
 .ide-sash-vertical {
 	width: var(--sash-size);
+	margin-inline: calc((var(--sash-size) - 1px) / -2);
 	cursor: col-resize;
+	background: linear-gradient(to right, transparent 4px, var(--border) 4px 5px, transparent 5px);
 }
 
 .ide-sash-horizontal {
 	height: var(--sash-size);
+	margin-block: calc((var(--sash-size) - 1px) / -2);
 	cursor: row-resize;
+	background: linear-gradient(to bottom, transparent 4px, var(--border) 4px 5px, transparent 5px);
 }
 
-.ide-sash:hover,
-.ide-sash:focus-visible {
-	background: var(--ring);
+.ide-sash-vertical:hover,
+.ide-sash-vertical:focus-visible {
+	background: linear-gradient(to right, transparent 4px, var(--ring) 4px 5px, transparent 5px);
+	outline: none;
+}
+
+.ide-sash-horizontal:hover,
+.ide-sash-horizontal:focus-visible {
+	background: linear-gradient(to bottom, transparent 4px, var(--ring) 4px 5px, transparent 5px);
 	outline: none;
 }
 
@@ -400,22 +448,72 @@ body {
 
 .ide-tree-row {
 	display: flex;
-	align-items: center;
-	gap: var(--space-2);
+	align-items: stretch;
 	height: var(--row-height);
+	padding-left: var(--space-1);
 	padding-right: var(--space-3);
 	white-space: nowrap;
 	cursor: pointer;
 	user-select: none;
 }
 
-.ide-tree-row:hover {
-	background: var(--accent);
+/* Everything after the guides is centred on the line; the guides are not, since
+   they have to reach the row's own top and bottom edges to join up. */
+.ide-tree-row > :not(.ide-tree-guide) {
+	align-self: center;
+	margin-left: var(--space-2);
 }
 
+/*
+ * Tree guides, drawn as rules.
+ *
+ * The obvious implementation is `│` and `├─`, and it does not work: a
+ * box-drawing character is glyph-height and a row is line-height, so every row
+ * boundary shows a gap and the tree reads as a column of dashes. Drawn as 1px
+ * borders on a cell that stretches to the row's full height they are continuous
+ * by construction — adjacent rows cannot leave a seam.
+ *
+ * One cell per column, and it is also the indent: 12px each, so the geometry
+ * that used to be a `padding-left` calculation is now the guides themselves.
+ */
+.ide-tree-guide {
+	position: relative;
+	flex: none;
+	width: 12px;
+}
+
+/* The column carries on below this row. */
+.ide-tree-guide[data-on]::before {
+	content: '';
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: 0;
+	border-left: 1px solid var(--border);
+}
+
+/*
+ * The connector, on the innermost cell only: down to the middle of the row and
+ * then across to the label. On a row whose branch continues, the rule above has
+ * already drawn the rest of the line; on a last child there is nothing below
+ * the turn, which is exactly how a branch ends.
+ */
+.ide-tree-guide[data-connector]::after {
+	content: '';
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: 7px;
+	height: 50%;
+	border-left: 1px solid var(--border);
+	border-bottom: 1px solid var(--border);
+}
+
+/* Selected is brighter, not filled. The marker `Icon`s beside it and the
+   `aria-selected` the row already carries are what say so out loud. */
 .ide-tree-row-active {
-	background: var(--selected);
-	color: var(--selected-foreground);
+	color: var(--foreground);
+	font-weight: 600;
 }
 
 .ide-tree-twistie {
@@ -491,7 +589,6 @@ body {
 	padding: var(--space-2) var(--space-3);
 	border: 1px solid var(--input-border);
 	border-radius: var(--radius);
-	background: var(--input);
 	color: var(--input-foreground);
 	font: inherit;
 }
@@ -526,8 +623,6 @@ body {
 	min-width: 16px;
 	height: 16px;
 	padding: 0 var(--space-2);
-	border-radius: 8px;
-	background: var(--accent);
 	color: var(--muted-foreground);
 	font-size: var(--text-small);
 	line-height: 1;
@@ -578,7 +673,18 @@ body {
 
 .ide-context-menu-item:hover,
 .ide-context-menu-item[data-highlighted] {
-	background: var(--accent);
+	/*
+	 * A menu row inverts rather than lifts: it is already on a floating
+	 * surface, and a second elevation on top of the first reads as a bug.
+	 *
+	 * `--primary` rather than the restyle's `--accent`, because the token names
+	 * do not line up: `--accent` in this app is a surface tint, and inverting
+	 * onto it would be invisible. `--primary`/`--primary-foreground` is the
+	 * pair that actually inverts, and it moves with the theme, which is what
+	 * the rule was asking for.
+	 */
+	background: var(--primary);
+	color: var(--primary-foreground);
 	/* Radix moves highlight with the pointer *and* the arrow keys, so the row
 	   background is the focus indicator; a second ring on top of it reads as
 	   two selections. */
@@ -621,8 +727,7 @@ body {
 
 /* Editor strip: boxed tabs on the titlebar surface, VS Code's tab.* colours. */
 .ide-tabs-editor {
-	background: var(--sidebar);
-	border-bottom: 1px solid var(--border);
+	border-bottom: 1px solid var(--border-strong);
 }
 
 /*
@@ -638,7 +743,6 @@ body {
 }
 
 .ide-tabs-panel .ide-tab-active {
-	background: transparent;
 	border-bottom-color: var(--primary);
 }
 
@@ -660,7 +764,6 @@ body {
 }
 
 .ide-tab-active {
-	background: var(--background);
 	color: var(--foreground);
 }
 
@@ -687,10 +790,6 @@ body {
 .ide-tab-active .ide-tab-close,
 .ide-tab-close:focus-visible {
 	opacity: 1;
-}
-
-.ide-tab-close:hover {
-	background: var(--accent);
 }
 
 /* The unsaved marker takes the close button's place until the tab is hovered. */
@@ -802,7 +901,6 @@ body {
 	border-radius: var(--radius);
 	background: var(--popover);
 	color: var(--foreground);
-	font-family: var(--font-sans);
 	font-size: var(--text-base);
 }
 
@@ -893,7 +991,6 @@ body {
 	padding: var(--space-3);
 	border: 1px solid var(--ring);
 	border-radius: var(--radius);
-	background: var(--background);
 	color: var(--foreground);
 	font: inherit;
 }
@@ -916,8 +1013,7 @@ body {
 }
 
 .ide-quickpick-row-active {
-	background: var(--selected);
-	color: var(--selected-foreground);
+	color: var(--foreground);
 }
 
 .ide-quickpick-label {
@@ -1027,7 +1123,6 @@ body {
 	margin: 0 0 var(--space-4) var(--space-6);
 	padding: var(--space-3) var(--space-4);
 	border-radius: var(--radius-lg);
-	background: var(--accent);
 }
 
 /* Markdown, in both speakers' content. Unboxed: no heading, no avatar, no
@@ -1082,21 +1177,24 @@ body {
 	color: var(--muted-foreground);
 }
 
-.ide-md code {
-	padding: 0 var(--space-1);
-	border-radius: var(--radius);
-	background: var(--muted);
-	font-family: var(--font-mono);
-	font-size: var(--text-small);
+.ide-md :not(pre) > code {
+	color: var(--foreground);
+}
+
+.ide-md :not(pre) > code::before,
+.ide-md :not(pre) > code::after {
+	content: '`';
+	color: var(--foreground-subtle);
 }
 
 /* Its own scroll container, so a long line scrolls the block and never the
    page. The non-shifting rule applies to code as much as to chips. */
 .ide-md pre {
 	margin: 0 0 var(--space-3);
-	padding: var(--space-3);
-	border-radius: var(--radius);
-	background: var(--muted);
+	padding: 0 0 0 var(--space-3);
+	/* A fence is marked by its rule, the same way a quote and a chip's output
+	   are — one device for "this block is not prose", used three times. */
+	border-left: 1px solid var(--border-strong);
 	overflow-x: auto;
 }
 
@@ -1166,8 +1264,6 @@ body {
 	gap: var(--space-2);
 	height: var(--row-height);
 	padding: 0 var(--space-3);
-	border-radius: var(--radius-full);
-	background: var(--muted);
 	list-style: none;
 }
 
@@ -1184,10 +1280,6 @@ body {
 
 .ide-chip > summary::-webkit-details-marker {
 	display: none;
-}
-
-.ide-chip > summary:hover {
-	background: var(--accent);
 }
 
 /* Capped as well as the result is. A tool name looks like a fixed string until
@@ -1214,13 +1306,13 @@ body {
 }
 
 /* The chevron turns; the row does not move. */
-.ide-chip > summary > .codicon-chevron-right {
+.ide-chip > summary > .ide-icon-chevron-right {
 	flex: none;
 	margin-left: auto;
 	transition: transform var(--duration-fast);
 }
 
-.ide-chip[open] > summary > .codicon-chevron-right {
+.ide-chip[open] > summary > .ide-icon-chevron-right {
 	transform: rotate(90deg);
 }
 
@@ -1287,11 +1379,6 @@ body {
 	cursor: pointer;
 }
 
-.ide-agent-undo:hover {
-	background: var(--accent);
-	color: var(--foreground);
-}
-
 /*
  * The undo mark. Shaped like an error — a left rule, unmuted text — because it
  * carries the same weight: everything above it in the turn is no longer true of
@@ -1305,7 +1392,6 @@ body {
 	margin: var(--space-2) 0;
 	padding: var(--space-2) var(--space-3);
 	border-left: 2px solid var(--muted-foreground);
-	background: var(--popover);
 	color: var(--foreground);
 	font-size: var(--text-small);
 }
@@ -1318,7 +1404,6 @@ body {
 	margin: var(--space-2) 0;
 	padding: var(--space-2) var(--space-3);
 	border-left: 2px solid var(--destructive);
-	background: var(--popover);
 	color: var(--foreground);
 }
 
@@ -1341,7 +1426,6 @@ body {
 	border: 1px solid var(--border-strong);
 	border-left: 2px solid var(--ring);
 	border-radius: var(--radius);
-	background: var(--popover);
 }
 
 .ide-agent-approval-title {
@@ -1400,7 +1484,6 @@ body {
 	padding: var(--space-2);
 	border: 1px solid var(--border-strong);
 	border-radius: var(--radius);
-	background: var(--input, var(--popover));
 	color: inherit;
 	font: inherit;
 }
@@ -1428,14 +1511,16 @@ body {
 	padding: var(--space-2);
 	border: 1px solid var(--input-border);
 	border-radius: var(--radius-lg);
-	background: var(--input);
 }
 
-/* Dragging a file over the composer highlights the border *and* the surface —
-   the border alone is a 1px signal for a gesture aimed at the whole box. */
+/* Dragging a file over the composer doubles its border. There is no surface to
+   highlight any more, and 1px is too quiet a signal for a gesture aimed at the
+   whole box. */
 .ide-agent-composer-drag .ide-composer-row {
 	border-color: var(--ring);
-	background: var(--selected);
+	border-width: 2px;
+	/* …and the extra pixel comes out of the padding, so nothing reflows. */
+	padding: calc(var(--space-2) - 1px);
 }
 
 .ide-agent-input {
@@ -1468,20 +1553,21 @@ body {
 	height: var(--control-size);
 	border: none;
 	border-radius: var(--radius);
-	background: var(--primary);
-	color: var(--primary-foreground);
+	background: transparent;
+	/* The one control in the app that used to be a filled block. It is a `⏎`
+	   now, and what makes it the primary action is that it is the only thing on
+	   its line drawn in the intent colour. */
+	color: var(--primary);
 	cursor: pointer;
 }
 
 .ide-composer-send:disabled {
-	background: var(--muted);
-	color: var(--muted-foreground);
+	color: var(--foreground-subtle);
 	cursor: default;
 }
 
 .ide-composer-send-stop {
-	background: var(--destructive);
-	color: var(--destructive-foreground);
+	color: var(--destructive);
 }
 
 /* Draft attachments, above the input. Removable, because an attachment belongs
@@ -1502,8 +1588,6 @@ body {
 	max-width: 100%;
 	height: var(--row-height);
 	padding: 0 var(--space-1) 0 var(--space-3);
-	border-radius: var(--radius-full);
-	background: var(--accent);
 	font-size: var(--text-small);
 }
 
@@ -1562,19 +1646,14 @@ body {
 	cursor: pointer;
 }
 
-.ide-bar-button:hover:not(:disabled) {
-	background: var(--accent);
-	color: var(--foreground);
-}
-
 .ide-bar-button:disabled {
 	color: var(--foreground-subtle);
 	cursor: default;
 }
 
 .ide-bar-button-on {
-	background: var(--accent);
 	color: var(--foreground);
+	font-weight: 600;
 }
 
 .ide-bar-button-warn {
@@ -1708,7 +1787,6 @@ body {
 	padding: var(--space-2) var(--space-3);
 	border: 1px solid var(--input-border);
 	border-radius: var(--radius);
-	background: var(--input);
 	color: var(--input-foreground);
 	font: inherit;
 }
@@ -1720,8 +1798,8 @@ body {
 /* A read-only field that looks editable is a field people type into. The name
    is read-only while editing — renaming would leave the old profile behind. */
 .ide-input[readonly] {
-	background: var(--muted);
 	color: var(--muted-foreground);
+	border-style: dashed;
 }
 
 .ide-fieldset {
@@ -1767,10 +1845,6 @@ body {
 	color: inherit;
 	font: inherit;
 	cursor: pointer;
-}
-
-.ide-nav-row:hover {
-	background: var(--accent);
 }
 
 .ide-nav-row-value {
@@ -1835,10 +1909,6 @@ body {
 	cursor: pointer;
 }
 
-.ide-select-row:hover {
-	background: var(--accent);
-}
-
 .ide-select-label {
 	display: flex;
 	flex-direction: column;
@@ -1873,7 +1943,6 @@ body {
 	overflow: hidden;
 	border: 1px solid var(--border);
 	border-radius: var(--radius-lg);
-	background: var(--card);
 }
 
 /* Previous, path and Close share one compact bar. */
@@ -1934,10 +2003,6 @@ body {
 	cursor: pointer;
 }
 
-.ide-context-explorer-open:hover {
-	background: var(--accent);
-}
-
 .ide-context-explorer-name {
 	overflow: hidden;
 	text-overflow: ellipsis;
@@ -1954,16 +2019,17 @@ body {
  * already at the bottom of the panel, and an absolutely positioned popup would
  * need a stacking rule of its own for the one case it improves. Below the input
  * it opened over the bottom bar, and at the foot of the window over nothing.
+ *
+ * Being in flow is also why it has no ground and no shadow: nothing shows
+ * through a thing that is not on top of anything. Its rows still invert like a
+ * menu's, because that is what it is.
  */
 .ide-agent-completions {
 	max-height: 12rem;
 	margin: 0 0 var(--space-2);
 	padding: var(--space-1);
 	overflow-y: auto;
-	border: 1px solid var(--border);
-	border-radius: var(--radius-lg);
-	background: var(--popover);
-	box-shadow: var(--shadow-overlay);
+	border: 1px solid var(--border-strong);
 	list-style: none;
 }
 
@@ -1977,10 +2043,10 @@ body {
 	cursor: default;
 }
 
+/* A completion list is a menu, so it inverts like one. */
 .ide-agent-completion-picked {
-	/* The same highlight the quick pick uses; one selected row, one colour. */
-	background: var(--selected);
-	color: var(--selected-foreground);
+	background: var(--primary);
+	color: var(--primary-foreground);
 }
 
 .ide-agent-completion-value {
@@ -2243,11 +2309,6 @@ body {
 	letter-spacing: 0.04em;
 }
 
-.ide-navigator-header:hover,
-.ide-navigator-row:hover {
-	background: var(--accent);
-}
-
 /*
  * New session on a workspace header, and archive and delete on a session row.
  * Right-aligned, the icon column's width so it lines up with the icons on the
@@ -2295,7 +2356,6 @@ body {
 /* The active session does not use a row background highlight; its marker
    grows instead. */
 .ide-navigator-row[aria-current='true'] {
-	background: transparent;
 	color: var(--foreground);
 }
 
@@ -2399,15 +2459,20 @@ body {
 	flex-direction: column;
 	min-width: 0;
 	min-height: 0;
-	background: var(--card);
 }
 
+/*
+ * No ground and no border: the dock is not a panel beside the app, it is a
+ * column of it — the same move ticket 55 made for the navigator, applied to the
+ * other side of the window. What is left is one strong rule on the edge it
+ * meets chat at, which is the only edge that is a boundary between two things.
+ */
 .ide-dock-right {
-	border-left: 1px solid var(--border);
+	border-left: 1px solid var(--border-strong);
 }
 
 .ide-dock-bottom {
-	border-top: 1px solid var(--border);
+	border-top: 1px solid var(--border-strong);
 }
 
 /* Collapsed: a 32px icon strip on the right, a 32px tab bar at the bottom. */
@@ -2438,11 +2503,6 @@ body {
 	cursor: pointer;
 }
 
-.ide-dock-strip-tab:hover {
-	background: var(--accent);
-	color: var(--foreground);
-}
-
 /*
  * Anchored to the far end — bottom of the right strip, right of the bottom bar
  * — and `auto` margin rather than a spacer element, because a spacer is the
@@ -2467,8 +2527,9 @@ body {
 }
 
 /*
- * The resize target: invisible, 8px, on the edge that faces chat. A real
- * element rather than a border, because a border cannot take a pointer capture.
+ * The resize target: invisible, the same grab width the sashes use, on the edge
+ * that faces chat. A real element rather than a border, because a border cannot
+ * take a pointer capture.
  */
 .ide-dock-resize {
 	position: absolute;
@@ -2479,16 +2540,16 @@ body {
 .ide-dock-right .ide-dock-resize {
 	top: 0;
 	bottom: 0;
-	left: -4px;
-	width: 8px;
+	left: calc((var(--sash-size) - 1px) / -2);
+	width: var(--sash-size);
 	cursor: col-resize;
 }
 
 .ide-dock-bottom .ide-dock-resize {
 	left: 0;
 	right: 0;
-	top: -4px;
-	height: 8px;
+	top: calc((var(--sash-size) - 1px) / -2);
+	height: var(--sash-size);
 	cursor: row-resize;
 }
 
@@ -2499,7 +2560,7 @@ body {
 	align-items: stretch;
 	flex: none;
 	height: var(--tabbar-height);
-	border-bottom: 1px solid var(--border);
+	border-bottom: 1px solid var(--border-strong);
 	overflow-x: auto;
 	overflow-y: hidden;
 }
@@ -2530,7 +2591,6 @@ body {
 
 .ide-dock-tab-active .ide-dock-tab-label {
 	border-bottom-color: var(--primary);
-	background: var(--background);
 	color: var(--foreground);
 }
 
@@ -2563,10 +2623,6 @@ body {
 .ide-dock-tab:hover .ide-dock-tab-close,
 .ide-dock-tab-close:focus-visible {
 	display: inline-flex;
-}
-
-.ide-dock-tab-close:hover {
-	background: var(--accent);
 }
 
 .ide-dock-body {
@@ -2677,65 +2733,223 @@ body {
 .ide-quickpick-source {
 	flex: none;
 	padding: 0 var(--space-2);
-	border-radius: var(--radius);
-	background: var(--muted);
 	color: var(--muted-foreground);
 	font-size: var(--text-small);
 }
 
 /*
- * ── The transcript, skinned as a TUI ─────────────────────────────────────────
+ * ── Two weights of rule, and each means something ────────────────────────────
+ *
+ * **Hairline** (`--border`) is a division *inside* one thing: a turn from the
+ * next turn, a group header from its rows, a pane from its footer.
+ *
+ * **Strong** (`--border-strong`) is a boundary *between two things*: chat and
+ * the dock, an input's box, a tab strip's underline.
+ *
+ * Anything that is neither gets no rule at all. Space is a separator too, and
+ * it is the cheaper one.
+ *
+ * The declarations live with the things they belong to; this note is here so
+ * that the next person choosing between the two has the question already asked.
+ */
+
+/*
+ * ── Pointing at things ───────────────────────────────────────────────────────
+ *
+ * Everything in this application is text until you point at it. What happens
+ * then is one rule, and the rule is about *surfaces*:
+ *
+ * **Elevation belongs to a surface, not to a row.** A row on the flat page
+ * lifts a pixel onto a small card. A row on something that already floats — the
+ * navigator, a menu, the command centre — does not lift; it brightens and takes
+ * a `>` in its gutter. Two elevations for one decision reads as a bug, which is
+ * why this is a rule rather than a list of cases.
+ *
+ * Two consequences worth stating, because they look like omissions:
+ *
+ * - **The radius lives here and nowhere else.** Nothing is rounded at rest,
+ *   because after ticket 65 nothing at rest is a box. `border-radius` therefore
+ *   belongs to the thing that floats, and the transcript's blanket
+ *   `border-radius: 0` stays true exactly as written.
+ * - **Buttons lift and take no marker.** A `>` in front of `Save` reads as a
+ *   bullet, not as a cursor. The marker is for rows, which are places you are
+ *   going.
+ *
+ * Focus takes the lift *and* the outline. The lift alone, with no pointer to
+ * explain it, reads as a glitch; the outline is what says the keyboard put it
+ * there. The global `:focus-visible` rule at the top of this file draws it.
+ */
+
+.ide-tree-row,
+.ide-context-explorer-open,
+.ide-dock-strip-tab,
+.ide-chip > summary,
+.ide-agent-undo,
+.ide-button,
+.ide-icon-button,
+.ide-bar-button,
+.ide-titlebar-menu,
+.ide-tab-close,
+.ide-dock-tab-close {
+	transition:
+		transform var(--duration-fast),
+		background var(--duration-fast),
+		box-shadow var(--duration-fast),
+		color var(--duration-fast);
+}
+
+.ide-tree-row:hover,
+.ide-context-explorer-open:hover,
+.ide-dock-strip-tab:hover,
+.ide-chip > summary:hover,
+.ide-agent-undo:hover,
+.ide-button:hover:not(:disabled),
+.ide-icon-button:hover:not(:disabled),
+.ide-bar-button:hover:not(:disabled),
+.ide-titlebar-menu:hover,
+.ide-tab-close:hover,
+.ide-dock-tab-close:hover,
+.ide-tree-row:focus-visible,
+.ide-context-explorer-open:focus-visible,
+.ide-dock-strip-tab:focus-visible,
+.ide-chip > summary:focus-visible,
+.ide-agent-undo:focus-visible,
+.ide-button:focus-visible,
+.ide-icon-button:focus-visible,
+.ide-bar-button:focus-visible,
+.ide-titlebar-menu:focus-visible,
+.ide-tab-close:focus-visible,
+.ide-dock-tab-close:focus-visible {
+	/* `background-color`, not `background`: the shorthand resets background
+	   *image* too, and things that draw one — a tree row's guides — must not
+	   lose their structure the moment they are pointed at. */
+	background-color: var(--card);
+	transform: translateY(-1px);
+	/* The overlay shadow, reused rather than reinvented: a hover surface and a
+	   popover are floating the same distance off the page. */
+	box-shadow: var(--shadow-overlay);
+}
+
+/*
+ * The one radius in the application, restated at a weight that beats the square
+ * blanket at the top of this file. Colour is deliberately *not* set here: a
+ * `Delete` in red has to stay red under the pointer, which is the moment it
+ * matters most, and brightening it would be the fill coming back by another
+ * route.
+ */
+:root
+	:is(
+		.ide-tree-row,
+		.ide-context-explorer-open,
+		.ide-dock-strip-tab,
+		.ide-chip > summary,
+		.ide-agent-undo,
+		.ide-button,
+		.ide-icon-button,
+		.ide-bar-button,
+		.ide-titlebar-menu,
+		.ide-tab-close,
+		.ide-dock-tab-close
+	):is(:hover, :focus-visible) {
+	border-radius: var(--radius);
+}
+
+/*
+ * A row on a floating surface. No lift, and a marker instead — in a gutter that
+ * is the same width empty as it is full, so nothing moves sideways when the
+ * pointer or the keyboard arrives.
+ *
+ * Collapsed, the navigator is one glyph wide and has no label to point at, so
+ * the gutter is only there once it is open.
+ */
+.ide-navigator-expanded .ide-navigator-header::before,
+.ide-navigator-expanded .ide-navigator-row::before,
+.ide-quickpick-row::before {
+	content: '';
+	flex: none;
+	display: inline-block;
+	width: 2ch;
+	color: var(--primary);
+}
+
+.ide-navigator-expanded .ide-navigator-header:hover::before,
+.ide-navigator-expanded .ide-navigator-header:focus-visible::before,
+.ide-navigator-expanded .ide-navigator-row:hover::before,
+.ide-navigator-expanded .ide-navigator-row:focus-visible::before,
+.ide-quickpick-row:hover::before,
+.ide-quickpick-row-active::before {
+	content: '>';
+}
+
+.ide-navigator-header:hover,
+.ide-navigator-row:hover,
+.ide-quickpick-row:hover,
+.ide-nav-row:hover,
+.ide-select-row:hover {
+	color: var(--foreground);
+}
+
+/* A lift is motion, and motion is exactly what this preference is about. The
+   brightness and the marker carry the whole meaning without it. */
+@media (prefers-reduced-motion: reduce) {
+	.ide-tree-row,
+	.ide-context-explorer-open,
+	.ide-dock-strip-tab,
+	.ide-chip > summary,
+	.ide-agent-undo,
+	.ide-button,
+	.ide-icon-button,
+	.ide-bar-button,
+	.ide-titlebar-menu,
+	.ide-tab-close,
+	.ide-dock-tab-close {
+		transition: none;
+	}
+
+	.ide-tree-row:hover,
+	.ide-context-explorer-open:hover,
+	.ide-dock-strip-tab:hover,
+	.ide-chip > summary:hover,
+	.ide-agent-undo:hover,
+	.ide-button:hover,
+	.ide-icon-button:hover,
+	.ide-bar-button:hover,
+	.ide-titlebar-menu:hover,
+	.ide-tab-close:hover,
+	.ide-dock-tab-close:hover,
+	.ide-tree-row:focus-visible,
+	.ide-context-explorer-open:focus-visible,
+	.ide-dock-strip-tab:focus-visible,
+	.ide-chip > summary:focus-visible,
+	.ide-agent-undo:focus-visible,
+	.ide-button:focus-visible,
+	.ide-icon-button:focus-visible,
+	.ide-bar-button:focus-visible,
+	.ide-titlebar-menu:focus-visible,
+	.ide-tab-close:focus-visible,
+	.ide-dock-tab-close:focus-visible {
+		transform: none;
+	}
+}
+
+/*
+ * ── The transcript ───────────────────────────────────────────────────────────
  *
  * A restyle and nothing else: not one rule below changes what is in the DOM,
- * only how it reads. The reference is OpenCode's terminal UI, and the three
- * things that actually make that look what it is are all typographic — one
- * monospace grid, square corners everywhere, and *markers* where this app used
- * *surfaces*. So a chip stops being a pill and becomes a dim `* ` line, the
- * prompt stops being a bubble and becomes a rule-bordered block, and nothing
- * inside the conversation has a radius.
+ * only how it reads. The reference is OpenCode's terminal UI.
  *
- * Scoped to `.ide-agent` deliberately. The editor, sidebar and panels are a
- * workbench and go on looking like one; only the conversation reads as a
- * terminal, because the conversation is the one part of this app that is a
- * stream of lines rather than a surface you point at.
- *
- * These rules sit at the end of the file rather than beside the ones they
- * override, because that is what makes the skin removable: delete this block
- * and the workbench styling underneath is untouched and still correct.
+ * **This block used to be a skin**, scoped to `.ide-agent` and written to be
+ * deletable, on the argument that only the conversation reads as a terminal and
+ * the workbench around it goes on looking like a workbench. Slice 42 settled
+ * that argument the other way: the whole application is a terminal now, so the
+ * three things the skin was doing on its own — one grid, square corners,
+ * markers where there were surfaces — are the app's, stated further up this
+ * file, and what is left here is only what is true of the *conversation* and
+ * not of everything else: its markers, its gutters, and its spacing.
  */
 
 .ide-agent {
 	background: var(--background);
-	font-family: var(--font-mono);
-	/* A TUI has no ligatures — a cell is a cell. */
-	font-variant-ligatures: none;
-}
-
-/*
- * Square, everywhere, one rule. Stated as a blanket rather than element by
- * element because the claim really is that broad: inside the conversation
- * there is no rounded thing, and a list would only be a list of exceptions
- * waiting to be forgotten when the next part kind is added.
- *
- * The dialogs are carved out here rather than overridden below, because there
- * is no overriding a radius back: `revert` goes to the user-agent value, not to
- * the author rule this one displaced, so a second rule would have to restate
- * every radius in the modal by hand and then keep up with them. Never applying
- * it is the only version that stays true.
- */
-.ide-agent
-	:is(p, div, pre, code, details, summary, button, textarea, input, li, ul, ol):not(dialog *) {
-	border-radius: 0;
-}
-
-/*
- * And the dialogs keep the workbench's typeface. They are modal workbench
- * surfaces that happen to be mounted inside this subtree — a profile editor is
- * not part of the stream, and setting it in mono would be the skin leaking out
- * of the thing it is meant to skin.
- */
-.ide-agent dialog {
-	font-family: var(--font-sans);
 }
 
 .ide-agent-log {
@@ -2757,7 +2971,6 @@ body {
 	margin: 0 0 var(--space-4);
 	padding: var(--space-2) var(--space-4);
 	border-left: 2px solid var(--primary);
-	background: var(--card);
 }
 
 /*
@@ -2769,10 +2982,6 @@ body {
 .ide-agent .ide-md :is(h1, h2, h3, h4)::before {
 	content: '# ';
 	color: var(--foreground-subtle);
-}
-
-.ide-agent .ide-md :is(code, pre) {
-	background: var(--muted);
 }
 
 /*
@@ -2792,11 +3001,6 @@ body {
 	background: none;
 	color: var(--foreground-subtle);
 	font-size: var(--text-base);
-}
-
-.ide-agent .ide-chip > summary:hover {
-	background: none;
-	color: var(--foreground);
 }
 
 /*
@@ -2829,14 +3033,14 @@ body {
 	color: var(--destructive);
 }
 
-.ide-agent .ide-chip > .codicon:first-child,
-.ide-agent .ide-chip > summary > .codicon:first-child {
+.ide-agent .ide-chip > .ide-icon:first-child,
+.ide-agent .ide-chip > summary > .ide-icon:first-child {
 	display: none;
 }
 
 /* The chevron stays. A disclosure with no affordance is a disclosure nobody
    opens, and that is a real loss to pay for a look. Dimmed, not removed. */
-.ide-agent .ide-chip > summary > .codicon-chevron-right {
+.ide-agent .ide-chip > summary > .ide-icon-chevron-right {
 	color: var(--foreground-subtle);
 }
 
@@ -2875,12 +3079,6 @@ body {
 	border: none;
 	border-left: 2px solid var(--ring);
 	padding: var(--space-3) var(--space-4);
-	background: var(--card);
-}
-
-.ide-agent-undone,
-.ide-agent-error {
-	background: var(--card);
 }
 
 /*
@@ -2898,7 +3096,6 @@ body {
 
 .ide-composer-row {
 	border-color: var(--border-strong);
-	background: var(--card);
 }
 
 .ide-agent-input::placeholder {

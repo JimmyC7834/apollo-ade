@@ -844,11 +844,11 @@ rather than described because the words turned out to be hiding the decisions.
 
 | | | |
 |---|---|---|
-| **[63](tickets/63-one-grid.md)** | One grid | ready-for-agent |
-| **[64](tickets/64-icons-are-text.md)** | Icons are text | ready-for-agent |
-| **[65](tickets/65-no-fill-at-rest.md)** | No fill at rest | ready-for-agent |
-| **[66](tickets/66-hover-lifts-focus-outlines.md)** | Hover lifts, focus outlines | ready-for-agent |
-| **[67](tickets/67-rules-not-panels.md)** | Rules, not panels | ready-for-agent |
+| **[63](tickets/63-one-grid.md)** | One grid | done |
+| **[64](tickets/64-icons-are-text.md)** | Icons are text | done |
+| **[65](tickets/65-no-fill-at-rest.md)** | No fill at rest | done |
+| **[66](tickets/66-hover-lifts-focus-outlines.md)** | Hover lifts, focus outlines | done |
+| **[67](tickets/67-rules-not-panels.md)** | Rules, not panels | done |
 
 63 gates everything. 64, 65 hang off it; 66 and 67 hang off 65, because you cannot see an
 interaction layer until the fills that were doing its job are gone.
@@ -857,6 +857,47 @@ interaction layer until the fills that were doing its job are gone.
 control, or changes what anything does. That constraint is the dev's, stated at the point
 the tickets were written, and it is what keeps a look from becoming a redesign: the app
 that comes out of slice 42 is the app that went in, in different clothes.
+
+**All five landed, in order, and the skin block at the end of `App.css` is no longer a
+skin** — its header now says so. Five things came out differently from the tickets, and
+they are worth having written down:
+
+**The glyph table is larger than "ASCII plus three".** The ticket named `✓`, `⏎` and `■` as
+the characters ASCII could not say; counting the names turned up forty-three, and a handful
+more of them needed the same exemption — a window's maximise box, a theme's half-lit disc,
+a delta for source control. The constraint that held everywhere is the one that actually
+matters: every glyph is one cell wide.
+
+**An unknown icon name is a type error, not a runtime one.** `IconName` is the map's own
+keys, and `TreeNode`, `IconButton`, `EventChip`, `ArtifactRef` and the command centre's
+source table all take it. That is what "fails loudly" turned out to mean here: `tsc` names
+the file and the line, which a thrown error in a WebView does not.
+
+**The inverted menu bar is `--primary`, not `--accent`.** The ticket's token names came
+from the reference HTML, where `--accent` is an accent *hue*. In this app it is a surface
+tint, and inverting onto it would be invisible. `--primary`/`--primary-foreground` is the
+pair that inverts, and it still moves with the theme, which is what the rule was asking
+for.
+
+**The tree's guides are borders on cells, not on nested lists.** The ticket assumed nested
+`<ul>`s; the tree is a flat list of rows with an indent, because that is what a
+roving-tabindex tree wants. So each row draws one 12px cell per column and the cells carry
+the borders — continuous for the same reason nested lists would be, since a cell stretches
+to the row's full height and adjacent rows cannot leave a seam. The indent *is* the cells,
+so the padding calculation went away with them.
+
+`visibleRows` gained one field for this: `guides`, a boolean per column. It was `last` — a
+single "this row ends its branch" flag — until review caught that the flag is only enough
+at depth 1. A last child that is itself a parent has to stop its own column *above its
+children*, which is a fact about the ancestor and not about the row being drawn.
+
+**Both themes were driven in the dev WebView, not in the native window.** Same Chromium,
+same CSS, and the fill audit and the lift were checked by reading computed styles rather
+than by eye. What that does not cover is the native titlebar's own controls.
+
+One thing the slice found and did not fix: `ResizableSeparator` has no caller. The region
+sashes it drew went with the sidebars in slice 40, and the dock brought its own. It is
+styled to the new rule anyway, which is the wrong outcome — it should be deleted.
 
 **Three reference files carry the decisions**, in `docs/`, and the tickets point at them
 rather than restating them:
