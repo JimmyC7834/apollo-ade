@@ -291,6 +291,29 @@ export function WorkbenchController() {
 	 */
 	const [unrestored, setUnrestored] = useState<PersistedState | undefined>(undefined);
 
+	/**
+	 * Which index in Rust's recent list names this root, right now.
+	 *
+	 * **Read at the moment it is spent, never held.** An index is a position in a
+	 * list `remember` reorders, and `choose_workspace` reorders it — so an index
+	 * captured when a row was drawn can name a different folder by the time the
+	 * row is clicked. `bootstrap` learned this first: resolving every index up
+	 * front and spending them one at a time is what put a restored conversation
+	 * in the wrong folder. Ticket 62 gives the two click paths the same rule.
+	 *
+	 * The path goes no further than this function. What crosses to Rust is the
+	 * index, which is the whole of ADR 0002's argument.
+	 */
+	const locate = useCallback(
+		async (root: string): Promise<number | undefined> => {
+			const at = (await provider.recentWorkspaces()).findIndex(
+				(recent) => recent.path === root
+			);
+			return at === -1 ? undefined : at;
+		},
+		[provider]
+	);
+
 	/*
 	 * The conversations this window comes up with, opened as an *action* rather
 	 * than during render — ticket 45. `bootstrap` is idempotent, which is what
@@ -323,13 +346,8 @@ export function WorkbenchController() {
 		 * every index up front and spending them one at a time is what put a
 		 * restored conversation in the wrong folder — see `Locate`.
 		 */
-		sessionSet.bootstrap(takeOpenSessions(), async (root) => {
-			const at = (await provider.recentWorkspaces()).findIndex(
-				(recent) => recent.path === root
-			);
-			return at === -1 ? undefined : at;
-		});
-	}, [announce, provider, selection]);
+		sessionSet.bootstrap(takeOpenSessions(), locate);
+	}, [announce, locate, provider, selection]);
 
 	/*
 	 * Restore the workspace, then the editors that lived in it. The order
@@ -1096,16 +1114,30 @@ export function WorkbenchController() {
 	 *
 	 * @param at Index into the recent list. Undefined is the root you are in.
 	 */
+	/**
+	 * Start a conversation, here or in another recent root.
+	 *
+	 * `root` is a path and `undefined` means *here* — the workspace the window is
+	 * already in, which needs no index and must not be given one: a root the
+	 * window is in but the recent list does not name would otherwise be refused
+	 * a session in the folder it is standing in.
+	 */
 	const newSession = useCallback(
-		async (at?: number) => {
-			announce(
-				at === undefined
-					? 'New session.'
-					: `New session in ${recents[at]?.label ?? 'another folder'}.`
-			);
+		async (root?: string) => {
+			if (root === undefined) {
+				announce('New session.');
+				await sessionSet.open({ fresh: true });
+				return;
+			}
+			const at = await locate(root);
+			if (at === undefined) {
+				announce('That folder is no longer available.');
+				return;
+			}
+			announce(`New session in ${recents[at]?.label ?? 'another folder'}.`);
 			await sessionSet.open({ fresh: true }, at);
 		},
-		[announce, recents]
+		[announce, locate, recents]
 	);
 
 	/**
@@ -1515,10 +1547,23 @@ export function WorkbenchController() {
 			if (!picked.storedPath) {
 				return;
 			}
+			/*
+			 * A row in another root re-resolves its index here rather than trusting
+			 * the one it was drawn with — ticket 62. `switchIndex` says *whether*
+			 * this is elsewhere; `root` says where, and the list is read now.
+			 */
+			let at: number | undefined;
+			if (picked.switchIndex !== undefined) {
+				at = picked.root === undefined ? undefined : await locate(picked.root);
+				if (at === undefined) {
+					announce('That folder is no longer available.');
+					return;
+				}
+			}
 			announce(`Opening ${picked.name}.`);
-			await sessionSet.open({ requested: picked.storedPath }, picked.switchIndex);
+			await sessionSet.open({ requested: picked.storedPath }, at);
 		},
-		[announce, live.sessions]
+		[announce, live.sessions, locate]
 	);
 
 	const groups = useMemo(

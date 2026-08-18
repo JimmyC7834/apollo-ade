@@ -50,7 +50,7 @@ every DOM change for nine seconds through a click on a stored conversation in an
 The breadcrumb confirms the root really moved (`workspace-b / …`), and across the whole
 switch there was **exactly one shape**. No group ever gained, lost or borrowed a row.
 
-## One thing this review found and did not fix
+## One thing this review found and did not fix — **now closed by [62](62-an-index-is-resolved-when-it-is-spent.md)**
 
 **A row's `switchIndex` is an index into the recent list as it was when the row was drawn.**
 Rust's list is reordered by `remember`, which only `choose_workspace` calls — so the window

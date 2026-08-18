@@ -738,6 +738,7 @@ result rather than from charting it, and it is small on purpose.
 | **[59](tickets/59-one-row-while-it-opens.md)** | One row while it opens | **landed** |
 | **[60](tickets/60-one-harness-per-file.md)** | One harness per file | **landed** |
 | **[61](tickets/61-one-store-keyed-by-root.md)** | One store, keyed by root | **landed** |
+| **[62](tickets/62-an-index-is-resolved-when-it-is-spent.md)** | An index is resolved when it is spent | **landed** |
 
 **54 is a bug, not a decision**, and it is on the map only because it will come back: one
 Rust spawn site out of six sets `CREATE_NO_WINDOW`, so everything else the ADE runs flashes
@@ -762,6 +763,14 @@ that is ADR 0002 and it holds throughout.
 **One shortcut is taken deliberately in 56 and is marked in it**: an archived session is
 not browsable from the app. The signal to build the Archived group is someone going looking
 for one, not the symmetry of having a round trip.
+
+**62 closes the instance 61 found and declined to fix**, and it is the same shape a third
+time: a value used against a list it was not read from. A root crosses to Rust as an index
+into the recent list — ADR 0002, and right — but the navigator captured that index when a row
+was *drawn* and spent it when the row was *clicked*, and choosing a folder reorders the list
+in between. `bootstrap` had already been bitten by this and carries a `Locate` callback whose
+comment says so; the lesson had never reached the click paths. They share that callback now,
+and rows carry the root they mean as a path so it can be re-resolved at the moment it is used.
 
 **61 is the third store of state that did not know which root it belonged to**, after the
 terminal's shells in 31 and the profile catalogue in 50. The navigator read from a map of

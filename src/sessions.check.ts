@@ -455,4 +455,35 @@ assert.deepEqual(
 	rows.map((row) => row.id)
 );
 
+/*
+ * Ticket 62 — every row and every group says which root it means, by path.
+ *
+ * `switchIndex` is an index into the recent list *as it stood when the row was
+ * drawn*, and choosing a folder reorders that list. An index is still the only
+ * thing that crosses to Rust; the path is what lets the click re-resolve it
+ * against the list as it stands now, which is what `Locate` already does when
+ * reopening at launch.
+ */
+const addressed = buildGroups({
+	workspace,
+	branch: 'master',
+	recents,
+	live: [open()],
+	stored: new Map([...stored, ['/tmp/other', rows]]),
+});
+// Every group names its root, current one included.
+assert.deepEqual(
+	addressed.map((group) => group.root),
+	recents.map((entry) => entry.path)
+);
+// So does every stored row, so a click can re-resolve without its group.
+const there = addressed.find((group) => group.root === '/tmp/other');
+assert.deepEqual(
+	there?.sessions.map((row) => row.root),
+	rows.map(() => '/tmp/other')
+);
+// A row in the current root still has nowhere to go, and still says where it is.
+assert.equal(addressed[0].sessions[1].switchIndex, undefined);
+assert.equal(addressed[0].sessions[1].root, '/tmp/ade');
+
 console.log('sessions.check.ts: ok');

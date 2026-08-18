@@ -5550,3 +5550,63 @@ row carries an index that names a different root, and clicking one would open a 
 in the wrong folder. Not fixed here because the fix is a different shape: resolve the index
 at click time from a freshly read list, which is what `Locate` already does at launch. Not
 observed in the window either — it is a reading, not a report.
+
+## Slice 41g — An index is resolved when it is spent (62)
+
+**User outcome.** Clicking a conversation or a workspace's `+` acts on the folder the row
+names, never on whichever folder has since moved into that position.
+
+### Added
+
+Nothing new in substance: `bootstrap`'s inline root-resolver became a shared `locate`, and
+rows and groups gained the root path they already implied.
+
+### UI extracted / reused
+
+None. `SessionNavigator`'s `onNewSession` now takes a path instead of an index.
+
+### Adapters and dependencies
+
+None.
+
+### Security boundary
+
+Unchanged and worth stating plainly: the path still goes no further than the renderer. What
+crosses to Rust is an index, exactly as ADR 0002 requires. What changed is only *when* the
+index is worked out — at the click rather than at the draw.
+
+### Accessibility behavior
+
+Unchanged, plus one message that did not exist: a root that has left the recent list is
+refused aloud rather than silently resolved to a different folder.
+
+### Validation performed
+
+`npm run check` clean, with a new case asserting every group and every stored row carries its
+root. In the native window, Rust's recent list was reordered *behind* the renderer with the
+debug-only `set_workspace`, so the two disagreed exactly as they do after a folder dialog:
+`second-root` moved from index 2 to 3, meaning its rows carried an index that now named
+`tauri-ade-prototype`. The navigator was confirmed still holding the stale order, and pressing
+`second-root`'s `+` took that group from two rows to three with the breadcrumb moving to
+`second-root/master` — the folder named, not the one indexed.
+
+### What was *not* validated
+
+The wrong-folder outcome on the build before the fix. The stale index was demonstrated to
+exist; where it would have landed is read off the code.
+
+The stored-row click path shares `locate` with the `+` and is covered by the same code, but
+the driven test exercised the `+`. A stored row in the reordered root was already open, so
+clicking it would have short-circuited to focusing rather than resolving anything.
+
+### Caveats and deviations
+
+**This is the fourth root-identity defect in this batch and the third of the same shape** —
+after the terminal's shells (31), the profile catalogue (50) and the conversation store (61).
+The shape is: a value read against one version of the world, held, and spent against another.
+Worth watching for wherever this codebase holds an index, a path or a list across an await.
+
+**The lesson was already written down and did not travel.** `bootstrap`'s `Locate` exists
+because resolving indices up front put a restored conversation in the wrong folder, and its
+comment says exactly that. The click paths were written later and did not inherit it. A
+comment on the fix is not the same as a shared function, which is why the two now share one.

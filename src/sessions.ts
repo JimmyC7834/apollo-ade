@@ -70,12 +70,18 @@ export interface Session {
 	 */
 	readonly switchIndex?: number;
 	/**
-	 * Which root a *live* session is in — ticket 49.
+	 * Which root this conversation is in — ticket 49, widened by ticket 62.
 	 *
 	 * A window's conversations no longer share a folder, so a live row belongs
 	 * under its own workspace group rather than under whichever one is focused.
 	 * Undefined means "wherever this window is", which is browser mode and the
 	 * only case there was before.
+	 *
+	 * **Stored rows carry it too now, and that is what makes `switchIndex` safe
+	 * to use.** An index is a position in a list that `remember` reorders; a path
+	 * is what the row actually means, and the click re-resolves one into the other
+	 * against the list as it stands rather than as it stood. The path never
+	 * crosses to Rust — see `Locate` and ADR 0002.
 	 */
 	readonly root?: string;
 }
@@ -136,6 +142,14 @@ export function archiveMove(storedPath: string): {
 export interface WorkspaceGroup {
 	readonly id: string;
 	readonly label: string;
+	/**
+	 * The root this group is, as a path.
+	 *
+	 * What `switchIndex` *means*, as opposed to where it currently sits. Ticket
+	 * 62: the index is re-resolved from this at the moment it is used, because
+	 * choosing a folder reorders the list the index points into.
+	 */
+	readonly root: string;
 	/** Undefined when the workspace is not a repository, or HEAD is detached. */
 	readonly branch?: string;
 	/**
@@ -179,7 +193,7 @@ export function liveStatus(options: {
  * that was opened and abandoned. Neither is running — nothing but the live one
  * can be, and `live: false` is what the view keys that off.
  */
-function storedRow(stored: StoredSession, switchIndex?: number): Session {
+function storedRow(stored: StoredSession, root: string, switchIndex?: number): Session {
 	return {
 		/*
 		 * Prefixed by root for a session elsewhere, because the id is a *react*
@@ -199,6 +213,7 @@ function storedRow(stored: StoredSession, switchIndex?: number): Session {
 		live: false,
 		storedPath: stored.id,
 		switchIndex,
+		root,
 	};
 }
 
@@ -304,12 +319,13 @@ export function buildGroups(options: {
 				 * *current* root would claim to live in some other one, and opening it
 				 * would switch you there. The check caught it, which is what it is for.
 				 */
-				.map((entry) => storedRow(entry, switchIndex)),
+				.map((entry) => storedRow(entry, path, switchIndex)),
 		];
 	};
 	const current = {
 		id: workspace.path || workspace.label,
 		label: workspace.label,
+		root: workspace.path,
 		branch: options.branch,
 		sessions: rowsFor(workspace.path, options.stored.get(workspace.path) ?? []),
 	};
@@ -331,6 +347,7 @@ export function buildGroups(options: {
 			: {
 					id: `recent:${recent.path}`,
 					label: recent.label,
+					root: recent.path,
 					switchIndex: index,
 					sessions: rowsFor(recent.path, options.stored.get(recent.path) ?? [], index),
 				}

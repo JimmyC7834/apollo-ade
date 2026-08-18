@@ -11,9 +11,14 @@ export interface SessionNavigatorProps {
 	 * Start a conversation in a workspace — ticket 47, widened by ticket 49.
 	 *
 	 * **Born inside the group it belongs to**, because picking where a session
-	 * goes and making it are one gesture. Every group offers it: `at` is the
-	 * group's index into the recent list, and undefined is the workspace the
-	 * window is already in.
+	 * goes and making it are one gesture. Every group offers it: the argument is
+	 * the group's root *path*, and undefined is the workspace the window is
+	 * already in.
+	 *
+	 * A path rather than an index since ticket 62. An index is a position in a
+	 * list that choosing a folder reorders, so one captured when this row was
+	 * drawn can name a different folder by the time it is pressed; the controller
+	 * resolves the path into an index at that moment instead.
 	 *
 	 * **It is also the only door into a workspace with nothing in it**, since
 	 * ticket 55 took switching off the group header.
@@ -23,7 +28,7 @@ export interface SessionNavigatorProps {
 	 * collapsed — two affordances for one action, and the row was a session-shaped
 	 * thing in a list of sessions that was not one.
 	 */
-	readonly onNewSession?: (at?: number) => void;
+	readonly onNewSession?: (root?: string) => void;
 	/**
 	 * Hand this app a folder it has never been given — ticket 49.
 	 *
@@ -109,10 +114,11 @@ export function SessionNavigator({
 				 * already moves the window to its folder (ticket 49), so switching from
 				 * the header was a second way to do something that works.
 				 *
-				 * `at` is what survives of `switchIndex` — not a place to go, just
-				 * which workspace a new conversation would be born in.
+				 * `born` is what survives of `switchIndex` — not a place to go, just
+				 * which workspace a new conversation would be born in, as a path.
+				 * Undefined is this window's own root, which needs no index.
 				 */
-				const at = group.switchIndex;
+				const born = group.switchIndex === undefined ? undefined : group.root;
 				return (
 					<div key={group.id} className="ide-navigator-group">
 						{/*
@@ -154,7 +160,7 @@ export function SessionNavigator({
 									type="button"
 									className="ide-navigator-action-button"
 									title={`New session in ${group.label}`}
-									onClick={() => onNewSession(at)}
+									onClick={() => onNewSession(born)}
 								>
 									<Icon name="add" />
 									<span className="ide-visually-hidden">{`New session in ${group.label}`}</span>
