@@ -133,11 +133,19 @@ export function WorkbenchController() {
 	const live = useSyncExternalStore(sessionSet.subscribe, sessionSet.view);
 	const session = live.focused;
 	/** This workspace's stored conversations. Empty until they are read. */
-	const [stored, setStored] = useState<readonly StoredSession[]>([]);
-	/** Other recent roots' conversations, keyed by root path. See the effect below. */
-	const [elsewhere, setElsewhere] = useState<ReadonlyMap<string, readonly StoredSession[]>>(
-		new Map()
-	);
+	/**
+	 * Every root's stored conversations, under the root they were read from.
+	 *
+	 * **One store — ticket 61.** It used to be two, and the second was a bare list
+	 * meaning "the current root's". A bare list carries no root, so it was drawn
+	 * against whichever root was current when it rendered; switching moves the
+	 * current root immediately and the new list arrives a file read later, so the
+	 * workspace you had just arrived in briefly held the conversations of the one
+	 * you left.
+	 */
+	const [storedByRoot, setStoredByRoot] = useState<
+		ReadonlyMap<string, readonly StoredSession[]>
+	>(new Map());
 	const [commandCenterOpen, setCommandCenterOpen] = useState(false);
 	/** The session whose close is being confirmed, because a turn is in flight. */
 	const [closing, setClosing] = useState<string>();
@@ -1315,6 +1323,12 @@ export function WorkbenchController() {
 	 * when they all shared a folder; since ticket 49 they do not.
 	 */
 	const listProvider = session?.provider;
+	/*
+	 * The root that provider reads — the answer's own root rather than the
+	 * window's. The two agree once a switch has settled and disagree while one is
+	 * in flight, which is exactly the window this list used to be mislabelled in.
+	 */
+	const listRoot = session?.root?.path;
 	useEffect(() => {
 		if (!listProvider) {
 			return;
@@ -1324,7 +1338,14 @@ export function WorkbenchController() {
 			if (cancelled) {
 				return;
 			}
-			setStored(sessions);
+			/*
+			 * Filed under the root it was *read from*, never under whichever root is
+			 * current when it lands. `listRoot` is the focused session's own root,
+			 * and a switch moves the window's while this read is in flight.
+			 */
+			if (listRoot) {
+				setStoredByRoot((current) => new Map(current).set(listRoot, sessions));
+			}
 			/*
 			 * A session was picked and could not be opened.
 			 *
@@ -1359,7 +1380,7 @@ export function WorkbenchController() {
 		 * opened stops being one. Both are cheap and neither happens often — unlike
 		 * a turn ending, which is why that is still deliberately not a trigger.
 		 */
-	}, [listProvider, live.sessions.length, notify, selection, storedNonce]);
+	}, [listProvider, listRoot, live.sessions.length, notify, selection, storedNonce]);
 
 	/*
 	 * The other recent roots' conversations.
@@ -1394,7 +1415,7 @@ export function WorkbenchController() {
 				 * one page life. Picking one of those rows then asks for a file that
 				 * is not there.
 				 */
-				setElsewhere((current) => new Map(current).set(recent.path, sessions));
+				setStoredByRoot((current) => new Map(current).set(recent.path, sessions));
 			}
 		})();
 		return () => {
@@ -1525,10 +1546,9 @@ export function WorkbenchController() {
 					// Which group it lands in. Its own root, not the focused one.
 					root: open.root?.path,
 				})),
-				stored,
-				elsewhere,
+				stored: storedByRoot,
 			}),
-		[branch, elsewhere, live, recents, selection, stored]
+		[branch, live, recents, selection, storedByRoot]
 	);
 
 	/**

@@ -5495,3 +5495,58 @@ session path in 59.
 with a hole in its parent chain; the fallback and its announcement are the whole of the
 answer, as they were before. What changed is only that landing on an already-open conversation
 is no longer a second harness.
+
+## Slice 41f — One store, keyed by root (61)
+
+**User outcome.** Switching workspaces no longer makes the group you arrive in briefly swell
+with the conversations of the group you left.
+
+### Added
+
+Nothing. Two stores became one and a concept was deleted.
+
+### UI extracted / reused
+
+None.
+
+### Adapters and dependencies
+
+None.
+
+### Security boundary
+
+Untouched.
+
+### Accessibility behavior
+
+Unchanged.
+
+### Validation performed
+
+`npm run check` clean, with a new case in `sessions.check.ts` covering the exact shape: a
+window whose current root has no entry in the store draws no rows for it rather than another
+root's. In the native window a `MutationObserver` recorded the navigator's full shape — every
+group, every row name — at every DOM change for nine seconds through a real root switch
+(breadcrumb moved to `workspace-b`). Exactly one shape throughout.
+
+### What was *not* validated
+
+The pre-fix flicker, captured directly. Reported by the dev, diagnosed from the code, fixed
+and then confirmed absent — the swollen frame itself was not recorded on the old build.
+
+### Caveats and deviations
+
+**This is the third piece of state in this codebase that did not know which root it belonged
+to**, after the terminal's shells (31) and the profile catalogue (50). The pattern is the
+same each time: something is read for the current root, then held without recording *which*
+root that was, and a switch makes the holder and the label disagree. Worth naming as a shape
+rather than fixing three times and forgetting.
+
+**One instance of it is left open and is written up in the ticket.** A navigator row's
+`switchIndex` is an index into the recent list as it stood when the row was drawn. `remember`
+reorders that list and only `choose_workspace` calls it, so the window is narrow — but
+between the folder dialog returning and the renderer re-reading `recent_workspaces`, every
+row carries an index that names a different root, and clicking one would open a conversation
+in the wrong folder. Not fixed here because the fix is a different shape: resolve the index
+at click time from a freshly read list, which is what `Locate` already does at launch. Not
+observed in the window either — it is a reading, not a report.

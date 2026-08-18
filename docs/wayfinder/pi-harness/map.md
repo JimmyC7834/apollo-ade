@@ -737,6 +737,7 @@ result rather than from charting it, and it is small on purpose.
 | **[58](tickets/58-abandoned-is-not-a-conversation.md)** | An abandoned session is not a conversation | **landed**, one criterion part-verified |
 | **[59](tickets/59-one-row-while-it-opens.md)** | One row while it opens | **landed** |
 | **[60](tickets/60-one-harness-per-file.md)** | One harness per file | **landed** |
+| **[61](tickets/61-one-store-keyed-by-root.md)** | One store, keyed by root | **landed** |
 
 **54 is a bug, not a decision**, and it is on the map only because it will come back: one
 Rust spawn site out of six sets `CREATE_NO_WINDOW`, so everything else the ADE runs flashes
@@ -761,6 +762,15 @@ that is ADR 0002 and it holds throughout.
 **One shortcut is taken deliberately in 56 and is marked in it**: an archived session is
 not browsable from the app. The signal to build the Archived group is someone going looking
 for one, not the symmetry of having a round trip.
+
+**61 is the third store of state that did not know which root it belonged to**, after the
+terminal's shells in 31 and the profile catalogue in 50. The navigator read from a map of
+*other* roots' conversations beside a bare list meaning "this root's" — and a bare list is
+drawn against whichever root is current when it renders rather than the one it was read from.
+Switching moves the current root immediately and the new list lands a file read later, so the
+workspace you arrived in briefly held the conversations of the one you left. One store keyed
+by root ends it, and a root with no entry now has no rows, which is a state a map can express
+and a bare list cannot.
 
 **60 is the same bug reported twice, and the second report was the real one.** 59 fixed a
 duplicate row caused by a session being published before its path arrived; the duplicate came

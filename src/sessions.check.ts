@@ -20,11 +20,20 @@ import {
 } from './sessions.ts';
 
 /** A stored row as `listSessions` hands them over: newest first. */
-const stored: readonly StoredSession[] = [
+const rows: readonly StoredSession[] = [
 	{ id: '/s/3.jsonl', name: 'Fix the sash', startedAt: '2026-08-05T03:00:00Z' },
 	{ id: '/s/2.jsonl', name: 'Chase a failing check', startedAt: '2026-08-04T03:00:00Z' },
 	{ id: '/s/1.jsonl', name: 'Reword the note', startedAt: '2026-08-03T03:00:00Z' },
 ];
+
+/**
+ * Every root's stored rows, under the root they were read from — ticket 61.
+ *
+ * One store rather than "this root's list" beside "the other roots' map". The
+ * unkeyed half was the bug: it was filed under whichever root happened to be
+ * current when it was *drawn*, not the one it was *read from*.
+ */
+const stored: ReadonlyMap<string, readonly StoredSession[]> = new Map([['/tmp/ade', rows]]);
 
 /** The window's open conversations, as the controller builds them. */
 const open = (over: Partial<Session> = {}): Session => ({
@@ -147,7 +156,7 @@ assert.deepEqual(
 		branch: 'master',
 		recents: [workspace],
 		live: [open({ name: 'Only me', storedPath: undefined })],
-		stored: [],
+		stored: new Map(),
 	})[0].sessions.map((session) => session.id),
 	['session-a']
 );
@@ -173,8 +182,7 @@ const across = buildGroups({
 	branch: 'master',
 	recents,
 	live: [open({ status: 'idle' })],
-	stored,
-	elsewhere: new Map([['/tmp/other', stored.slice(1)]]),
+	stored: new Map([...stored, ['/tmp/other', rows.slice(1)]]),
 });
 const other = across[1];
 assert.equal(other.switchIndex, 1);
@@ -205,8 +213,7 @@ const two = buildGroups({
 		open({ root: '/tmp/ade' }),
 		open({ id: 'session-b', name: 'Over there', focused: false, root: '/tmp/other', storedPath: '/s/2.jsonl' }),
 	],
-	stored,
-	elsewhere: new Map([['/tmp/other', stored]]),
+	stored: new Map([...stored, ['/tmp/other', rows]]),
 });
 assert.deepEqual(
 	two[0].sessions.map((session) => session.id),
@@ -241,8 +248,7 @@ const collide = buildGroups({
 	branch: undefined,
 	recents,
 	live: [open({ status: 'idle' }), open({ id: 'session-b', focused: false, storedPath: '/s/2.jsonl' })],
-	stored,
-	elsewhere: new Map([['/tmp/other', stored]]),
+	stored: new Map([...stored, ['/tmp/other', rows]]),
 });
 const ids = collide.flatMap((group) => group.sessions).map((session) => session.id);
 assert.equal(new Set(ids).size, ids.length, ids.join(' '));
@@ -259,7 +265,6 @@ assert.deepEqual(
 		recents,
 		live: [open()],
 		stored,
-		elsewhere: new Map(),
 	})[1].sessions,
 	[]
 );
@@ -421,5 +426,33 @@ const born = buildGroups({
 	stored,
 })[0].sessions;
 assert.equal(born[0].name, 'New session');
+
+/*
+ * Ticket 61 — a root's rows are read from that root, or it has none.
+ *
+ * The store used to be two: a map of *other* roots' conversations, and a bare
+ * list meaning "this root's". The bare one carried no root, so it was drawn
+ * against whichever root was current at render — and switching changes the root
+ * long before the new list has been read. For that moment the workspace you had
+ * just arrived in was drawn holding the conversations of the one you left.
+ *
+ * A map cannot do that: a root with no entry has no rows, which is what "not
+ * read yet" honestly looks like.
+ */
+const arrived = buildGroups({
+	workspace: { label: 'other', path: '/tmp/other' },
+	branch: 'main',
+	recents,
+	live: [],
+	// Only `/tmp/ade` has been read. The window is in `/tmp/other`.
+	stored,
+});
+const arrivedAt = arrived.find((group) => group.switchIndex === undefined);
+assert.deepEqual(arrivedAt?.sessions, [], 'no rows rather than the other root\'s');
+// And the root that *has* been read still shows its own, from where it sits.
+assert.deepEqual(
+	arrived.find((group) => group.label === 'ade')?.sessions.map((row) => row.storedPath),
+	rows.map((row) => row.id)
+);
 
 console.log('sessions.check.ts: ok');

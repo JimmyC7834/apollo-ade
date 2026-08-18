@@ -237,10 +237,22 @@ export function buildGroups(options: {
 	 * root it is in, which is what decides the group it lands in.
 	 */
 	readonly live: readonly Session[];
-	/** This workspace's stored conversations, newest first. */
-	readonly stored: readonly StoredSession[];
-	/** Other recent roots' stored conversations, keyed by root path. */
-	readonly elsewhere?: ReadonlyMap<string, readonly StoredSession[]>;
+	/**
+	 * Every root's stored conversations, newest first, under the root they were
+	 * read from.
+	 *
+	 * **One store, and ticket 61 made it one.** It was two — a map of the *other*
+	 * roots' conversations beside a bare list meaning "this root's". The bare one
+	 * carried no root, so it was drawn against whichever root was current when it
+	 * was rendered rather than the one it was read from, and switching changes the
+	 * current root long before the new list has been read. For that moment the
+	 * workspace you had just arrived in was drawn holding the conversations of the
+	 * one you left.
+	 *
+	 * A root with no entry has no rows, which is what "not read yet" honestly
+	 * looks like, and is a state a map can express and a bare list cannot.
+	 */
+	readonly stored: ReadonlyMap<string, readonly StoredSession[]>;
 }): readonly WorkspaceGroup[] {
 	const { workspace } = options;
 	if (!workspace) {
@@ -299,7 +311,7 @@ export function buildGroups(options: {
 		id: workspace.path || workspace.label,
 		label: workspace.label,
 		branch: options.branch,
-		sessions: rowsFor(workspace.path, options.stored),
+		sessions: rowsFor(workspace.path, options.stored.get(workspace.path) ?? []),
 	};
 	/*
 	 * **Rust's order, kept** — ticket 58. The current workspace used to be
@@ -320,7 +332,7 @@ export function buildGroups(options: {
 					id: `recent:${recent.path}`,
 					label: recent.label,
 					switchIndex: index,
-					sessions: rowsFor(recent.path, options.elsewhere?.get(recent.path) ?? [], index),
+					sessions: rowsFor(recent.path, options.stored.get(recent.path) ?? [], index),
 				}
 	);
 	/*
