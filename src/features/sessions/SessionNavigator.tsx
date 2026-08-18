@@ -1,14 +1,12 @@
 import { useState } from 'react';
 
-import type { Session, SessionStatus, WorkspaceGroup } from '../../sessions';
+import { manageable, type Session, type SessionStatus, type WorkspaceGroup } from '../../sessions';
 import { Icon } from '../../ui';
 
 export interface SessionNavigatorProps {
 	readonly groups: readonly WorkspaceGroup[];
 	readonly activeId: string;
 	readonly onSelect: (session: Session) => void;
-	/** Switch to a workspace by its index in the recent list. Rust owns that list. */
-	readonly onSwitchWorkspace: (index: number) => void;
 	/**
 	 * Start a conversation in a workspace — ticket 47, widened by ticket 49.
 	 *
@@ -16,6 +14,11 @@ export interface SessionNavigatorProps {
 	 * goes and making it are one gesture. Every group offers it now, not only the
 	 * one you are in: `at` is the group's index into the recent list, and
 	 * undefined is the workspace the window is already in.
+	 *
+	 * **It is also the only door into a workspace with nothing in it**, since
+	 * ticket 55 took switching off the group header. That is why a collapsed
+	 * group still offers it as a `+`: collapsing hides the rows, and this used to
+	 * be one of them.
 	 */
 	readonly onNewSession?: (at?: number) => void;
 	/**
@@ -26,6 +29,15 @@ export interface SessionNavigatorProps {
 	 * place someone looks when the folder they want is not on it.
 	 */
 	readonly onChooseFolder?: () => void;
+	/**
+	 * Take a stored conversation off the list, keeping the file — ticket 56.
+	 *
+	 * Offered only where `manageable` says so, which is the row's own folder and
+	 * a session no harness is attached to.
+	 */
+	readonly onArchive?: (session: Session) => void;
+	/** Delete a stored conversation. Asks first; the file goes to the trash. */
+	readonly onDelete?: (session: Session) => void;
 }
 
 const STATUS_LABEL: Record<SessionStatus, string> = {
@@ -38,11 +50,14 @@ const STATUS_LABEL: Record<SessionStatus, string> = {
 /**
  * The navigator belongs to the Chat Workbench and spans only its height.
  *
- * Collapsed it is 32px of status markers floating over chat with no background.
- * Expanded it is 264px **over** chat — it never reflows it, which is why it is
- * absolutely positioned rather than a flex sibling. Expansion is what restores
- * a solid surface, because that is the only state where labels have to be read
- * against whatever is underneath.
+ * Collapsed it is 32px of status markers; expanded it is 264px **over** chat —
+ * it never reflows it, which is why it is absolutely positioned rather than a
+ * flex sibling.
+ *
+ * **It has no border and no shadow, and it is the chat's own background in both
+ * states** (ticket 55). It is meant to read as part of the chat rather than as a
+ * panel beside it. Opaque rather than transparent because expanded labels sit
+ * above transcript text and have to be readable.
  *
  * Every row is exactly 32px and there are no dividers, no group margins and no
  * rounding on highlights. The active session gets no row background at all —
@@ -52,9 +67,10 @@ export function SessionNavigator({
 	groups,
 	activeId,
 	onSelect,
-	onSwitchWorkspace,
 	onNewSession,
 	onChooseFolder,
+	onArchive,
+	onDelete,
 }: SessionNavigatorProps) {
 	const [expanded, setExpanded] = useState(false);
 	const [collapsedGroups, setCollapsedGroups] = useState<readonly string[]>([]);
@@ -77,108 +93,153 @@ export function SessionNavigator({
 			{groups.map((group) => {
 				const groupCollapsed = collapsedGroups.includes(group.id);
 				/*
-				 * A group's *header* is either a place you are (collapse its
-				 * sessions) or a place you can go (switch to it). Never both — a
-				 * header that collapses on click and switches on double-click makes
-				 * switching roots something you can do by accident.
+				 * A group header does one thing: collapse and expand its sessions.
 				 *
-				 * Its rows are unaffected, and now that another root's conversations
-				 * are listed under it, that separation is what keeps the two ways of
-				 * arriving somewhere distinct: the header takes you to the workspace,
-				 * a row takes you to a conversation *in* it. A workspace you have
-				 * never talked in is still reachable, which it would not be if the
-				 * header had become a disclosure triangle.
+				 * **It used to also switch roots**, for every group naming a root the
+				 * window was not in — a header that is a toggle here and a jump there,
+				 * with a comment explaining why it could never be both. Ticket 55
+				 * deleted the jump rather than the explanation: picking a session
+				 * already moves the window to its folder (ticket 49), so switching from
+				 * the header was a second way to do something that works.
+				 *
+				 * `at` is what survives of `switchIndex` — not a place to go, just
+				 * which workspace a new conversation would be born in.
 				 */
-				const switchTo = group.switchIndex;
+				const at = group.switchIndex;
 				return (
 					<div key={group.id} className="ide-navigator-group">
-						<button
-							type="button"
-							className="ide-navigator-header"
-							aria-expanded={switchTo === undefined ? !groupCollapsed : undefined}
-							title={switchTo === undefined ? undefined : `Switch to ${group.label}`}
-							onClick={() => {
-								if (switchTo !== undefined) {
-									onSwitchWorkspace(switchTo);
-									return;
+						{/*
+						 * A row rather than a button, because the `+` is a button and
+						 * buttons do not nest — the inner one stops receiving clicks.
+						 * Same shape the session rows take in ticket 56.
+						 */}
+						<div className="ide-navigator-header">
+							<button
+								type="button"
+								className="ide-navigator-open"
+								aria-expanded={!groupCollapsed}
+								onClick={() =>
+									setCollapsedGroups((current) =>
+										current.includes(group.id)
+											? current.filter((id) => id !== group.id)
+											: [...current, group.id]
+									)
 								}
-								setCollapsedGroups((current) =>
-									current.includes(group.id)
-										? current.filter((id) => id !== group.id)
-										: [...current, group.id]
-								);
-							}}
-						>
-							<span className="ide-navigator-icon">
-								{switchTo !== undefined ? (
-									<Icon name="root-folder" />
-								) : groupCollapsed ? (
-									/* Workspace status dots appear only when the group is
-									   collapsed — expanded, the session rows say it. */
-									<span
-										className={`ide-navigator-dot ide-status-${dominant(group.sessions)}`}
-									/>
-								) : (
-									<Icon name="chevron-down" />
-								)}
-							</span>
-							<span className="ide-navigator-label">
-								{group.label}
-								{group.branch ? ` · ${group.branch}` : ''}
-							</span>
-							{switchTo === undefined ? null : (
-								<span className="ide-visually-hidden">— switch to this workspace</span>
-							)}
-						</button>
+							>
+								<span className="ide-navigator-icon">
+									{groupCollapsed ? (
+										/* Workspace status dots appear only when the group is
+										   collapsed — expanded, the session rows say it. */
+										<span
+											className={`ide-navigator-dot ide-status-${dominant(group.sessions)}`}
+										/>
+									) : (
+										<Icon name="chevron-down" />
+									)}
+								</span>
+								<span className="ide-navigator-label">
+									{group.label}
+									{group.branch ? ` · ${group.branch}` : ''}
+								</span>
+							</button>
+							{groupCollapsed && onNewSession ? (
+								<button
+									type="button"
+									className="ide-navigator-action-button"
+									title={`New session in ${group.label}`}
+									onClick={() => onNewSession(at)}
+								>
+									<Icon name="add" />
+									<span className="ide-visually-hidden">{`New session in ${group.label}`}</span>
+								</button>
+							) : null}
+						</div>
 
 						{groupCollapsed
 							? null
 							: group.sessions.map((session) => (
-									<button
-										key={session.id}
-										type="button"
-										className="ide-navigator-row"
-										aria-current={session.id === activeId ? 'true' : undefined}
-										onClick={() => onSelect(session)}
-									>
-										<span className="ide-navigator-icon">
-											<span
-												className={`ide-navigator-marker ide-status-${session.status}${
-													session.id === activeId ? ' ide-navigator-marker-active' : ''
+									/*
+									 * A shell around the row rather than the row itself,
+									 * because archive and delete are buttons and buttons do
+									 * not nest — inside a `<button>` they stop receiving
+									 * clicks. The row keeps being one control for opening;
+									 * the actions sit beside it.
+									 */
+									<div key={session.id} className="ide-navigator-row-shell">
+										<button
+											type="button"
+											className="ide-navigator-row"
+											aria-current={session.id === activeId ? 'true' : undefined}
+											onClick={() => onSelect(session)}
+										>
+											<span className="ide-navigator-icon">
+												<span
+													className={`ide-navigator-marker ide-status-${session.status}${
+														session.id === activeId ? ' ide-navigator-marker-active' : ''
+													}`}
+												/>
+											</span>
+											<span className="ide-navigator-label">{session.name}</span>
+											{/*
+											 * No prototype marking any more, because there is
+											 * nothing left to mark: every row is a real
+											 * conversation, either the live one or one read
+											 * back from `.ade/sessions`. It used to say
+											 * "fixture" on anything with `live: false`, which
+											 * became a lie the moment those rows came off
+											 * disk — and a real session labelled as invented
+											 * is a worse error than the one the marking was
+											 * put there to prevent.
+											 *
+											 * Which one has a harness is still shown: the live
+											 * session's marker is the larger one.
+											 */}
+											<span className="ide-visually-hidden">
+												{`— ${STATUS_LABEL[session.status]}${
+													session.unread ? ', unread' : ''
 												}`}
-											/>
-										</span>
-										<span className="ide-navigator-label">{session.name}</span>
+											</span>
+											<span className="ide-navigator-action">
+												{session.unread ? <span className="ide-navigator-unread" /> : null}
+											</span>
+										</button>
 										{/*
-										 * No prototype marking any more, because there is
-										 * nothing left to mark: every row is a real
-										 * conversation, either the live one or one read
-										 * back from `.ade/sessions`. It used to say
-										 * "fixture" on anything with `live: false`, which
-										 * became a lie the moment those rows came off
-										 * disk — and a real session labelled as invented
-										 * is a worse error than the one the marking was
-										 * put there to prevent.
-										 *
-										 * Which one has a harness is still shown: the live
-										 * session's marker is the larger one.
+										 * Asked once, around both: archive and delete are
+										 * offered together or not at all. A row you may
+										 * archive but not delete is not a state this has.
 										 */}
-										<span className="ide-visually-hidden">
-											{`— ${STATUS_LABEL[session.status]}${
-												session.unread ? ', unread' : ''
-											}`}
-										</span>
-										<span className="ide-navigator-action">
-											{session.unread ? <span className="ide-navigator-unread" /> : null}
-										</span>
-									</button>
+										{manageable(session) ? (
+											<>
+												{onArchive ? (
+													<button
+														type="button"
+														className="ide-navigator-action-button"
+														onClick={() => onArchive(session)}
+													>
+														<Icon name="archive" />
+														<span className="ide-visually-hidden">{`Archive ${session.name}`}</span>
+													</button>
+												) : null}
+												{onDelete ? (
+													<button
+														type="button"
+														className="ide-navigator-action-button"
+														onClick={() => onDelete(session)}
+													>
+														<Icon name="trash" />
+														<span className="ide-visually-hidden">{`Delete ${session.name}`}</span>
+													</button>
+												) : null}
+											</>
+										) : null}
+									</div>
 								))}
 
 						{groupCollapsed || !onNewSession ? null : (
 							<button
 								type="button"
 								className="ide-navigator-row"
-								onClick={() => onNewSession(switchTo)}
+								onClick={() => onNewSession(at)}
 							>
 								<span className="ide-navigator-icon">
 									<Icon name="add" />

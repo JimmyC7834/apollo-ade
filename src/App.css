@@ -994,6 +994,32 @@ body {
 	border-top: 1px solid var(--border);
 }
 
+/*
+ * The transcript's column — ticket 55. The composer under it has always capped
+ * at `--composer-width`; the log did not, so one view held a centred column and
+ * a full-bleed wall of text at the same time.
+ *
+ * The cap is on the log's *children* rather than on the log, which is what keeps
+ * the scrollbar at the region edge instead of dragging it inward with the text.
+ *
+ * Centred on the chat column and not on the space beside the *expanded*
+ * navigator: expansion is an overlay, and a column that reacted to it would
+ * shift 116px every time the pointer crossed the strip. The collapsed strip's
+ * 32px is already reserved by `.ide-region-main > .ide-agent`, so nothing here
+ * has to account for it.
+ */
+.ide-agent-log > * {
+	/*
+	 * The composer's *content* box, not its border box. `--composer-width` caps
+	 * the composer's outer edge and its own `--space-5` padding insets the input
+	 * from there, so matching the outer width would leave the transcript 20px
+	 * wider than the input beneath it on each side — visibly not one column,
+	 * which is the whole thing this cap exists for.
+	 */
+	max-width: calc(var(--composer-width) - 2 * var(--space-5));
+	margin-inline: auto;
+}
+
 /* The user's turn: a subtle card, no border, rounded enough not to be a speech
    bubble, aligned slightly right with a left margin. The margin is what makes it
    read as the other speaker — the agent's reply below has no card at all. */
@@ -2111,19 +2137,22 @@ body {
 	display: flex;
 	flex-direction: column;
 	width: 32px;
-	border-right: 1px solid var(--border);
 	overflow: hidden auto;
-	/* Collapsed it has no background: the markers float over chat. */
-	background: transparent;
+	/*
+	 * Ticket 55: no border, no shadow, and the chat's own background in both
+	 * states. It is still an overlay and still never reflows chat — what goes is
+	 * everything that made it read as a second panel bolted to the side.
+	 *
+	 * Opaque rather than transparent, and that is the accessibility exception
+	 * rather than a preference: expanded labels sit above transcript text, and
+	 * with no surface at all they are unreadable.
+	 */
+	background: var(--background);
 	transition: width 90ms ease-out;
 }
 
 .ide-navigator-expanded {
 	width: 264px;
-	/* Expansion is what earns the surface — labels have to be readable against
-	   whatever is behind them, and nothing else in the collapsed state does. */
-	background: var(--sidebar);
-	box-shadow: var(--shadow-overlay);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -2138,7 +2167,36 @@ body {
 	flex-direction: column;
 }
 
-.ide-navigator-header,
+/*
+ * A header is a *row* holding a button, not a button, because the `+` inside it
+ * is a button and buttons do not nest — the inner one stops receiving clicks.
+ * The same shape a session row takes once it carries archive and delete.
+ */
+.ide-navigator-header {
+	display: flex;
+	align-items: center;
+	flex: none;
+	height: 32px;
+	overflow: hidden;
+}
+
+/*
+ * A session row is a shell holding the open button and, in its own folder, the
+ * archive and delete buttons. Buttons do not nest, which is why the row stopped
+ * being one — see `SessionNavigator`.
+ */
+.ide-navigator-row-shell {
+	display: flex;
+	align-items: center;
+	flex: none;
+	overflow: hidden;
+}
+
+.ide-navigator-row-shell > .ide-navigator-row {
+	flex: 1;
+}
+
+.ide-navigator-open,
 .ide-navigator-row {
 	display: flex;
 	align-items: center;
@@ -2159,7 +2217,8 @@ body {
 	overflow: hidden;
 }
 
-.ide-navigator-header {
+.ide-navigator-open {
+	flex: 1;
 	color: var(--muted-foreground);
 	font-size: var(--text-small);
 	text-transform: uppercase;
@@ -2169,6 +2228,40 @@ body {
 .ide-navigator-header:hover,
 .ide-navigator-row:hover {
 	background: var(--accent);
+}
+
+/*
+ * The `+` on a collapsed group, and — in ticket 56 — archive and delete on a
+ * session row. Right-aligned, 31px so it lines up with the icon column on the
+ * other side, and revealed by hover *or focus*: hover alone would make it
+ * pointer-exclusive, and the keyboard is not optional here.
+ */
+.ide-navigator-action-button {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex: none;
+	width: 31px;
+	height: 32px;
+	padding: 0;
+	border: none;
+	border-radius: 0;
+	background: transparent;
+	color: var(--muted-foreground);
+	font: inherit;
+	cursor: pointer;
+	opacity: 0;
+}
+
+.ide-navigator-header:hover .ide-navigator-action-button,
+.ide-navigator-header:focus-within .ide-navigator-action-button,
+.ide-navigator-row-shell:hover .ide-navigator-action-button,
+.ide-navigator-row-shell:focus-within .ide-navigator-action-button {
+	opacity: 1;
+}
+
+.ide-navigator-action-button:hover {
+	color: var(--foreground);
 }
 
 /* The active session does not use a row background highlight; its marker
@@ -2763,13 +2856,15 @@ body {
 }
 
 /*
- * The composer loses its 760px cap. That cap is the Shell Guide's, and it is
- * right for a chat column — but a terminal's input is the width of the
- * terminal, and a centred box under a full-width transcript is the one thing
- * that would give the skin away immediately.
+ * The composer keeps its 760px cap, and the padding is all this skin changes.
+ *
+ * **This rule used to lift the cap**, on the grounds that a centred box under a
+ * *full-width transcript* would give the skin away. Ticket 55 gave the
+ * transcript the same 760px column the composer already had, so the premise is
+ * gone and the rule inverted: it is now a full-width input under a centred
+ * conversation, which is the mismatch it was written to prevent.
  */
 .ide-agent-composer {
-	max-width: none;
 	padding: 0 var(--space-5) var(--space-3);
 }
 

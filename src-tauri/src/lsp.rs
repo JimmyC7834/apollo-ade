@@ -147,6 +147,7 @@ pub fn lsp_start(
 
     let mut command = Command::new(argv[0]);
     command.args(&argv[1..]);
+    crate::spawn::windowless(&mut command);
     command.current_dir(root);
     // A language server is a child this app starts, so it is held to the same
     // rule as `agent_exec`: no credential reaches it. rust-analyzer has no use
@@ -430,7 +431,7 @@ mod tests {
         use std::io::Write;
         use std::process::{Command, Stdio};
 
-        let Ok(mut child) = Command::new("rust-analyzer")
+        let Ok(mut child) = crate::spawn::windowless(&mut Command::new("rust-analyzer"))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -505,7 +506,7 @@ mod tests {
         use std::process::{Command, Stdio};
         use std::time::Instant;
 
-        let Ok(child) = Command::new("rust-analyzer")
+        let Ok(child) = crate::spawn::windowless(&mut Command::new("rust-analyzer"))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())

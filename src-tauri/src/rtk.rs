@@ -176,6 +176,7 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 fn ask(program: &str, argument: &str, capture: bool) -> Option<String> {
     let mut command = Command::new(program);
     command.arg(argument);
+    crate::spawn::windowless(&mut command);
     command.stdin(Stdio::null());
     // `gain` is asked only for its exit status, so its output goes nowhere.
     // That is not tidiness: an un-drained pipe fills at 64 KB and the child

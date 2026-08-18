@@ -24,7 +24,13 @@ import { refuseReason, type Replacement } from '../features/search/replace';
 import { SessionNavigator } from '../features/sessions/SessionNavigator';
 import { createPersistenceAdapter, type PersistedState } from '../persistence';
 import { recordOpenSessions, takeOpenSessions, takeUnopened } from '../sessionRequest';
-import { breadcrumb, buildGroups, type Session, type SessionStatus } from '../sessions';
+import {
+	archiveMove,
+	breadcrumb,
+	buildGroups,
+	type Session,
+	type SessionStatus,
+} from '../sessions';
 import { createTerminalAdapter } from '../terminal';
 import { TerminalPanel } from '../features/terminal/TerminalPanel';
 import { Confirm, Prompt } from '../ui';
@@ -135,6 +141,17 @@ export function WorkbenchController() {
 	const [commandCenterOpen, setCommandCenterOpen] = useState(false);
 	/** The session whose close is being confirmed, because a turn is in flight. */
 	const [closing, setClosing] = useState<string>();
+	/** The stored conversation whose delete is being confirmed — ticket 56. */
+	const [deleting, setDeleting] = useState<Session>();
+	/*
+	 * Bumped when a stored session is archived or deleted, to re-read the list.
+	 *
+	 * The list is otherwise read once per root on purpose — re-reading on every
+	 * status change costs one file open per conversation to learn something
+	 * already on screen. Archiving is the one thing this window does that changes
+	 * the answer, so it is the one thing that asks again.
+	 */
+	const [storedNonce, setStoredNonce] = useState(0);
 	/*
 	 * Notifications — ticket 44. Toasts are a list rather than one slot because
 	 * two things can finish while you are away, and the second replacing the first
@@ -1342,7 +1359,7 @@ export function WorkbenchController() {
 		 * opened stops being one. Both are cheap and neither happens often — unlike
 		 * a turn ending, which is why that is still deliberately not a trigger.
 		 */
-	}, [listProvider, live.sessions.length, notify, selection]);
+	}, [listProvider, live.sessions.length, notify, selection, storedNonce]);
 
 	/*
 	 * The other recent roots' conversations.
@@ -1386,32 +1403,68 @@ export function WorkbenchController() {
 	}, [recents, selection?.path]);
 
 	/**
-	 * Go to a recent workspace, by index into that list — never by path. See
-	 * `docs/adr/0002-a-root-per-session.md`.
+	 * Take a stored conversation off the list, keeping the file — ticket 56.
 	 *
-	 * **It is no longer a mode change, and that is ticket 49's whole shape.** A
-	 * root used to be something the window was *in*, so moving it meant reloading
-	 * and taking every conversation with it. It is now a property of a session, so
-	 * going to a workspace means going to a conversation in it: the one you left
-	 * open there if there is one, and a new one if there is not. The workbench
-	 * follows because the focused session changed, not because a root did.
+	 * A rename into `.ade/sessions/archive`, because `listStored` reads a
+	 * directory: a file that is not in it is not listed, and nothing about
+	 * naming, resuming or the store's shape has to change. It survives a restart
+	 * because it is a fact about the filesystem rather than about this window.
+	 *
+	 * **Archived conversations are not browsable from the app, and that is a
+	 * deliberate shortcut.** Archive's job is to get a row off a list; a second
+	 * list for reading back the rows you removed is scaffolding for a need nobody
+	 * has stated. The folder is plainly named and a file manager reaches it. Add
+	 * the Archived group when someone actually goes looking for one.
 	 */
-	const goToWorkspace = useCallback(
-		async (index: number): Promise<boolean> => {
-			const recent = recents[index];
-			if (!recent) {
-				return false;
+	const archiveSession = useCallback(
+		async (row: Session) => {
+			if (!row.storedPath) {
+				return;
 			}
-			const already = live.sessions.find((open) => open.root?.path === recent.path);
-			if (already) {
-				sessionSet.focus(already.key);
-				return true;
+			const move = archiveMove(row.storedPath);
+			try {
+				// Idempotent on both sides: `create_dir_all` does not mind an
+				// archive folder that is already there.
+				await provider.createFolder(move.folder);
+				await provider.rename(move.from, move.to);
+			} catch (error) {
+				announce(`Could not archive ${row.name}. ${reason(error)}`);
+				return;
 			}
-			announce(`New session in ${recent.label}.`);
-			return (await sessionSet.open({ fresh: true }, index)) !== undefined;
+			setStoredNonce((n) => n + 1);
+			announce(`Archived ${row.name}.`);
 		},
-		[announce, live.sessions, recents]
+		[announce, provider]
 	);
+
+	/** Delete a stored conversation, once the dialog has been answered. */
+	const deleteSession = useCallback(
+		async (row: Session) => {
+			if (!row.storedPath) {
+				return;
+			}
+			try {
+				await provider.deleteEntry(archiveMove(row.storedPath).from);
+			} catch (error) {
+				announce(`Could not delete ${row.name}. ${reason(error)}`);
+				return;
+			}
+			setStoredNonce((n) => n + 1);
+			announce(`Deleted ${row.name}.${provider.deletesToTrash ? ' It is in the trash.' : ''}`);
+		},
+		[announce, provider]
+	);
+
+	/*
+	 * `goToWorkspace` was here, and ticket 55 deleted it with its only caller.
+	 *
+	 * It focused a session in a recent root, or started one if that root had
+	 * none — the group header's switch. With the header reduced to a collapse
+	 * toggle there is nothing left that goes to a *workspace*: you go to a
+	 * conversation, and the workbench follows it. `newSession(at)` covers the
+	 * one case the header still has to answer, which is a workspace you have
+	 * never talked in.
+	 */
 
 	/**
 	 * Opening a session, from the navigator or from a search result.
@@ -1534,9 +1587,10 @@ export function WorkbenchController() {
 						groups={groups}
 						activeId={session?.key ?? ''}
 						onSelect={(picked) => void selectSession(picked)}
-						onSwitchWorkspace={(index) => void goToWorkspace(index)}
 						onNewSession={(at) => void newSession(at)}
 						onChooseFolder={provider.canChooseWorkspace ? () => void openFolder() : undefined}
+						onArchive={(picked) => void archiveSession(picked)}
+						onDelete={setDeleting}
 					/>
 					{session ? (
 						<AgentChat
@@ -1647,6 +1701,33 @@ export function WorkbenchController() {
 						onSelectSession={(picked) => void selectSession(picked)}
 						searchTranscript={searchTranscript}
 						onClose={closeCommandCenter}
+					/>
+					{/*
+					 * Ticket 56. `delete_entry` moves the file to the trash, so the
+					 * wording does not claim the conversation is gone for good — a
+					 * dialog that overstates the loss is its own small lie. It still
+					 * asks, because an accidental click makes a conversation vanish
+					 * from the list and the person clicking does not know where to.
+					 */}
+					<Confirm
+						open={deleting !== undefined}
+						title="Delete this conversation?"
+						message={`${deleting?.name ?? 'This conversation'} will be removed from the list.${
+							provider.deletesToTrash ? ' Its file goes to the trash.' : ''
+						}`}
+						onCancel={() => setDeleting(undefined)}
+						actions={[
+							{
+								label: 'Delete',
+								danger: true,
+								run: () => {
+									if (deleting) {
+										void deleteSession(deleting);
+									}
+									setDeleting(undefined);
+								},
+							},
+						]}
 					/>
 					<Confirm
 						open={closing !== undefined}

@@ -10,7 +10,14 @@
 
 import assert from 'node:assert/strict';
 import type { StoredSession } from './agent/provider.ts';
-import { breadcrumb, buildGroups, liveStatus, type Session } from './sessions.ts';
+import {
+	archiveMove,
+	breadcrumb,
+	buildGroups,
+	liveStatus,
+	manageable,
+	type Session,
+} from './sessions.ts';
 
 /** A stored row as `listSessions` hands them over: newest first. */
 const stored: readonly StoredSession[] = [
@@ -280,5 +287,56 @@ assert.equal(breadcrumb(workspace, 'master'), 'ade/master');
 // No branch is not "ade/undefined" and not "ade/HEAD".
 assert.equal(breadcrumb(workspace, undefined), 'ade');
 assert.equal(breadcrumb(undefined, 'master'), 'No folder open');
+
+/*
+ * Ticket 56. Both of these are ways the two buttons go wrong quietly rather
+ * than loudly, which is why they are checked and the rest of the row is not.
+ */
+
+/** A stored row, as `buildGroups` makes them. */
+const row = (extra: Partial<Session> = {}): Session => ({
+	id: 'r',
+	name: 'A conversation',
+	status: 'idle',
+	live: false,
+	storedPath: '/.ade/sessions/x.jsonl',
+	...extra,
+});
+
+// The ordinary case: a stored row in the folder the window is showing.
+assert.equal(manageable(row()), true);
+// A live session is never archived or deleted from under itself — and because
+// only a live session runs, this is also what keeps the buttons off a running
+// turn. Both spellings of "in flight" are covered by the one test.
+assert.equal(manageable(row({ live: true })), false);
+assert.equal(manageable(row({ live: true, status: 'running' })), false);
+// Another workspace: `rename_entry` and `delete_entry` resolve against the
+// window's root, so acting here would act on the wrong folder's file. The
+// buttons are withheld rather than the call being made and failing.
+assert.equal(manageable(row({ switchIndex: 0 })), false);
+// Nothing on disk to move. Browser mode, and a live row before its path lands.
+assert.equal(manageable(row({ storedPath: undefined })), false);
+
+/*
+ * The leading slash is the whole point. `contained` in `workspace.rs` refuses
+ * an absolute id outright, and the session store spells its paths with one —
+ * so passing `storedPath` straight to `rename` fails every time.
+ */
+assert.deepEqual(archiveMove('/.ade/sessions/x.jsonl'), {
+	folder: '.ade/archive',
+	from: '.ade/sessions/x.jsonl',
+	to: '.ade/archive/x.jsonl',
+});
+// Same answer without the slash, so neither spelling of a path can break it.
+assert.deepEqual(archiveMove('.ade/sessions/x.jsonl').to, '.ade/archive/x.jsonl');
+/*
+ * The destination is outside the sessions root, which is what stops an archived
+ * conversation being listed again — `JsonlSessionRepo.list` with no `cwd` walks
+ * every directory under it.
+ */
+assert.ok(!archiveMove('/.ade/sessions/x.jsonl').to.startsWith('.ade/sessions/'));
+// Real paths carry a per-cwd bucket. Only the file name survives, so nothing
+// lands outside the archive folder.
+assert.equal(archiveMove('/.ade/sessions/----/b.jsonl').to, '.ade/archive/b.jsonl');
 
 console.log('sessions.check.ts: ok');

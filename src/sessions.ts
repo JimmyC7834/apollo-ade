@@ -80,6 +80,59 @@ export interface Session {
 	readonly root?: string;
 }
 
+/**
+ * Whether a row offers archive and delete — ticket 56.
+ *
+ * Three noes, and only the last is arbitrary:
+ *
+ * - **A live session.** Archiving the conversation you are having is a state
+ *   nothing downstream expects, and deleting a running session's file is worse.
+ *   Only a live session runs a turn, so this one test covers "in flight" too.
+ * - **A session in another workspace.** `rename_entry` and `delete_entry`
+ *   resolve against the *window's* root, and a stored row is a file rather than
+ *   a registered session, so there is no id to write with. Offering them here
+ *   would mean a new write door into a root the window is not in — the
+ *   confinement boundary itself. It costs one click: picking the row brings the
+ *   window to its folder, and then the buttons are there.
+ * - **No path.** Browser mode, and a live row before the store has said which
+ *   file it got. Nothing to move.
+ */
+export function manageable(session: Session): boolean {
+	return !session.live && session.switchIndex === undefined && session.storedPath !== undefined;
+}
+
+/**
+ * Where the archive folder sits, relative to the root.
+ *
+ * **Beside `.ade/sessions`, not inside it.** `JsonlSessionRepo.list` called
+ * without a `cwd` enumerates every *directory* under the sessions root and
+ * parses the `.jsonl` files in each, so an archive folder in there would hand
+ * every archived conversation straight back to the next caller that asks that
+ * way. `listStored` passes a `cwd` today and would not have noticed; one
+ * directory up costs nothing and removes the trap.
+ */
+const ARCHIVE = '.ade/archive';
+
+/**
+ * The rename that archives a session, as `WorkspaceProvider` wants its ids.
+ *
+ * **Root-relative, no leading slash.** `contained` in `workspace.rs` refuses an
+ * absolute id outright and the session store spells every path with a leading
+ * slash, so handing `storedPath` straight to `rename` fails every time.
+ *
+ * Only the file name is kept, so a path with directories in it cannot land
+ * anywhere but in the archive folder.
+ */
+export function archiveMove(storedPath: string): {
+	readonly folder: string;
+	readonly from: string;
+	readonly to: string;
+} {
+	const from = storedPath.replace(/^\/+/, '');
+	const name = from.split('/').pop() ?? from;
+	return { folder: ARCHIVE, from, to: `${ARCHIVE}/${name}` };
+}
+
 export interface WorkspaceGroup {
 	readonly id: string;
 	readonly label: string;

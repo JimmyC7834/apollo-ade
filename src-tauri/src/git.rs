@@ -67,13 +67,7 @@ fn relative(id: &str) -> Result<&str, String> {
 fn git(root: &Path, args: &[&str]) -> Result<String, String> {
     let mut command = Command::new("git");
     command.arg("-C").arg(root).args(args);
-    #[cfg(windows)]
-    {
-        // Without this every git call flashes a console window over the app.
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        command.creation_flags(CREATE_NO_WINDOW);
-    }
+    crate::spawn::windowless(&mut command);
     let out = command
         .output()
         .map_err(|e| format!("git is not available: {e}"))?;

@@ -5162,3 +5162,103 @@ harnesses ended up on one JSONL during the restore.
 `switch_workspace` is gone — the command, the three provider implementations and
 the `openFolderDisabled` field with it. Going to a workspace is focusing a
 conversation in it, and nothing disables opening a folder any more.
+
+## Slice 41 — The navigator, settled by looking at it (54–56)
+
+**User outcome.** The ADE stops flashing console windows, the session list reads as part
+of the conversation rather than as a panel beside it, and a stored conversation can be
+archived or deleted from its own row.
+
+### Added
+
+- `src-tauri/src/spawn.rs` — one helper, `windowless`, applying `CREATE_NO_WINDOW`. Every
+  non-PTY spawn calls it: `git.rs` (which stops carrying its own copy), `exec.rs`,
+  `lsp.rs`, `rtk.rs` and `terminal.rs`. `reaper.rs` turned out not to be a site — its
+  `kill` is `#[cfg(not(windows))]`.
+- `manageable` and `archiveMove` in `sessions.ts`, with checks in `sessions.check.ts`.
+- `archiveSession` and `deleteSession` in the controller, plus a delete confirmation.
+
+### UI extracted / reused
+
+Nothing new was extracted. `Confirm` took the delete dialog, `WorkspaceProvider`'s
+existing `createFolder` / `rename` / `deleteEntry` took the file work, and codicons took
+the two icons. **No new Rust commands** — archive and delete are the explorer's file
+operations, called from somewhere else.
+
+### Adapters and dependencies
+
+None added. `spawn.rs` spells `CREATE_NO_WINDOW` out rather than taking `windows-sys` for
+one constant.
+
+### Security boundary
+
+Unchanged, and one place it was nearly widened. Archive and delete are *writes*, and
+`rename_entry` / `delete_entry` resolve against the **window's** root. A stored row in
+another workspace is a file rather than a registered session, so there is no id to write
+with, and offering the buttons there would have meant a new index-addressed write door
+into a root the window is not confined to. They are withheld instead. It costs one click,
+because picking that row already brings the window to its folder — and nothing about
+several sessions running in several roots is affected, since a session's own confinement
+is fixed at birth and the `agent_*` commands still take a session id.
+
+### Accessibility behavior
+
+The row stopped being a `<button>`, because two buttons cannot live inside one — nested
+buttons are invalid and the inner ones stop receiving clicks. It is a flex shell holding
+the open button and the two actions. Those are hidden at rest and revealed on
+`:hover, :focus-within`, so tabbing reaches them; each carries a visually-hidden name
+naming the conversation it acts on. The navigator's expanded surface stayed opaque for the
+same reason it existed — labels sit over transcript text.
+
+### Validation performed
+
+`npm run check` clean: tsc, every node check, and 37 Rust tests including the new one.
+Driven in the **native** window over CDP, twice — once before the app was restarted and
+once after:
+
+- Archive took seven rows to six and put the file in `.ade/archive/`; delete took six to
+  five with the dialog and the trash. After a full restart neither row came back.
+- The focused live row carried no buttons, every stored row in the current folder carried
+  both, and every row under `colorle`, `second-root` and `workspace-b` carried none.
+- Headers toggle their own group and no header switches root. The `+` on a collapsed group
+  started a conversation in `colorle` and the window followed it.
+- `.ide-navigator` computes no border, no shadow, and the page's background in both states;
+  transcript and composer share one column to the pixel.
+- The agent ran a shell command while a window sampler watched, and no `ConsoleWindowClass`
+  window appeared.
+
+A limit was written into these notes and then removed: the transcript column was said to
+reach under the collapsed strip in a narrow window. It does not.
+`.ide-region-main > .ide-agent { margin-left: 32px }` has reserved that gutter since the
+first look at the shell, so the caveat described a state the CSS makes unreachable.
+
+### What was *not* validated
+
+The console-window check ran against a `tauri dev` build, which is launched from a terminal
+it can inherit — an inherited console suppresses the flash on its own, so it masks the bug
+as well as the fix. A release build launched from Explorer is the stronger check and was
+not run. The transcript column was measured at one window size only.
+
+### Caveats and deviations
+
+**Two things only the running window said.**
+
+The composer's 760px cap was **not in force**: the transcript's TUI skin lifts it, on the
+stated grounds that a centred input under a *full-width transcript* would give the skin
+away. Ticket 55 ends that premise, so the rule had inverted into the mismatch it was
+written to prevent. The override is deleted and its reasoning recorded where it was.
+Related: the cap had to be the composer's *content* box, since matching its border box left
+the transcript 20px wider on each side than the input beneath it.
+
+The archive folder could not live under `.ade/sessions`. `JsonlSessionRepo.list` with no
+`cwd` walks every directory beneath the sessions root and parses the `.jsonl` files in each,
+so archiving into one would have handed the archive back to the next caller that asked that
+way. `listStored` passes a `cwd` and would not have noticed. It is `.ade/archive`.
+
+**One deliberate shortcut, marked in the code and the ticket.** An archived conversation is
+not browsable from the app. The folder is plainly named and a file manager reaches it; the
+signal to build an Archived group is someone going looking for one.
+
+**Deleted with its last caller**: `goToWorkspace`. Going to a workspace is focusing a
+conversation in it, and with the header reduced to a collapse toggle nothing was left that
+went to a *workspace* rather than to a conversation.

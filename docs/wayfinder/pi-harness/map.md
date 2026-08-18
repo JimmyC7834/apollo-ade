@@ -722,6 +722,51 @@ turns in one tree from being silently wrong, which is the price of declining the
 problem not exist. It is not in this sequence: it changes what "the workspace" means, and it
 is a decision that has not been made.
 
+### Slice 41 — the navigator, settled by looking at it
+
+Sessions have been an object, a set, a background runner and a list of other folders'
+conversations for nine tickets. This is the first batch that comes from **using** the
+result rather than from charting it, and it is small on purpose.
+
+| | | |
+|---|---|---|
+| **[54](tickets/54-no-console-windows.md)** | No console windows | **landed** |
+| **[55](tickets/55-navigator-is-part-of-the-chat.md)** | The navigator reads as part of the chat | **landed** |
+| **[56](tickets/56-archive-and-delete-a-session.md)** | Archive and delete a session | **landed** |
+
+**54 is a bug, not a decision**, and it is on the map only because it will come back: one
+Rust spawn site out of six sets `CREATE_NO_WINDOW`, so everything else the ADE runs flashes
+a console window. A shared helper is what stops the seventh from doing it too.
+
+**55 is mostly deletion**, and the deletion is the point. The workspace header stops
+switching roots — not because switching is unwanted but because
+[49](tickets/49-a-session-in-another-folder.md) already made picking a session do it, and a
+header that both collapses and switches is a second way to do something that works. What
+that costs is the door into a workspace with no conversations in it, and a `+` on the
+collapsed header pays it. The rest is the navigator's border, shadow and surface going, and
+the transcript getting back the 760px column the composer under it never lost.
+
+**56 is where the confinement boundary showed up in a place nobody expected it**: archive
+and delete are *writes*, the explorer's file commands resolve against the window's root,
+and a stored row in another folder is a file rather than a registered session — so there is
+no id to write with and offering the buttons there means a new write door. The answer is to
+not offer them there, which costs one click, because selecting that row already brings the
+window to its folder. **Nothing about several sessions in several roots is affected** —
+that is ADR 0002 and it holds throughout.
+
+**One shortcut is taken deliberately in 56 and is marked in it**: an archived session is
+not browsable from the app. The signal to build the Archived group is someone going looking
+for one, not the symmetry of having a round trip.
+
+**Two things only the running window said**, and both are the reason this batch was driven
+rather than reasoned about. The composer's 760px cap **was not in force** — the transcript's
+TUI skin lifts it, on the stated grounds that a centred input under a *full-width
+transcript* would give the skin away. 55 ends that premise, so the rule had inverted into
+the very mismatch it was written to prevent. And the archive folder could not live under
+`.ade/sessions`: `JsonlSessionRepo.list` with no `cwd` walks every directory beneath the
+sessions root, so archiving into one would have handed the archive straight back to the
+next caller that asked that way. Today's caller passes a `cwd` and would not have noticed.
+
 ### Queued by the dev after Slice 38
 
 Nine items, accepted as a batch, now written up as **tickets 25–36**. They are **not**

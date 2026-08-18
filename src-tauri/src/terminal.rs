@@ -387,9 +387,11 @@ mod tests {
         /// Is this pid still on the machine? `tasklist` rather than `OpenProcess`
         /// so the test stays free of `unsafe`.
         fn alive(pid: u32) -> bool {
-            std::process::Command::new("tasklist")
-                .args(["/FI", &format!("PID eq {pid}"), "/NH"])
-                .output()
+            crate::spawn::windowless(
+                std::process::Command::new("tasklist")
+                    .args(["/FI", &format!("PID eq {pid}"), "/NH"]),
+            )
+            .output()
                 .map(|out| String::from_utf8_lossy(&out.stdout).contains(&pid.to_string()))
                 .unwrap_or(false)
         }

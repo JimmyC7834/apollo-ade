@@ -133,7 +133,9 @@ fn shell() -> Option<&'static (PathBuf, &'static str)> {
                     }
                 }
                 // Anything on PATH — a scoop/winget Git, or WSL's bash.
-                if let Ok(output) = Command::new("where").arg("bash.exe").output() {
+                if let Ok(output) =
+                    crate::spawn::windowless(Command::new("where").arg("bash.exe")).output()
+                {
                     if let Some(first) = String::from_utf8_lossy(&output.stdout).lines().next() {
                         let path = PathBuf::from(first.trim());
                         if path.is_file() {
@@ -237,6 +239,7 @@ pub async fn agent_exec(
             shelled
         }
     };
+    crate::spawn::windowless(&mut command);
     command.current_dir(&cwd);
     if !request.inherit_env {
         command.env_clear();

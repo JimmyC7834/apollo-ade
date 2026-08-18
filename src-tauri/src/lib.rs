@@ -4,6 +4,7 @@ mod lsp;
 mod profiles;
 mod provider;
 mod reaper;
+mod spawn;
 mod rtk;
 mod terminal;
 mod workspace;
