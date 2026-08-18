@@ -2120,13 +2120,19 @@ body {
 	white-space: nowrap;
 }
 
-/* Session Navigator — slice 39.
+/* Session Navigator — slice 39, re-measured in 57.
 
-   Every measurement here is from the Shell Guide and is exact: 32px collapsed
-   including a 1px right border, a 31px icon column that matches the actual
-   inner width, 264px expanded, 32px rows, 12px markers and 18px for the active
-   one. They are stated as literals rather than tokens because they are one
-   component's geometry, not a role anything else shares. */
+   The Shell Guide's figures were 32px collapsed including a 1px right border
+   and a 31px icon column, so the icon column matched the inner width exactly.
+   Ticket 55 removed the border and left 32px of width around a 31px column —
+   one pixel of every label bleeding down the collapsed strip.
+
+   Collapsed width and icon column are now the same number, so the strip is the
+   icons and nothing else. 264px expanded, 32px rows, 12px markers and 18px for
+   the active one are unchanged. They are stated as literals rather than tokens
+   because they are one component's geometry, not a role anything else shares. */
+
+
 
 .ide-navigator {
 	position: absolute;
@@ -2136,8 +2142,19 @@ body {
 	z-index: 5;
 	display: flex;
 	flex-direction: column;
-	width: 32px;
-	overflow: hidden auto;
+	/*
+	 * The collapsed width, and the icon column that has to equal it — one
+	 * number, because the moment they differ the difference is label text
+	 * showing down the side of the strip.
+	 */
+	--strip: 28px;
+	width: var(--strip);
+	/*
+	 * No scrollbar on the strip: a scrollbar is 15px of a 28px column, so it
+	 * would take half the icons' width to offer a gesture aimed at labels
+	 * nobody can read yet. Scrolling arrives with the labels.
+	 */
+	overflow: hidden;
 	/*
 	 * Ticket 55: no border, no shadow, and the chat's own background in both
 	 * states. It is still an overlay and still never reflows chat — what goes is
@@ -2153,6 +2170,7 @@ body {
 
 .ide-navigator-expanded {
 	width: 264px;
+	overflow: hidden auto;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -2231,17 +2249,27 @@ body {
 }
 
 /*
- * The `+` on a collapsed group, and — in ticket 56 — archive and delete on a
- * session row. Right-aligned, 31px so it lines up with the icon column on the
+ * New session on a workspace header, and archive and delete on a session row.
+ * Right-aligned, the icon column's width so it lines up with the icons on the
  * other side, and revealed by hover *or focus*: hover alone would make it
  * pointer-exclusive, and the keyboard is not optional here.
+ *
+ * **Gone entirely while the navigator is collapsed**, and that is not tidiness.
+ * The strip is exactly one icon wide, so a right-aligned button in the same row
+ * takes all of it and the icon it sits beside — a status dot or a session
+ * marker — is clipped out of existence. That was ticket 55's one real defect:
+ * every workspace with a `+` lost its dot the moment the pointer left.
  */
+.ide-navigator:not(.ide-navigator-expanded) .ide-navigator-action-button {
+	display: none;
+}
+
 .ide-navigator-action-button {
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
 	flex: none;
-	width: 31px;
+	width: var(--strip);
 	height: 32px;
 	padding: 0;
 	border: none;
@@ -2276,7 +2304,7 @@ body {
 	align-items: center;
 	justify-content: center;
 	flex: none;
-	width: 31px;
+	width: var(--strip);
 	color: var(--muted-foreground);
 }
 

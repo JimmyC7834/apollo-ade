@@ -733,6 +733,7 @@ result rather than from charting it, and it is small on purpose.
 | **[54](tickets/54-no-console-windows.md)** | No console windows | **landed** |
 | **[55](tickets/55-navigator-is-part-of-the-chat.md)** | The navigator reads as part of the chat | **landed** |
 | **[56](tickets/56-archive-and-delete-a-session.md)** | Archive and delete a session | **landed** |
+| **[57](tickets/57-the-strip-is-only-icons.md)** | The strip is only icons | **landed** |
 
 **54 is a bug, not a decision**, and it is on the map only because it will come back: one
 Rust spawn site out of six sets `CREATE_NO_WINDOW`, so everything else the ADE runs flashes
@@ -757,6 +758,15 @@ that is ADR 0002 and it holds throughout.
 **One shortcut is taken deliberately in 56 and is marked in it**: an archived session is
 not browsable from the app. The signal to build the Archived group is someone going looking
 for one, not the symmetry of having a round trip.
+
+**57 is what using 55 and 56 for an hour found**, which is the same way this batch started.
+Three of its four items are consequences the tickets that caused them did not see: removing
+the navigator's border left 32px of width around a 31px icon column, so a pixel of every
+label ran down the strip; a scrollbar took half of a column too narrow to read; and a
+right-aligned button on a one-icon-wide row clipped the icon beside it out of existence, so
+every workspace offering a `+` went blank when the pointer left. The fourth is a plain
+duplication — a **New session** row *and* a `+` doing the same thing — and the row is the
+one that goes, being a session-shaped thing in a list of sessions while not being one.
 
 **Two things only the running window said**, and both are the reason this batch was driven
 rather than reasoned about. The composer's 760px cap **was not in force** — the transcript's

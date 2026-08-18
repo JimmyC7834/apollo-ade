@@ -11,14 +11,17 @@ export interface SessionNavigatorProps {
 	 * Start a conversation in a workspace — ticket 47, widened by ticket 49.
 	 *
 	 * **Born inside the group it belongs to**, because picking where a session
-	 * goes and making it are one gesture. Every group offers it now, not only the
-	 * one you are in: `at` is the group's index into the recent list, and
-	 * undefined is the workspace the window is already in.
+	 * goes and making it are one gesture. Every group offers it: `at` is the
+	 * group's index into the recent list, and undefined is the workspace the
+	 * window is already in.
 	 *
 	 * **It is also the only door into a workspace with nothing in it**, since
-	 * ticket 55 took switching off the group header. That is why a collapsed
-	 * group still offers it as a `+`: collapsing hides the rows, and this used to
-	 * be one of them.
+	 * ticket 55 took switching off the group header.
+	 *
+	 * One control, on the header, and ticket 57 made it that. It used to be a
+	 * `New session` row *and* a `+` that stood in for the row while the group was
+	 * collapsed — two affordances for one action, and the row was a session-shaped
+	 * thing in a list of sessions that was not one.
 	 */
 	readonly onNewSession?: (at?: number) => void;
 	/**
@@ -50,9 +53,13 @@ const STATUS_LABEL: Record<SessionStatus, string> = {
 /**
  * The navigator belongs to the Chat Workbench and spans only its height.
  *
- * Collapsed it is 32px of status markers; expanded it is 264px **over** chat —
- * it never reflows it, which is why it is absolutely positioned rather than a
- * flex sibling.
+ * Collapsed it is a 28px strip of status markers; expanded it is 264px **over**
+ * chat — it never reflows it, which is why it is absolutely positioned rather
+ * than a flex sibling.
+ *
+ * The strip is exactly one icon wide and has no scrollbar, which is what makes
+ * it only icons: at 32px around a 31px icon column, a pixel of every label ran
+ * down its side.
  *
  * **It has no border and no shadow, and it is the chat's own background in both
  * states** (ticket 55). It is meant to read as part of the chat rather than as a
@@ -142,7 +149,7 @@ export function SessionNavigator({
 									{group.branch ? ` · ${group.branch}` : ''}
 								</span>
 							</button>
-							{groupCollapsed && onNewSession ? (
+							{onNewSession ? (
 								<button
 									type="button"
 									className="ide-navigator-action-button"
@@ -235,18 +242,6 @@ export function SessionNavigator({
 									</div>
 								))}
 
-						{groupCollapsed || !onNewSession ? null : (
-							<button
-								type="button"
-								className="ide-navigator-row"
-								onClick={() => onNewSession(at)}
-							>
-								<span className="ide-navigator-icon">
-									<Icon name="add" />
-								</span>
-								<span className="ide-navigator-label">New session</span>
-							</button>
-						)}
 					</div>
 				);
 			})}

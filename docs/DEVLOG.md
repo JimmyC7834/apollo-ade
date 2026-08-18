@@ -5262,3 +5262,62 @@ signal to build an Archived group is someone going looking for one.
 **Deleted with its last caller**: `goToWorkspace`. Going to a workspace is focusing a
 conversation in it, and with the header reduced to a collapse toggle nothing was left that
 went to a *workspace* rather than to a conversation.
+
+## Slice 41b — The strip is only icons (57)
+
+**User outcome.** The collapsed navigator is a column of icons and nothing else: no pixel of
+label bleeding down its side, no scrollbar taking half its width, and no workspace losing its
+status dot. Starting a session in a workspace is one control rather than two.
+
+### Added
+
+Nothing. This slice is four corrections and one deletion.
+
+### UI extracted / reused
+
+The `+` moved onto the same footing as archive and delete — right-aligned on its row,
+revealed on `:hover, :focus-within`. The **New session** row is gone.
+
+### Adapters and dependencies
+
+None.
+
+### Security boundary
+
+Untouched.
+
+### Accessibility behavior
+
+The `+` keeps its visually-hidden name and is still reached by keyboard: it computes
+`opacity: 0` at rest and `1` while it holds focus. Hiding the action buttons while the
+navigator is collapsed removes them from the tab order along with the pointer — correct,
+because at 28px there is nothing to aim at and the labels naming them are not readable yet.
+
+### Validation performed
+
+`npm run check` clean. Driven in the native window: collapsed measures 28px with
+`overflow-y: hidden` and no reserved scrollbar, six of six workspace dots render inside a
+28px icon column, every action button computes `display: none`, and no label's box starts
+inside the strip. Expanded measures 264px with `overflow-y: auto`, the `+` sits flush right
+on every group, and clicking `workspace-b`'s took it from two rows to three with the window
+following.
+
+### What was *not* validated
+
+The expanded scrollbar appearing. The list fits at this window size, so `overflow-y: auto`
+was confirmed as a computed value rather than by seeing one.
+
+### Caveats and deviations
+
+**Three of these four were caused by the two slices before them, and none of the three was
+visible from the code.** Removing the navigator's border in 55 left 32px of width around a
+31px icon column — the Shell Guide's numbers had been exact *because* of the border, and
+deleting it silently broke the arithmetic. The scrollbar had always been there and only
+became wrong when the strip got narrow enough to notice. And the worst of them, a workspace
+losing its status dot, was 55's `+` and 56's archive and delete taking the whole of a
+one-icon-wide row and clipping the icon beside them: a defect that appears only when the
+pointer leaves, which is exactly when nobody is looking at it.
+
+The Shell Guide's 32px collapsed width is deliberately deviated from. It was 32px *including
+a border this app no longer draws*; 28px keeps what the figure was for, which is a strip the
+width of one icon.
