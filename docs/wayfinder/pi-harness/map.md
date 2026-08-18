@@ -740,6 +740,15 @@ result rather than from charting it, and it is small on purpose.
 | **[61](tickets/61-one-store-keyed-by-root.md)** | One store, keyed by root | **landed** |
 | **[62](tickets/62-an-index-is-resolved-when-it-is-spent.md)** | An index is resolved when it is spent | **landed** |
 
+**All nine have landed**, each driven in the native window rather than argued from tests.
+Five of the nine (58–62) were not on the map when the batch started: they are what an hour of
+using 55 and 56 turned up, and each one was found by clicking something rather than by
+reading the code. Two limits are recorded rather than closed — 54's console-window check ran
+on a `tauri dev` build, which inherits the launching terminal's console and so can hide both
+the bug and the fix (a release build launched from Explorer is the stronger check, and was
+not run), and 58's "an empty session is removed by closing it" was verified through the
+command rather than through the UI.
+
 **54 is a bug, not a decision**, and it is on the map only because it will come back: one
 Rust spawn site out of six sets `CREATE_NO_WINDOW`, so everything else the ADE runs flashes
 a console window. A shared helper is what stops the seventh from doing it too.
