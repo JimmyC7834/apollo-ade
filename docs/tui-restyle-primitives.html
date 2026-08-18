@@ -1,0 +1,551 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>TUI restyle — primitives</title>
+<!--
+  Companion to tui-restyle-probe.html. That one settled the vocabulary — what
+  "float", "looks like text" and "no fills" mean. This one applies the settled
+  answers to every primitive the app has.
+
+  Second pass. What was picked is now rendered as the single chosen version and
+  is interactive where being interactive is the only way to judge it (menus
+  open, sections expand). What is still open is still shown as lettered
+  variants. Nothing here is a component library — it is a reference for
+  decisions, kept because they are cheaper to re-read than to re-derive.
+
+  Baked in throughout, agreed: one mono grid; no fill at rest; hover lifts 1px
+  onto a rounded surface; rules are hairlines; a `>` marker on list rows but
+  NOT on buttons; a floating popup's own items do not float again, they take an
+  ncurses selection bar drawn from a theme token rather than a fixed blue.
+-->
+<style>
+  :root {
+    --bg:#1b1b1b; --fg:#e4e2df; --dim:#75726e; --mut:#a3a09b;
+    --card:#212121; --pop:#262626; --border:#303030; --strong:#4a4a4a;
+    /* The one place the theme is chosen. The selection bar reads these, so a
+       green or amber theme changes it without touching a rule below. */
+    --accent:#6cb6ff; --on-accent:#0d0d0d;
+    --warn:#d0a215; --bad:#f14c4c; --ok:#81b88b;
+    --radius:4px;
+  }
+  body { background:var(--bg); color:var(--fg); margin:0; padding:24px 28px 80px;
+         font:13px/22px "Cascadia Mono",Consolas,monospace; font-variant-ligatures:none; }
+  h2 { font-size:13px; font-weight:600; margin:34px 0 2px; color:var(--accent); }
+  h2::before { content:"## "; color:var(--dim); }
+  h2 em { font-style:normal; font-weight:400; color:var(--dim); }
+  p.note { color:var(--mut); margin:0 0 12px; max-width:88ch; }
+  .row { display:flex; gap:34px; align-items:flex-start; flex-wrap:wrap; }
+  .col { min-width:250px; }
+  .cap { color:var(--dim); margin-bottom:6px; }
+  .cap b { color:var(--fg); font-weight:600; }
+  .k { color:var(--dim); }
+  hr { border:none; border-top:1px solid var(--border); margin:30px 0 0; }
+
+  /* ── The two hovers, and they are deliberately different ────────────────
+     A row in a list is a place you are going: it gets the marker and the lift.
+     A button is a thing you press: it gets the lift only, because a marker in
+     front of `Save` reads as a bullet, not as a cursor. */
+  .r, .btn { display:block; box-sizing:border-box; height:22px; line-height:22px;
+             padding:0 8px; color:var(--mut); cursor:pointer; white-space:nowrap;
+             transition:transform 90ms, background 90ms, box-shadow 90ms, color 90ms; }
+  .lift:hover { color:var(--fg); background:var(--card); border-radius:var(--radius);
+                transform:translateY(-1px); box-shadow:0 2px 6px rgb(0 0 0/45%); }
+  /* The marker lives in a fixed gutter so appearing does not shift the label. */
+  .r > .g { display:inline-block; width:2ch; color:var(--accent); }
+  .r:hover > .g::before { content:">"; }
+  /* Brightening is the whole hover for a row that may not lift. */
+  .r:hover { color:var(--fg); }
+  .btn { display:inline-block; width:auto; }
+  /* The collapsed navigator strip. Square, and square by being exactly one row
+     tall and one row wide — so expanding the strip moves nothing vertically. */
+  .cell { display:block; width:22px; height:22px; line-height:22px; text-align:center;
+          cursor:pointer; }
+  .cell:hover { background:var(--card); }
+  /* Focus: the hover lift, plus an outline the pointer never draws. */
+  .foc:focus-visible { outline:1px solid var(--accent); outline-offset:-1px;
+                       color:var(--fg); background:var(--card); border-radius:var(--radius);
+                       transform:translateY(-1px); box-shadow:0 2px 6px rgb(0 0 0/45%); }
+  .foc:focus-visible > .g::before { content:">"; }
+  .sel { color:var(--fg); }
+
+  /* ── ncurses selection bar, for rows on a floating surface ──────────────
+     Inverted, from the theme token. No lift, and the rule is general rather
+     than about menus: **elevation belongs to a surface, not to a row.** If the
+     thing a row sits in already floats — a menu, the overlaid session
+     navigator, a palette — the row does not float again, because two
+     elevations for one decision reads as a bug. Only rows on the flat page
+     lift. */
+  .bar { display:block; height:22px; line-height:22px; padding:0 8px; cursor:pointer;
+         color:var(--mut); white-space:nowrap; }
+  .bar:hover, .bar.on { background:var(--accent); color:var(--on-accent); }
+  .bar:hover .k, .bar.on .k { color:var(--on-accent); opacity:.7; }
+
+  /* ── Tree, with guides drawn as borders so they actually connect ────────
+     Box-drawing characters cannot: a `│` is glyph-height and the row is
+     line-height, so every row boundary shows a gap. Borders are continuous by
+     construction and land on the same grid. */
+  .tree ul { list-style:none; margin:0; padding:0 0 0 15px; border-left:1px solid var(--border); }
+  .tree > ul { border-left:none; padding-left:0; }
+  .tree li { position:relative; }
+  .tree ul ul li::before { content:""; position:absolute; left:-15px; top:11px;
+                           width:11px; border-top:1px solid var(--border); }
+  /* Stop the parent's line under the last child's elbow, so the branch ends
+     in an `└` rather than running on into nothing. */
+  .tree ul ul li:last-child::after { content:""; position:absolute; left:-16px; top:12px;
+                                     bottom:0; width:1px; background:var(--bg); }
+
+  /* ── Input, 3C ──────────────────────────────────────────────────────────*/
+  input.t { font:inherit; color:var(--fg); background:none; border:none; outline:none;
+            width:100%; box-sizing:border-box; padding:0; }
+  ::placeholder { color:var(--dim); }
+  .field { border:1px solid var(--strong); padding:0 8px; display:flex; gap:8px;
+           transition:border-color 90ms; }
+  .field:focus-within { border-color:var(--accent); }
+  .field:focus-within .sig { color:var(--accent); }
+  .sig { color:var(--dim); }
+
+  /* ── Popup surface ──────────────────────────────────────────────────────*/
+  .pop { background:var(--pop); border:1px solid var(--border); padding:4px 0;
+         box-shadow:0 2px 8px rgb(0 0 0/40%); }
+
+  /* ── Tabs, 6A ───────────────────────────────────────────────────────────*/
+  .tabs { display:flex; gap:16px; border-bottom:1px solid var(--strong); padding:0 8px; }
+  .tabs span { cursor:pointer; color:var(--dim); }
+  .tabs span.on { color:var(--fg); box-shadow:inset 0 -1px 0 var(--accent); }
+
+  /* ── Disclosure, 5A ─────────────────────────────────────────────────────*/
+  details { margin:0; }
+  summary { list-style:none; }
+  summary::-webkit-details-marker { display:none; }
+  summary { height:22px; line-height:22px; padding:0 8px; color:var(--mut);
+            cursor:pointer; transition:transform 90ms, background 90ms, box-shadow 90ms, color 90ms; }
+  summary .g { display:inline-block; width:2ch; color:var(--dim); }
+  summary .g::before { content:">"; }
+  details[open] > summary .g::before { content:"v"; }
+  .body { padding:0 8px 6px 23px; color:var(--dim); border-left:1px solid var(--border);
+          margin-left:12px; }
+
+  .dd { position:relative; display:inline-block; }
+  .dd .pop { position:absolute; left:0; top:24px; z-index:5; min-width:100%; }
+  [hidden] { display:none !important; }
+</style>
+
+<p class="note"><b>Second pass.</b> Picked things are rendered once, as themselves, and work where working is the point — open the dropdowns, expand the sections. Lettered variants mean still open.</p>
+
+<!-- 1 ─────────────────────────────────────────────────────── -->
+<h2>1 · List &amp; tree <em>— 1C, no marker, guides that connect</em></h2>
+<p class="note">Selection is brightness alone now. The guides are drawn as borders rather than as <code>│</code> characters, because characters leave a gap at every row boundary and you asked for them connected — same grid, same colour, continuous.</p>
+<div class="row">
+  <div class="col tree" style="min-width:280px">
+    <div class="cap"><b>tree</b> · hover floats, no marker in the gutter</div>
+    <ul>
+      <li><span class="r lift">src</span>
+        <ul>
+          <li><span class="r lift">agent</span>
+            <ul>
+              <li><span class="r lift sel">sessionStore.ts</span></li>
+              <li><span class="r lift">sessionSet.ts</span></li>
+            </ul>
+          </li>
+          <li><span class="r lift">features</span>
+            <ul>
+              <li><span class="r lift">SessionNavigator.tsx</span></li>
+            </ul>
+          </li>
+          <li><span class="r lift">sessions.ts</span></li>
+          <li><span class="r lift">App.css</span></li>
+        </ul>
+      </li>
+      <li><span class="r lift">docs</span></li>
+    </ul>
+  </div>
+  <div class="col" style="min-width:290px">
+    <div class="cap"><b>flat list</b> · the navigator, which floats — so its rows do not</div>
+    <div class="pop" style="width:260px">
+      <span class="r"><span class="g"></span>the navigator restyle</span>
+      <span class="r sel"><span class="g"></span>an index resolved when spent</span>
+      <span class="r"><span class="g"></span>one store keyed by root</span>
+    </div>
+    <div class="cap" style="margin:10px 0 6px">same list, ncurses bar instead</div>
+    <div class="pop" style="width:260px">
+      <span class="bar">the navigator restyle</span>
+      <span class="bar">an index resolved when spent</span>
+      <span class="bar">one store keyed by root</span>
+    </div>
+    <div class="k" style="font-size:11px;margin-top:6px">Q15: marker, or bar, for a floating list?</div>
+  </div>
+</div>
+
+<!-- 2 ─────────────────────────────────────────────────────── -->
+<h2>2 · Menu <em>— 2A frame, ncurses bar inside</em></h2>
+<p class="note">The bar is <code>--accent</code> on <code>--on-accent</code>, both theme tokens — swap the theme and the bar changes with it. Nothing here is hard-coded blue.</p>
+<div class="row">
+  <div class="col">
+    <div class="cap"><b>context menu</b></div>
+    <div class="pop" style="width:220px">
+      <span class="bar">Open to the Side</span>
+      <span class="bar">Rename<span class="k" style="float:right">F2</span></span>
+      <span class="bar">Reveal in Explorer</span>
+      <span class="bar" style="color:var(--bad)">Delete<span class="k" style="float:right">Del</span></span>
+    </div>
+  </div>
+  <div class="col">
+    <div class="cap"><b>same, amber theme</b> · one token changed</div>
+    <div class="pop" style="width:220px;--accent:#d0a215">
+      <span class="bar">Open to the Side</span>
+      <span class="bar on">Rename<span class="k" style="float:right">F2</span></span>
+      <span class="bar">Reveal in Explorer</span>
+      <span class="bar">Delete<span class="k" style="float:right">Del</span></span>
+    </div>
+  </div>
+  <div class="col">
+    <div class="cap"><b>same, green theme</b></div>
+    <div class="pop" style="width:220px;--accent:#81b88b">
+      <span class="bar on">Open to the Side</span>
+      <span class="bar">Rename<span class="k" style="float:right">F2</span></span>
+      <span class="bar">Reveal in Explorer</span>
+      <span class="bar">Delete<span class="k" style="float:right">Del</span></span>
+    </div>
+  </div>
+</div>
+
+<!-- 3 ─────────────────────────────────────────────────────── -->
+<h2>3 · Text input <em>— 3C, boxed</em></h2>
+<p class="note">Click into it. The border and the sigil go accent together; nothing else moves.</p>
+<div class="row">
+  <div class="col" style="width:340px">
+    <div class="cap"><b>composer</b></div>
+    <div class="field"><span class="sig">&gt;</span><input class="t" placeholder="ask anything"></div>
+  </div>
+  <div class="col" style="width:260px">
+    <div class="cap"><b>rename</b> · same field, labelled</div>
+    <div class="k" style="padding-left:1px">new name</div>
+    <div class="field"><input class="t" value="sessionStore.ts"></div>
+  </div>
+</div>
+
+<!-- 4 ─────────────────────────────────────────────────────── -->
+<h2>4 · Dropdown <em>— open them</em></h2>
+<p class="note">The trigger is a button, so it lifts and takes no marker. The list is a menu, so it takes the bar. A native <code>&lt;select&gt;</code> cannot do this — these are section 2's popup.</p>
+<div class="row">
+  <div class="col">
+    <div class="cap"><b>4A</b> · value + caret</div>
+    <div class="dd">
+      <span class="btn lift" data-dd style="width:220px">claude-opus-5 <span class="k" style="float:right">v</span></span>
+      <div class="pop" hidden style="width:220px">
+        <span class="bar on">claude-opus-5</span>
+        <span class="bar">claude-sonnet-5</span>
+        <span class="bar">claude-haiku-4.5</span>
+        <span class="bar">claude-fable-5</span>
+      </div>
+    </div>
+  </div>
+  <div class="col">
+    <div class="cap"><b>4B</b> · labelled pair</div>
+    <div class="dd">
+      <span class="btn lift" data-dd style="width:220px"><span class="k">model </span>claude-opus-5 <span class="k" style="float:right">v</span></span>
+      <div class="pop" hidden style="width:220px">
+        <span class="bar on">claude-opus-5</span>
+        <span class="bar">claude-sonnet-5</span>
+        <span class="bar">claude-haiku-4.5</span>
+      </div>
+    </div>
+  </div>
+  <div class="col">
+    <div class="cap"><b>4C</b> · cycles in place, no popup</div>
+    <span class="btn lift" data-cycle style="width:220px">claude-opus-5 <span class="k" style="float:right">&lt; &gt;</span></span>
+    <div class="k" style="font-size:11px">click it — only honest for a short list</div>
+  </div>
+</div>
+
+<!-- 5 ─────────────────────────────────────────────────────── -->
+<h2>5 · Expand / collapse <em>— 5A, working</em></h2>
+<p class="note">A real transcript's worth of chips. Click the summaries.</p>
+<div class="row">
+  <div class="col" style="min-width:520px">
+    <details open>
+      <summary class="lift"><span class="g"></span>read <span class="k">src/sessions.ts</span></summary>
+      <div class="body">
+        <div>1..40 of 312 lines</div>
+        <div class="k">export function manageable(session: Session): boolean {</div>
+        <div class="k">&nbsp;&nbsp;return !session.live &amp;&amp; session.switchIndex === undefined;</div>
+        <div class="k">}</div>
+      </div>
+    </details>
+    <details>
+      <summary class="lift"><span class="g"></span>edit <span class="k">src/App.css</span> <span class="k">+18 −4</span></summary>
+      <div class="body">
+        <div style="color:var(--ok)">+ .ide-navigator-row:hover { transform: translateY(-1px) }</div>
+        <div style="color:var(--bad)">− .ide-navigator-row:hover { background: var(--accent) }</div>
+      </div>
+    </details>
+    <details>
+      <summary class="lift"><span class="g"></span>bash <span class="k">npm run check</span> <span style="color:var(--bad)">failed</span></summary>
+      <div class="body">
+        <div class="k">28 node checks, 37 rust tests</div>
+        <div style="color:var(--bad)">error: unused variable `switchIndex`</div>
+      </div>
+    </details>
+  </div>
+</div>
+
+<!-- 6 ─────────────────────────────────────────────────────── -->
+<h2>6 · Tabs <em>— 6A</em></h2>
+<div class="row">
+  <div class="col" style="width:340px">
+    <div class="tabs" data-tabs><span class="on">diff</span><span>terminal</span><span>search</span></div>
+  </div>
+</div>
+
+<!-- 7 ─────────────────────────────────────────────────────── -->
+<h2>7 · Mode toggle <em>— 7A</em></h2>
+<p class="note">This is the gate policy on the composer bar: <code>auto</code> or <code>careful</code>. Click to switch.</p>
+<div class="row">
+  <div class="col">
+    <div data-seg style="padding:0 8px"><span class="on" style="padding-right:10px;cursor:pointer;color:var(--fg)">auto</span
+      ><span style="cursor:pointer;color:var(--dim)">careful</span></div>
+  </div>
+</div>
+
+<!-- 8 ─────────────────────────────────────────────────────── -->
+<h2>8 · Status <em>— 8A, and the glyph is the collapsed icon</em></h2>
+<p class="note">Same three glyphs in both states, which is the point: collapsed, the strip is those characters and nothing else, so nothing has to be redesigned for the narrow case.</p>
+<div class="row">
+  <div class="col" style="min-width:300px">
+    <div class="cap"><b>expanded</b></div>
+    <div class="pop" style="width:300px">
+      <span class="r"><span class="g"></span><span style="color:var(--ok)">*</span> the navigator restyle</span>
+      <span class="r"><span class="g"></span><span style="color:var(--warn)">~</span> an index resolved when spent <span class="k">running</span></span>
+      <span class="r"><span class="g"></span><span style="color:var(--bad)">!</span> one store keyed by root <span class="k">failed</span></span>
+    </div>
+  </div>
+  <div class="col">
+    <div class="cap"><b>collapsed strip</b> · square cell, square glyph</div>
+    <div style="width:22px;outline:1px dashed var(--border)">
+      <span class="cell" style="color:var(--ok)">■</span>
+      <span class="cell" style="color:var(--warn)">■</span>
+      <span class="cell" style="color:var(--bad)">■</span>
+    </div>
+    <div class="k" style="font-size:11px;margin-top:6px">22×22, so a row does not<br>move when the strip expands</div>
+  </div>
+  <div class="col">
+    <div class="cap"><b>for comparison</b> · same cell, prose glyphs</div>
+    <div style="width:22px;outline:1px dashed var(--border)">
+      <span class="cell" style="color:var(--ok)">*</span>
+      <span class="cell" style="color:var(--warn)">~</span>
+      <span class="cell" style="color:var(--bad)">!</span>
+    </div>
+    <div class="k" style="font-size:11px;margin-top:6px">carries three states in one<br>glyph; ■ carries only colour</div>
+  </div>
+</div>
+
+<!-- 9 ─────────────────────────────────────────────────────── -->
+<h2>9 · Context meter <em>— 9D, thinner</em></h2>
+<p class="note">One character wide, sitting on the baseline in the composer footer. Stroke down from 4 to 2 in a 20-unit box, which is a hairline at 13px and matches the weight of the rules everywhere else.</p>
+<div class="row">
+  <div class="col">
+    <div class="cap"><b>the ring</b></div>
+    <div class="k" style="display:flex;align-items:center;gap:6px"><svg width="13" height="13" viewBox="0 0 20 20" style="vertical-align:-2px"><circle cx="10" cy="10" r="8" fill="none" stroke="var(--border)" stroke-width="2"/><circle cx="10" cy="10" r="8" fill="none" stroke="var(--accent)" stroke-width="2" stroke-dasharray="50.27" stroke-dashoffset="19.10" transform="rotate(-90 10 10)"/></svg> 62% context</div>
+    <div class="k" style="display:flex;align-items:center;gap:6px;margin-top:2px"><svg width="13" height="13" viewBox="0 0 20 20" style="vertical-align:-2px"><circle cx="10" cy="10" r="8" fill="none" stroke="var(--border)" stroke-width="2"/><circle cx="10" cy="10" r="8" fill="none" stroke="var(--warn)" stroke-width="2" stroke-dasharray="50.27" stroke-dashoffset="4.52" transform="rotate(-90 10 10)"/></svg>
+      <span style="color:var(--warn)">91% context · /compact</span></div>
+    <div class="k" style="display:flex;align-items:center;gap:6px;margin-top:2px"><svg width="13" height="13" viewBox="0 0 20 20" style="vertical-align:-2px"><circle cx="10" cy="10" r="8" fill="none" stroke="var(--border)" stroke-width="2"/><circle cx="10" cy="10" r="8" fill="none" stroke="var(--accent)" stroke-width="2" stroke-dasharray="50.27" stroke-dashoffset="46.25" transform="rotate(-90 10 10)"/></svg> 8% context</div>
+  </div>
+  <div class="col">
+    <div class="cap"><b>in place</b> · the composer footer</div>
+    <div style="width:300px">
+      <div class="field"><span class="sig">&gt;</span><input class="t" placeholder="ask anything"></div>
+      <div class="k" style="display:flex;align-items:center;gap:8px;font-size:11px;padding:2px 1px">
+        <span>claude-opus-5</span><span>auto</span>
+        <span style="margin-left:auto;display:flex;align-items:center;gap:5px"><svg width="12" height="12" viewBox="0 0 20 20" style="vertical-align:-2px"><circle cx="10" cy="10" r="8" fill="none" stroke="var(--border)" stroke-width="2"/><circle cx="10" cy="10" r="8" fill="none" stroke="var(--accent)" stroke-width="2" stroke-dasharray="50.27" stroke-dashoffset="19.10" transform="rotate(-90 10 10)"/></svg> 62%</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 10 ────────────────────────────────────────────────────── -->
+<h2>10 · Dialog <em>— 10A</em></h2>
+<div class="row">
+  <div class="col">
+    <div class="pop" style="width:300px;padding:0;box-shadow:0 2px 8px rgb(0 0 0/40%)">
+      <div style="padding:0 8px;border-bottom:1px solid var(--border)">Delete session</div>
+      <div class="k" style="padding:6px 8px">Deleting <span style="color:var(--fg)">navigator work</span> moves its file to the trash.</div>
+      <div style="display:flex;gap:6px;justify-content:flex-end;padding:0 4px 4px">
+        <span class="btn lift">Cancel</span>
+        <span class="btn lift" style="color:var(--bad)">Delete</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- 11 ────────────────────────────────────────────────────── -->
+<h2>11 · Toast <em>— 11A</em></h2>
+<div class="row">
+  <div class="col">
+    <div class="pop" style="width:270px;padding:0 8px">
+      <span style="color:var(--ok)">*</span> Archived <span class="k">navigator work</span></div>
+  </div>
+</div>
+
+<!-- 12 ────────────────────────────────────────────────────── -->
+<h2>12 · Scrollbar <em>— 12A, unchanged</em></h2>
+<div class="row">
+  <div class="col">
+    <div style="height:66px;width:220px;position:relative;border:1px solid var(--border)">
+      <div class="k" style="padding:0 8px">content</div>
+      <div style="position:absolute;right:1px;top:6px;width:6px;height:28px;background:rgb(255 255 255/22%);border-radius:3px"></div></div>
+  </div>
+</div>
+
+<hr>
+<p class="note" style="margin-top:14px"><b>Still open:</b> whether the tree rows want the <span style="color:var(--accent)">&gt;</span> gutter too (shown without, since it competes with the elbow) · ring vs disc for the meter · row height, 22px here.</p>
+
+<script>
+  for (const t of document.querySelectorAll('[data-dd]')) {
+    t.addEventListener('click', (e) => {
+      const pop = t.nextElementSibling;
+      const wasOpen = !pop.hidden;
+      for (const p of document.querySelectorAll('.dd .pop')) p.hidden = true;
+      pop.hidden = wasOpen;
+      e.stopPropagation();
+    });
+  }
+  for (const pop of document.querySelectorAll('.dd .pop')) {
+    for (const bar of pop.querySelectorAll('.bar')) {
+      bar.addEventListener('click', () => {
+        for (const b of pop.querySelectorAll('.bar')) b.classList.remove('on');
+        bar.classList.add('on');
+        const trigger = pop.previousElementSibling;
+        const caret = trigger.querySelector('.k:last-child');
+        const label = trigger.querySelector('.k:first-child');
+        trigger.innerHTML = (label && label !== caret ? label.outerHTML + ' ' : '') +
+          bar.textContent + (caret ? ' ' + caret.outerHTML : '');
+        pop.hidden = true;
+      });
+    }
+  }
+  document.addEventListener('click', () => {
+    for (const p of document.querySelectorAll('.dd .pop')) p.hidden = true;
+  });
+
+  const models = ['claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4.5'];
+  for (const c of document.querySelectorAll('[data-cycle]')) {
+    let i = 0;
+    c.addEventListener('click', () => {
+      i = (i + 1) % models.length;
+      c.innerHTML = models[i] + '<span class="k" style="float:right">&lt; &gt;</span>';
+    });
+  }
+
+  for (const tabs of document.querySelectorAll('[data-tabs]')) {
+    for (const tab of tabs.children) {
+      tab.addEventListener('click', () => {
+        for (const t of tabs.children) t.classList.remove('on');
+        tab.classList.add('on');
+      });
+    }
+  }
+
+  for (const seg of document.querySelectorAll('[data-seg]')) {
+    for (const opt of seg.children) {
+      opt.addEventListener('click', () => {
+        for (const o of seg.children) o.style.color = 'var(--dim)';
+        opt.style.color = 'var(--fg)';
+      });
+    }
+  }
+</script>
+
+<hr>
+<h2>13 · What is not drawn yet <em>— the audit you asked for</em></h2>
+<p class="note">Every styled surface the app actually has, checked against the twelve above. These are the ones nothing here has decided. Sketched where a sketch settles it; named where it does not.</p>
+
+<div class="row">
+  <div class="col" style="min-width:300px">
+    <div class="cap"><b>13a</b> · keyboard focus — lift <i>and</i> outline</div>
+    <p class="note" style="font-size:11px">Focus takes the same lift hover does, plus an accent outline. The lift says "this row is the live one"; the outline says the keyboard put it there, which hover never does. Tab through these.</p>
+    <span class="r foc" tabindex="0"><span class="g"></span>the navigator restyle</span>
+    <span class="r foc" tabindex="0"><span class="g"></span>an index resolved when spent</span>
+    <span class="r foc" tabindex="0"><span class="g"></span>one store keyed by root</span>
+  </div>
+  <div class="col" style="min-width:300px">
+    <div class="cap"><b>13b</b> · empty state</div>
+    <div class="k" style="border:1px solid var(--border);padding:6px 8px;width:270px">
+      <div>no conversations here yet</div>
+      <div style="margin-top:4px">press <span style="color:var(--fg)">+</span> to start one</div>
+    </div>
+  </div>
+  <div class="col" style="min-width:300px">
+    <div class="cap"><b>13c</b> · attachment chips, on the composer</div>
+    <div style="display:flex;gap:10px;width:270px">
+      <span class="btn lift" style="border:1px solid var(--border)">sessions.ts <span class="k">x</span></span>
+      <span class="btn lift" style="border:1px solid var(--border)">App.css <span class="k">x</span></span>
+    </div>
+    <div class="k" style="font-size:11px;margin-top:4px">framed, or bare text with a leading <code>@</code>?</div>
+  </div>
+</div>
+
+<div class="row" style="margin-top:18px">
+  <div class="col" style="min-width:300px">
+    <div class="cap"><b>13d</b> · diff lines and SCM badges</div>
+    <div style="width:280px">
+      <span class="r" style="display:flex"><span class="g"></span>sessions.ts&nbsp;<span style="color:var(--warn)">M</span>
+        <span style="margin-left:auto"><span style="color:var(--ok)">+18</span> <span style="color:var(--bad)">−4</span></span></span>
+      <span class="r" style="display:flex"><span class="g"></span>spawn.rs&nbsp;<span style="color:var(--ok)">A</span>
+        <span style="margin-left:auto"><span style="color:var(--ok)">+42</span></span></span>
+      <span class="r" style="display:flex"><span class="g"></span>old.ts&nbsp;<span style="color:var(--bad)">D</span>
+        <span style="margin-left:auto"><span style="color:var(--bad)">−310</span></span></span>
+    </div>
+    <div class="k" style="font-size:11px">letter after the name, counts at the margin — the letter<br>rides the name it describes, the numbers form a column</div>
+  </div>
+  <div class="col" style="min-width:300px">
+    <div class="cap"><b>13e</b> · approval block, in the transcript</div>
+    <div style="width:290px;border-left:2px solid var(--warn);padding:2px 8px">
+      <div><span style="color:var(--warn)">?</span> run <span class="k">rm -rf build/</span></div>
+      <div style="margin-top:2px"><span class="btn lift" style="display:inline-block">allow</span
+        ><span class="btn lift" style="display:inline-block;color:var(--bad)">deny</span></div>
+    </div>
+  </div>
+  <div class="col" style="min-width:300px">
+    <div class="cap"><b>13f</b> · command palette</div>
+    <div class="pop" style="width:280px;padding:0">
+      <div class="field" style="border:none;border-bottom:1px solid var(--border)">
+        <span class="sig">:</span><input class="t" placeholder="type a command"></div>
+      <div style="padding:4px 0">
+        <span class="bar on">Toggle Terminal <span class="k" style="float:right">Ctrl+`</span></span>
+        <span class="bar">New Session <span class="k" style="float:right">Ctrl+N</span></span>
+        <span class="bar">Choose Folder…</span>
+      </div>
+    </div>
+    <div class="k" style="font-size:11px;margin-top:4px">sigil <code>:</code> like vim, or <code>&gt;</code> like today?</div>
+  </div>
+</div>
+
+<div class="row" style="margin-top:18px">
+  <div class="col" style="min-width:300px">
+    <div class="cap"><b>13g</b> · titlebar — chrome, or a status line?</div>
+    <div style="width:290px;border-bottom:1px solid var(--strong);padding:0 8px" class="k">
+      <span style="color:var(--fg)">tauri-ade-prototype</span> / master
+      <span style="float:right">─ □ ×</span></div>
+    <div class="k" style="font-size:11px;margin-top:4px">a TUI puts this at the bottom and calls it a status line; a desktop window needs its controls at the top</div>
+  </div>
+  <div class="col" style="min-width:300px">
+    <div class="cap"><b>13h</b> · resize handle between chat and dock</div>
+    <div style="display:flex;width:290px;height:44px">
+      <div class="k" style="flex:1;padding:0 8px">chat</div>
+      <div style="width:9px;margin:0 -4px;cursor:col-resize;display:flex;justify-content:center;z-index:1"
+        title="9px of grab, 1px of rule"><div style="width:1px;background:var(--strong)"></div></div>
+      <div class="k" style="width:110px;padding:0 8px">dock</div>
+    </div>
+    <div class="k" style="font-size:11px">1px of rule inside 9px of grab, pulled back by its<br>own margin so the extra width costs no layout</div>
+  </div>
+  <div class="col" style="min-width:300px">
+    <div class="cap"><b>13i</b> · streaming indicator</div>
+    <div class="k">~ thinking<span id="dots">.</span></div>
+    <div class="k" style="font-size:11px;margin-top:4px">a spinner cycling <code>|/-\</code>, dots, or the <code>~</code> alone?</div>
+  </div>
+</div>
+
+<p class="note" style="margin-top:20px"><b>Named, not sketched</b> — nothing above decides these, and each is small once the rules are settled: the Context Explorer's list and its empty state · the Problems list · the accessibility-help sheet · the popover · a dock tab's close control · the terminal's own title · the subpage header and its back control · selection inside Monaco and xterm, which keep their own theming either way.</p>
+
+<script>
+  let n = 0;
+  setInterval(() => { n = (n + 1) % 4; document.getElementById('dots').textContent = '.'.repeat(n); }, 400);
+</script>

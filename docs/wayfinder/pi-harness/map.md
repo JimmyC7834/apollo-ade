@@ -835,6 +835,72 @@ the very mismatch it was written to prevent. And the archive folder could not li
 sessions root, so archiving into one would have handed the archive straight back to the
 next caller that asked that way. Today's caller passes a `cwd` and would not have noticed.
 
+### Slice 42 — the shell, restyled as a terminal
+
+The dev wants the ADE to look and feel like an advanced TUI, with modern controls: text
+instead of icons, no panels, and a list that floats a little when you point at it. Settled
+over four rounds of grilling, eighteen questions, and three reference files that were built
+rather than described because the words turned out to be hiding the decisions.
+
+| | | |
+|---|---|---|
+| **[63](tickets/63-one-grid.md)** | One grid | ready-for-agent |
+| **[64](tickets/64-icons-are-text.md)** | Icons are text | ready-for-agent |
+| **[65](tickets/65-no-fill-at-rest.md)** | No fill at rest | ready-for-agent |
+| **[66](tickets/66-hover-lifts-focus-outlines.md)** | Hover lifts, focus outlines | ready-for-agent |
+| **[67](tickets/67-rules-not-panels.md)** | Rules, not panels | ready-for-agent |
+
+63 gates everything. 64, 65 hang off it; 66 and 67 hang off 65, because you cannot see an
+interaction layer until the fills that were doing its job are gone.
+
+**This is a restyle and nothing else.** Not one ticket moves a region, adds or removes a
+control, or changes what anything does. That constraint is the dev's, stated at the point
+the tickets were written, and it is what keeps a look from becoming a redesign: the app
+that comes out of slice 42 is the app that went in, in different clothes.
+
+**Three reference files carry the decisions**, in `docs/`, and the tickets point at them
+rather than restating them:
+
+- `tui-restyle-probe.html` — the vocabulary. What "float a bit", "looks like text" and
+  "remove the sidebar styling" turned out to mean, made concrete so they could be picked
+  between.
+- `tui-restyle-primitives.html` — thirteen primitives, each in the settled style, plus an
+  audit of every surface the app has that nothing above had decided.
+- `tui-restyle-mockup.html` — the whole app assembled, drawn from the running app rather
+  than from memory.
+
+**The mockup is a review artifact, not a specification.** It was built for the dev to look
+at, and it deliberately shows things that are *not* in these tickets — a bottom status
+line, a collapsed strip carrying only status glyphs, panes that end in a footer instead of
+starting with a header. Every one of those is a UX change, and none of them is in scope.
+A ticket that implements the mockup literally is a ticket that has misread it, the same way
+`context.md` already warns about the Shell Guide.
+
+**Four decisions worth recording, because they are the ones that will be re-litigated:**
+
+**The tokens do not change.** Every colour stays exactly the value it is. What changes is
+that they stop being painted as backgrounds and start being read as text colour. Changing
+the palette as well would mean changing Monaco's and xterm's derived themes, which is a
+slice of its own and not what was asked for.
+
+**Elevation belongs to a surface, not to a row.** A row on the flat page lifts; a row on
+something that already floats — the navigator, a menu, the command centre — does not. The
+dev found this one: *"for list most likely when hover won't want floating as I assume the
+list itself will be in a floating container."* It is a rule rather than a list of cases
+because two elevations for one decision reads as a bug wherever it happens.
+
+**A picture survives only where a character would be a lie.** In practice that is the
+context ring and nothing else — a proportion is the one thing a glyph cannot say. `+`, `x`
+and `>` are text, not icons.
+
+**The Shell Guide keeps topology and loses look.** `context.md` makes
+`docs/UIUX-UPDATE.md` authoritative for everything the user sees, and this slice overrules
+its iconography, its surfaces, its radii and its tone. Its regional model — one chat
+workbench, a dock of artifacts, no permanent panels — is not in question and is what slices
+37–41 were built on. **This is decided but not yet written down where it belongs**: an ADR
+and a `context.md` amendment are outstanding, and until they exist the two documents
+disagree.
+
 ### Queued by the dev after Slice 38
 
 Nine items, accepted as a batch, now written up as **tickets 25–36**. They are **not**

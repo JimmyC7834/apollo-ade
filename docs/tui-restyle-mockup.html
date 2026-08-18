@@ -1,0 +1,696 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>ADE — TUI restyle mockup</title>
+<!--
+  The actual ADE, restyled. Second attempt: the first was drawn from memory and
+  invented a layout the app does not have. This one was drawn from the running
+  app at localhost:5190 — same regions, same controls, same order, same empty
+  state, right down to `~ Ask the agent to do something.` and the composer's
+  send arrow living inside the box.
+
+  What is deliberately NOT the app as it stands:
+    · the bottom status line, which is Q17 — the titlebar keeps window controls
+      and everything it used to *say* moves down here
+    · every visual rule settled in tui-restyle-probe.html and
+      tui-restyle-primitives.html
+
+  Interactive: the navigator opens and closes (with the animation), sessions
+  switch, the profile menu, profile editor, context popover, model popover and
+  command center all open, the dock pins and unpins and its edge drags, the
+  composer takes a turn, and the theme switches from the status line. The dock
+  holds all six artifact kinds `artifacts.ts` names — an editor with a live
+  diagnostic, the terminal, problems, references, changes and the explorer tree
+  — each one a tab.
+
+  Collapsed, the strip is status glyphs and nothing else — one per conversation,
+  in prose (`*` idle, `~` running, `!` failed) so the state survives a light
+  theme, a colour-blind reader and being read aloud. Headers and grouping are
+  what expanding is for.
+-->
+<style>
+  :root {
+    color-scheme: dark;
+    --bg:#1b1b1b; --fg:#e4e2df; --dim:#75726e; --mut:#a3a09b;
+    --card:#212121; --pop:#262626; --border:#303030; --strong:#4a4a4a;
+    --accent:#6cb6ff; --on-accent:#0d0d0d;
+    --warn:#d0a215; --bad:#f14c4c; --ok:#81b88b;
+    --radius:4px; --row:22px; --strip:22px; --col:760px;
+  }
+  .light {
+    color-scheme: light;
+    --bg:#faf9f7; --fg:#1c1b19; --dim:#8a8680; --mut:#5f5c57;
+    --card:#f2f0ed; --pop:#ffffff; --border:#dedad4; --strong:#bcb7af;
+    --accent:#1f6feb; --on-accent:#ffffff;
+    --warn:#b07d17; --bad:#c0342b; --ok:#2c7a4b;
+  }
+  * { box-sizing:border-box; }
+  html, body { height:100%; margin:0; }
+  body { background:var(--bg); color:var(--fg); overflow:hidden;
+         font:13px/22px "Cascadia Mono",Consolas,monospace; font-variant-ligatures:none; }
+  .k { color:var(--dim); }
+  [hidden] { display:none !important; }
+
+  .app { display:grid; grid-template-rows:26px 1fr 22px; height:100%; }
+
+  /* ── Titlebar. `ADE ⌄` left, workspace centred, theme right — the app's own
+     three, minus what moved to the status line. */
+  .titlebar { display:grid; grid-template-columns:1fr auto 1fr; align-items:center;
+              padding:0 4px; border-bottom:1px solid var(--border); color:var(--dim); }
+  .titlebar .ws { text-align:center; }
+  .titlebar .right { display:flex; justify-content:flex-end; }
+  .tb { cursor:pointer; padding:0 6px; border-radius:var(--radius);
+        transition:transform 90ms, background 90ms, box-shadow 90ms, color 90ms; }
+  .tb:hover { color:var(--fg); background:var(--card);
+              transform:translateY(-1px); box-shadow:0 2px 6px rgb(0 0 0/45%); }
+
+  .body { display:grid; grid-template-columns:1fr 1px var(--dockw,300px); min-height:0; }
+  .body.nodock { grid-template-columns:1fr; }
+  .body.nodock .edge, .body.nodock .dock { display:none; }
+
+  .chat { position:relative; min-width:0; display:flex; flex-direction:column;
+          padding-left:var(--strip); }
+
+  /* ── Session navigator. The strip is one row wide and one row tall per cell,
+     so it is square and expanding moves nothing vertically. The width is what
+     animates — 120ms, both ways, which is the animation the app already has. */
+  .nav { position:absolute; inset:0 auto 0 0; width:var(--strip); z-index:6;
+         background:var(--bg); overflow:hidden; transition:width 120ms ease; }
+  .nav.open { width:264px; overflow:hidden auto; box-shadow:2px 0 8px rgb(0 0 0/28%); }
+  .nav .strip { transition:opacity 90ms; }
+  .nav.open .strip { display:none; }
+  .nav .full { display:none; }
+  .nav.open .full { display:block; }
+  .cell { display:block; width:var(--strip); height:var(--strip); line-height:var(--strip);
+          text-align:center; cursor:pointer; }
+  .cell:hover { background:var(--card); }
+  .grp { display:flex; height:var(--row); line-height:var(--row); padding:0 8px;
+         color:var(--mut); cursor:pointer; }
+  .grp .g { width:2ch; flex:none; color:var(--dim); }
+  .grp:hover { color:var(--fg); }
+  .grp .plus { margin-left:auto; color:var(--dim); visibility:hidden; padding:0 4px; }
+  .grp:hover .plus { visibility:visible; }
+
+  /* Rows: marker and brightness. The navigator floats, so its rows do not. */
+  .r { display:flex; align-items:center; height:var(--row); line-height:var(--row);
+       padding:0 8px; color:var(--mut); cursor:pointer; white-space:nowrap;
+       transition:transform 90ms, background 90ms, box-shadow 90ms, color 90ms; }
+  .r > .g { flex:none; width:2ch; color:var(--accent); }
+  .r:hover { color:var(--fg); }
+  .r:hover > .g::before, .foc:focus-visible > .g::before { content:">"; }
+  .r.on { color:var(--fg); }
+  .r .lbl { overflow:hidden; text-overflow:ellipsis; }
+  .r .act { margin-left:auto; padding-left:8px; color:var(--dim); visibility:hidden; }
+  .r:hover .act { visibility:visible; }
+  .r .act span:hover { color:var(--fg); }
+  /* Only rows on the flat page lift. */
+  .lift:hover { background:var(--card); border-radius:var(--radius);
+                transform:translateY(-1px); box-shadow:0 2px 6px rgb(0 0 0/45%); }
+  .foc:focus-visible { outline:1px solid var(--accent); outline-offset:-1px; color:var(--fg);
+                       background:var(--card); border-radius:var(--radius);
+                       transform:translateY(-1px); box-shadow:0 2px 6px rgb(0 0 0/45%); }
+
+  /* ── Transcript */
+  .log { flex:1; overflow:auto; padding:8px 16px; }
+  .log > * { max-width:var(--col); margin-inline:auto; }
+  .empty { color:var(--dim); }
+  .turn + .turn { margin-top:12px; padding-top:12px; }
+  .prompt { border-left:2px solid var(--accent); padding:0 12px; margin:0 0 8px; }
+  .md h3 { font-size:13px; font-weight:600; margin:0 0 2px; }
+  .md h3::before { content:"# "; color:var(--dim); }
+  .md p { margin:0 0 8px; }
+  .md code { color:var(--accent); }
+  .usage { text-align:right; color:var(--dim); font-size:11px; }
+  details.chip { margin:0; }
+  details.chip > summary { list-style:none; display:flex; height:var(--row);
+                           line-height:var(--row); color:var(--dim); cursor:pointer; }
+  details.chip > summary::-webkit-details-marker { display:none; }
+  .chip .g { width:2ch; flex:none; }
+  .chip[data-state="run"] .g { color:var(--warn); }
+  .chip[data-state="fail"] .g { color:var(--bad); }
+  .chip:hover > summary { color:var(--fg); }
+  .chip .out { border-left:1px solid var(--strong); margin-left:8px; padding:0 8px 4px;
+               color:var(--dim); white-space:pre-wrap; }
+
+  /* ── Composer. The app's shape: one bordered block, multi-line, the send
+     control inside it at the bottom right, and a bar of dim text underneath. */
+  .composer { padding:0 16px 6px; }
+  .composer > * { max-width:var(--col); margin-inline:auto; }
+  .field { border:1px solid var(--strong); padding:2px 8px 0; position:relative;
+           transition:border-color 90ms; }
+  .field:focus-within { border-color:var(--accent); }
+  textarea.t { font:inherit; color:var(--fg); background:none; border:none; outline:none;
+               width:100%; resize:none; height:66px; padding:0; }
+  .send { position:absolute; right:6px; bottom:2px; color:var(--dim); cursor:pointer;
+          padding:0 4px; border-radius:var(--radius);
+          transition:transform 90ms, background 90ms, box-shadow 90ms, color 90ms; }
+  .send:hover { color:var(--fg); background:var(--card);
+                transform:translateY(-1px); box-shadow:0 2px 6px rgb(0 0 0/45%); }
+  .bar-row { display:flex; align-items:center; gap:12px; font-size:11px; color:var(--dim);
+             padding:2px 0; flex-wrap:wrap; }
+  .btn { cursor:pointer; padding:0 4px; border-radius:var(--radius); position:relative;
+         transition:transform 90ms, background 90ms, box-shadow 90ms, color 90ms; }
+  .btn:hover { color:var(--fg); background:var(--card);
+               transform:translateY(-1px); box-shadow:0 2px 6px rgb(0 0 0/45%); }
+
+  /* ── Dock */
+  .edge { background:var(--strong); position:relative; }
+  .edge::after { content:""; position:absolute; inset:0 -4px; cursor:col-resize; }
+  .dock { display:flex; flex-direction:column; min-width:0; }
+  .tabs { display:flex; gap:14px; padding:0 8px; border-bottom:1px solid var(--strong);
+          height:var(--row); line-height:var(--row); flex:none; }
+  .tabs span { cursor:pointer; color:var(--dim); }
+  .tabs span.on { color:var(--fg); box-shadow:inset 0 -1px 0 var(--accent); }
+  .tabs .close { margin-left:auto; }
+  .dockbody { flex:1; overflow:auto; padding:4px; }
+  .pane { display:none; } .pane.on { display:block; }
+  .term { color:var(--dim); white-space:pre-wrap; padding:0 4px; }
+  .tabs { overflow:auto hidden; scrollbar-width:none; }
+  .tabs::-webkit-scrollbar { display:none; }
+
+  /*
+   * Code, in the editor and in a diff. The gutter is a fixed cell rather than
+   * a column of its own: a line number is text on the same grid as the code it
+   * numbers, and the moment it becomes a separate column the two can drift.
+   */
+  .code { white-space:pre; color:var(--mut); padding:0 4px; overflow:auto; }
+  .ln { display:inline-block; width:4ch; color:var(--dim); user-select:none; }
+  .ct { color:var(--accent); }
+  .st { color:var(--ok); }
+  .cm { color:var(--dim); }
+  .add { color:var(--ok); }
+  .del { color:var(--bad); }
+  /*
+   * A diagnostic, as a dotted rule under the span. Not a squiggle: a squiggle
+   * is a drawn wave and this is a grid of characters, and the dots land on the
+   * same baseline every other underline in the app does.
+   */
+  .err { border-bottom:1px dotted var(--bad); }
+  .hit { color:var(--fg); background:var(--card); }
+
+  /* Every pane ends in one line of plain text saying what it is showing. The
+     app's panes each had their own header; a footer costs no vertical space at
+     the top, where the content is. */
+  .paneft { position:sticky; bottom:0; background:var(--bg); color:var(--dim);
+            font-size:11px; line-height:20px; padding:0 6px;
+            border-top:1px solid var(--border); margin-top:6px; }
+
+  /* Tree guides, drawn as borders so they connect. Characters cannot: a `|` is
+     glyph-height and a row is line-height, so every row boundary shows a gap. */
+  .tree ul { list-style:none; margin:0; padding:0 0 0 15px; border-left:1px solid var(--border); }
+  .tree > ul { border-left:none; padding-left:0; }
+  .tree li { position:relative; }
+  .tree ul ul li::before { content:""; position:absolute; left:-15px; top:11px;
+                           width:11px; border-top:1px solid var(--border); }
+  .tree ul ul li:last-child::after { content:""; position:absolute; left:-16px; top:12px;
+                                     bottom:0; width:1px; background:var(--bg); }
+
+  /* ── Status line */
+  .status { display:flex; align-items:center; gap:14px; padding:0 6px; font-size:11px;
+            color:var(--dim); border-top:1px solid var(--border); overflow:hidden;
+            white-space:nowrap; }
+  .status b { color:var(--fg); font-weight:400; }
+  .status .right { margin-left:auto; display:flex; gap:12px; align-items:center; }
+  .status .btn { padding:0 4px; }
+
+  /* ── Popups: the only surfaces that keep a fill, because they must. */
+  .pop { position:absolute; z-index:20; background:var(--pop); border:1px solid var(--border);
+         box-shadow:0 2px 8px rgb(0 0 0/40%); padding:4px 0; }
+  .bar { display:flex; height:var(--row); line-height:var(--row); padding:0 8px;
+         cursor:pointer; color:var(--mut); white-space:nowrap; }
+  .bar:hover, .bar.on { background:var(--accent); color:var(--on-accent); }
+  .bar:hover .k, .bar.on .k { color:var(--on-accent); opacity:.75; }
+  .bar .mark { width:2ch; flex:none; }
+  .bar .tail { margin-left:auto; padding-left:16px; }
+  .sep { border-top:1px solid var(--border); margin:4px 0; }
+
+  /* ── Command center */
+  .backdrop { position:fixed; inset:0; background:rgb(0 0 0/40%); z-index:15; }
+  .cc { position:fixed; left:50%; top:64px; transform:translateX(-50%); width:560px;
+        padding:0; z-index:20; }
+  .cc .ccfield { display:flex; gap:8px; padding:0 8px; border-bottom:1px solid var(--border); }
+  .cc input { font:inherit; color:var(--fg); background:none; border:none; outline:none;
+              width:100%; height:26px; padding:0; }
+  .cc .sig { color:var(--accent); line-height:26px; }
+  .cc .list { max-height:340px; overflow:auto; padding:4px 0; }
+  .cc .src { color:var(--dim); padding-left:10px; }
+  .cc .foot { border-top:1px solid var(--border); padding:0 8px; color:var(--dim);
+              font-size:11px; line-height:20px; }
+  ::placeholder { color:var(--dim); }
+
+  /* ── Dialog: profile editor */
+  .modal { position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); width:560px;
+           max-height:86vh; overflow:auto; z-index:20; padding:0; }
+  .modal h2 { font-size:13px; font-weight:600; margin:0; padding:0 10px;
+              border-bottom:1px solid var(--border); line-height:26px; }
+  .modal .sect { padding:6px 10px; }
+  .modal label.line { display:flex; gap:10px; align-items:center; margin-bottom:4px; }
+  .modal label.line > span:first-child { width:16ch; flex:none; color:var(--dim); }
+  .in { flex:1; border:1px solid var(--strong); padding:0 6px; background:none;
+        color:var(--fg); font:inherit; outline:none; height:22px; }
+  .in:focus { border-color:var(--accent); }
+  textarea.in { height:44px; resize:vertical; padding:2px 6px; }
+  .radio { display:flex; gap:8px; cursor:pointer; color:var(--mut); padding:0 0 2px; }
+  .radio .m { width:3ch; flex:none; color:var(--dim); }
+  .radio.on { color:var(--fg); } .radio.on .m { color:var(--accent); }
+  .radio .why { color:var(--dim); }
+  .modal .foot { display:flex; gap:8px; justify-content:flex-end; padding:6px 8px;
+                 border-top:1px solid var(--border); }
+  .hint { color:var(--dim); font-size:11px; }
+</style>
+
+<div class="app">
+  <div class="titlebar">
+    <span><span class="tb" id="menu">ade <span class="k">v</span></span></span>
+    <span class="ws">tauri-ade-prototype <span class="k">/ master</span></span>
+    <span class="right"><span class="tb" id="theme" title="light / dark">&#9681;</span></span>
+  </div>
+
+  <div class="body" id="body">
+    <div class="chat">
+      <!-- ── Navigator -->
+      <div class="nav" id="nav">
+        <!--
+          Collapsed, the strip is the conversations and nothing else: no
+          chevron, no group headers, no "choose folder". A header names a group
+          and there are no groups at 22px — grouping is what expanding is for.
+        -->
+        <div class="strip" id="strip">
+          <div class="cell" style="color:var(--ok)" title="the navigator restyle — idle">*</div>
+          <div class="cell" style="color:var(--warn)" title="an index resolved when spent — running">~</div>
+          <div class="cell" style="color:var(--dim)" title="one store keyed by root — idle">*</div>
+          <div class="cell" style="color:var(--bad)" title="the rtk fetch route — failed">!</div>
+        </div>
+
+        <div class="full">
+          <div class="grp" data-grp><span class="g">v</span>tauri-ade-prototype <span class="k">&nbsp;&middot; master</span><span class="plus" title="new session here">+</span></div>
+          <div class="r on" data-sess="the navigator restyle" data-root="tauri-ade-prototype / master" data-state="idle">
+            <span class="g"></span><span class="gl" style="color:var(--ok)">*</span>&nbsp;<span class="lbl">the navigator restyle</span>
+            <span class="act"><span title="archive">a</span> <span title="delete">x</span></span></div>
+          <div class="r" data-sess="an index resolved when spent" data-root="tauri-ade-prototype / master" data-state="running">
+            <span class="g"></span><span class="gl" style="color:var(--warn)">~</span>&nbsp;<span class="lbl">an index resolved when spent</span>
+            <span class="act"><span title="archive">a</span> <span title="delete">x</span></span></div>
+          <div class="r" data-sess="one store keyed by root" data-root="tauri-ade-prototype / master" data-state="idle">
+            <span class="g"></span><span class="gl" style="color:var(--dim)">*</span>&nbsp;<span class="lbl">one store keyed by root</span>
+            <span class="act"><span title="archive">a</span> <span title="delete">x</span></span></div>
+
+          <div class="grp" data-grp><span class="g">v</span>second-root <span class="k">&nbsp;&middot; master</span><span class="plus">+</span></div>
+          <div class="r" data-sess="the rtk fetch route" data-root="second-root / master" data-state="failed">
+            <span class="g"></span><span class="gl" style="color:var(--bad)">!</span>&nbsp;<span class="lbl">the rtk fetch route</span>
+            <span class="act"><span title="archive">a</span> <span title="delete">x</span></span></div>
+
+          <div class="grp" data-grp><span class="g">&gt;</span>colorle <span class="k">&nbsp;&middot; main</span><span class="plus">+</span></div>
+          <div class="r k"><span class="g"></span>/ choose folder&hellip;</div>
+        </div>
+      </div>
+
+      <div class="log" id="log">
+        <div class="empty" id="empty">~ Ask the agent to do something. Enter sends, Shift+Enter adds a newline.</div>
+      </div>
+
+      <div class="composer">
+        <div class="field">
+          <textarea class="t" id="input" placeholder="Ask the agent&hellip;"></textarea>
+          <span class="send" id="send" title="send">&#9166;</span>
+        </div>
+        <div class="bar-row">
+          <span class="btn" title="attach a file">+</span>
+          <span class="btn" id="model">no model <span class="k">&middot; medium</span></span>
+          <span class="btn" id="ctx" style="display:flex;align-items:center;gap:5px">context
+            <svg width="12" height="12" viewBox="0 0 20 20">
+              <circle cx="10" cy="10" r="8" fill="none" stroke="var(--border)" stroke-width="2"/>
+              <circle cx="10" cy="10" r="8" fill="none" stroke="var(--accent)" stroke-width="2"
+                      stroke-dasharray="50.27" stroke-dashoffset="50.27" transform="rotate(-90 10 10)"/>
+            </svg></span>
+          <span style="margin-left:auto;display:flex;gap:12px">
+            <span class="btn" id="tscript">transcript</span>
+            <span class="btn" id="profile">researcher <span class="k">^</span></span>
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <div class="edge" id="edge"></div>
+
+    <!--
+      The Pinned Workbench. Every feature that used to be a permanent panel is
+      an artifact now (see `artifacts.ts`), and this is where a pinned one
+      lives: a file or diff through the editor, plus terminal, changes,
+      problems, references and the explorer tree.
+    -->
+    <div class="dock" id="dock">
+      <div class="tabs" id="tabs">
+        <span class="on" data-pane="editor">sessions.ts</span>
+        <span data-pane="term">terminal</span>
+        <span data-pane="problems">problems <span class="k">3</span></span>
+        <span data-pane="refs">references</span>
+        <span data-pane="changes">changes</span>
+        <span data-pane="explorer">explorer</span>
+        <span class="close btn" id="dockclose" title="unpin">x</span>
+      </div>
+      <div class="dockbody" id="dockbody">
+
+        <!-- Editor. Monaco keeps its own theming; what changes is the frame —
+             a gutter of dim numbers, a diagnostic as a dotted rule under the
+             span rather than a squiggle, and a footer of plain text. -->
+        <div class="pane on" data-pane="editor">
+          <div class="code">
+<span class="ln">38</span><span class="ct">export function</span> manageable(session: Session): <span class="ct">boolean</span> {
+<span class="ln">39</span>  <span class="ct">return</span> !session.live
+<span class="ln">40</span>    &amp;&amp; session.<span class="err" title="Property 'switchIndex' does not exist">switchIndex</span> === undefined;
+<span class="ln">41</span>}
+<span class="ln">42</span>
+<span class="ln">43</span><span class="cm">/* A root crosses to Rust as an index, never a path. */</span>
+<span class="ln">44</span><span class="ct">const</span> ARCHIVE = <span class="st">'.ade/archive'</span>;</div>
+          <div class="paneft"><span style="color:var(--bad)">!</span> 1 problem
+            <span style="float:right">ln 40, col 22 &middot; typescript &middot; <span style="color:var(--warn)">M</span></span></div>
+        </div>
+
+        <!-- Terminal. xterm draws itself; only the frame is ours. -->
+        <div class="pane" data-pane="term">
+          <div class="term">$ npm run check
+<span style="color:var(--ok)">&#10003;</span> 28 node checks
+<span style="color:var(--ok)">&#10003;</span> 37 rust tests
+<span style="color:var(--bad)">&#10007;</span> tsc &mdash; 1 error in src/sessions.ts
+$ <span style="color:var(--fg)">_</span></div>
+          <div class="paneft">bash &middot; tauri-ade-prototype <span style="float:right">exit 1</span></div>
+        </div>
+
+        <!-- Problems. Diagnostics, grouped by the file they are about. -->
+        <div class="pane" data-pane="problems">
+          <div class="grp"><span class="g">v</span>sessions.ts <span class="k">&nbsp;2</span></div>
+          <div class="r lift foc" tabindex="0"><span class="g"></span><span style="color:var(--bad)">!</span>&nbsp;<span class="lbl">Property 'switchIndex' does not exist on type 'Session'</span>
+            <span class="k" style="margin-left:auto">&nbsp;40:22</span></div>
+          <div class="r lift foc" tabindex="0"><span class="g"></span><span style="color:var(--warn)">?</span>&nbsp;<span class="lbl">'root' is declared but never read</span>
+            <span class="k" style="margin-left:auto">&nbsp;12:9</span></div>
+          <div class="grp"><span class="g">v</span>App.css <span class="k">&nbsp;1</span></div>
+          <div class="r lift foc" tabindex="0"><span class="g"></span><span class="k">i</span>&nbsp;<span class="lbl">Unknown property '--strip'</span>
+            <span class="k" style="margin-left:auto">&nbsp;104:2</span></div>
+          <div class="paneft">1 error &middot; 1 warning &middot; 1 hint
+            <span style="float:right">this workspace</span></div>
+        </div>
+
+        <!-- References. Where a symbol is used, with the line it is used on. -->
+        <div class="pane" data-pane="refs">
+          <div class="grp"><span class="g">v</span>SessionNavigator.tsx <span class="k">&nbsp;2</span></div>
+          <div class="r lift foc" tabindex="0"><span class="g"></span><span class="k">224&nbsp;</span><span class="lbl">{<span class="hit">manageable</span>(session) ? (</span></div>
+          <div class="r lift foc" tabindex="0"><span class="g"></span><span class="k">3&nbsp;&nbsp;&nbsp;</span><span class="lbl">import { <span class="hit">manageable</span>, type Session }</span></div>
+          <div class="grp"><span class="g">v</span>sessions.check.ts <span class="k">&nbsp;1</span></div>
+          <div class="r lift foc" tabindex="0"><span class="g"></span><span class="k">57&nbsp;&nbsp;</span><span class="lbl">assert(<span class="hit">manageable</span>(stored) === true)</span></div>
+          <div class="paneft">manageable &middot; 3 references in 2 files</div>
+        </div>
+
+        <!-- Changes -->
+        <div class="pane" data-pane="changes">
+          <div class="r lift foc" tabindex="0"><span class="g"></span><span class="lbl">App.css</span>&nbsp;<span style="color:var(--warn)">M</span>
+            <span style="margin-left:auto"><span style="color:var(--ok)">+64</span> <span style="color:var(--bad)">&minus;31</span></span></div>
+          <div class="r lift foc" tabindex="0"><span class="g"></span><span class="lbl">tokens.css</span>&nbsp;<span style="color:var(--warn)">M</span>
+            <span style="margin-left:auto"><span style="color:var(--ok)">+6</span> <span style="color:var(--bad)">&minus;2</span></span></div>
+          <div class="r lift foc" tabindex="0"><span class="g"></span><span class="lbl">glyphs.ts</span>&nbsp;<span style="color:var(--ok)">A</span>
+            <span style="margin-left:auto"><span style="color:var(--ok)">+38</span></span></div>
+          <div class="code" style="margin-top:6px">
+<span class="ln k">@@</span>-2687,6 +2687,4 @@
+<span class="ln"></span><span class="del">&minus; .ide-agent { font-family: var(--font-mono) }</span>
+<span class="ln"></span><span class="add">+ body { font-family: var(--font-mono) }</span>
+<span class="ln"></span><span class="add">+ /* the skin stopped being a skin */</span></div>
+          <div class="paneft">3 files &middot; <span style="color:var(--ok)">+108</span> <span style="color:var(--bad)">&minus;33</span></div>
+        </div>
+
+        <!-- Explorer. The connected guides from the primitives file. -->
+        <div class="pane" data-pane="explorer">
+          <div class="tree">
+            <ul>
+              <li><span class="r lift foc" tabindex="0">src</span>
+                <ul>
+                  <li><span class="r lift foc" tabindex="0">agent</span>
+                    <ul>
+                      <li><span class="r lift foc" tabindex="0">sessionStore.ts</span></li>
+                      <li><span class="r lift foc" tabindex="0">sessionSet.ts</span></li>
+                    </ul>
+                  </li>
+                  <li><span class="r lift foc on" tabindex="0">sessions.ts</span></li>
+                  <li><span class="r lift foc" tabindex="0">App.css</span></li>
+                </ul>
+              </li>
+              <li><span class="r lift foc" tabindex="0">docs</span></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="status">
+    <span><b id="stsess">the navigator restyle</b></span>
+    <span id="ststate" style="color:var(--ok)">* idle</span>
+    <span class="k">4,182 in &middot; 911 out</span>
+    <div class="right">
+      <span class="k">ctrl+k</span>
+      <span class="btn" id="dockbtn">dock: right</span>
+    </div>
+  </div>
+</div>
+
+<!-- ── Profile menu: the app's own list, as an ncurses menu. -->
+<div class="pop" id="profilemenu" hidden style="width:200px">
+  <span class="bar"><span class="mark"></span>auto</span>
+  <span class="bar"><span class="mark"></span>ask</span>
+  <span class="bar"><span class="mark"></span>plan</span>
+  <span class="bar on"><span class="mark">&#10003;</span>researcher</span>
+  <div class="sep"></div>
+  <span class="bar" id="editprofile"><span class="mark"></span>edit "researcher"&hellip;</span>
+  <span class="bar"><span class="mark"></span>new profile&hellip;</span>
+</div>
+
+<!-- ── Model / effort -->
+<div class="pop" id="modelmenu" hidden style="width:230px">
+  <span class="bar on"><span class="mark">&#10003;</span>claude-opus-5</span>
+  <span class="bar"><span class="mark"></span>claude-sonnet-5</span>
+  <span class="bar"><span class="mark"></span>claude-haiku-4.5</span>
+  <div class="sep"></div>
+  <span class="bar k" style="cursor:default"><span class="mark"></span>effort</span>
+  <span class="bar"><span class="mark"></span>low</span>
+  <span class="bar on"><span class="mark">&#10003;</span>medium</span>
+  <span class="bar"><span class="mark"></span>high</span>
+</div>
+
+<!-- ── Context popover -->
+<div class="pop" id="ctxpop" hidden style="width:320px">
+  <div style="padding:0 8px;color:var(--dim);border-bottom:1px solid var(--border);line-height:22px">
+    context <span style="float:right">62% &middot; 78k / 125k</span></div>
+  <div style="padding:4px 0">
+    <div class="r"><span class="g"></span><span class="lbl">App.css</span><span class="tail k" style="margin-left:auto">18k</span></div>
+    <div class="r"><span class="g"></span><span class="lbl">sessions.ts</span><span class="tail k" style="margin-left:auto">9k</span></div>
+    <div class="r"><span class="g"></span><span class="lbl">SessionNavigator.tsx</span><span class="tail k" style="margin-left:auto">6k</span></div>
+  </div>
+  <div style="padding:0 8px;color:var(--dim);border-top:1px solid var(--border);
+              font-size:11px;line-height:20px">nothing pinned &middot; /compact at 90%</div>
+</div>
+
+<!-- ── Command center -->
+<div class="backdrop" id="backdrop" hidden></div>
+<div class="pop cc" id="cc" hidden>
+  <div class="ccfield"><span class="sig">&gt;</span><input id="ccinput" placeholder="type a command, or search sessions, files and the transcript"></div>
+  <div class="list" id="cclist">
+    <span class="bar on">File: Open Folder<span class="k src">command</span></span>
+    <span class="bar">Session: New Session<span class="k src">command</span><span class="tail k">ctrl+n</span></span>
+    <span class="bar">Session: Close Session<span class="k src">command</span></span>
+    <span class="bar">File: Save<span class="k src">command</span><span class="tail k">ctrl+s</span></span>
+    <span class="bar" style="color:var(--dim)">View: Show Editor<span class="k src">command</span><span class="tail k">no open editors</span></span>
+    <span class="bar">View: Show Terminal<span class="k src">command</span></span>
+    <span class="bar">View: Show Changes<span class="k src">command</span></span>
+    <span class="bar">View: Toggle Artifact Dock<span class="k src">command</span></span>
+    <span class="bar">Help: Show Keyboard Help<span class="k src">command</span></span>
+  </div>
+  <div class="foot" id="ccfoot">14 results</div>
+</div>
+
+<!-- ── Profile editor -->
+<div class="pop modal" id="profileeditor" hidden>
+  <h2>edit profile</h2>
+  <div class="sect">
+    <label class="line"><span>name</span><input class="in" value="researcher"></label>
+    <label class="line"><span>provider</span>
+      <span class="in btn" style="display:flex;align-items:center">anthropic <span class="k" style="margin-left:auto">v</span></span></label>
+    <label class="line"><span>model</span><input class="in" value="claude-opus-5"></label>
+    <label class="line"><span>reasoning effort</span>
+      <span class="in btn" style="display:flex;align-items:center">medium <span class="k" style="margin-left:auto">v</span></span></label>
+  </div>
+
+  <div class="sect" style="border-top:1px solid var(--border)">
+    <div class="k">approval</div>
+    <div class="radio" data-radio><span class="m">( )</span><span>ask<span class="why"> &mdash; prompts before anything that changes a file or runs a command</span></span></div>
+    <div class="radio on" data-radio><span class="m">(*)</span><span>auto<span class="why"> &mdash; never prompts, except for a short list of irreversible commands</span></span></div>
+    <div class="radio" data-radio><span class="m">( )</span><span>bypass<span class="why"> &mdash; skips that list too; writes outside the workspace are still refused</span></span></div>
+  </div>
+
+  <div class="sect" style="border-top:1px solid var(--border)">
+    <div class="k">output</div>
+    <div class="radio on" data-check><span class="m">[x]</span><span>route commands through rtk<span class="why"> &mdash; filters verbose output before the model pays for it, pinned at v0.45.0</span></span></div>
+  </div>
+
+  <div class="sect" style="border-top:1px solid var(--border)">
+    <div class="r lift foc" tabindex="0"><span class="g"></span><span class="lbl">tools</span><span style="margin-left:auto" class="k">6 of 6 &nbsp;&gt;</span></div>
+    <div class="r lift foc" tabindex="0"><span class="g"></span><span class="lbl">skills</span><span style="margin-left:auto" class="k">0 of 0 &nbsp;&gt;</span></div>
+  </div>
+
+  <div class="sect" style="border-top:1px solid var(--border)">
+    <div class="k">extra instructions</div>
+    <textarea class="in" style="width:100%" placeholder="appended to the system prompt, never substituted for it"></textarea>
+  </div>
+
+  <div class="foot">
+    <span class="btn" data-close>cancel</span>
+    <span class="btn" style="color:var(--accent)" data-close>save</span>
+  </div>
+</div>
+
+<script>
+  const $ = (s) => document.querySelector(s);
+  const all = (s) => [...document.querySelectorAll(s)];
+
+  /* ── Navigator. Click the top cell or any cell to open; leaving closes it,
+     which is the app's behaviour — and the width transition is what animates. */
+  const nav = $('#nav');
+  const open = (on) => nav.classList.toggle('open', on);
+  nav.addEventListener('mouseenter', () => open(true));
+  nav.addEventListener('mouseleave', () => open(false));
+  nav.addEventListener('focusin', () => open(true));
+
+  for (const row of all('[data-sess]')) {
+    row.addEventListener('click', (e) => {
+      if (e.target.closest('.act')) return;
+      for (const r of all('[data-sess]')) r.classList.remove('on');
+      row.classList.add('on');
+      $('#stsess').textContent = row.dataset.sess;
+      $('.ws').innerHTML = row.dataset.root.replace(' / ', ' <span class="k">/ ') + '</span>';
+      const state = row.dataset.state;
+      const colour = { idle:'var(--ok)', running:'var(--warn)', failed:'var(--bad)' }[state];
+      $('#ststate').style.color = colour;
+      $('#ststate').innerHTML = row.querySelector('.gl').textContent + ' ' + state;
+    });
+  }
+  for (const g of all('[data-grp]')) {
+    g.addEventListener('click', () => {
+      const shown = g.querySelector('.g').textContent === 'v';
+      g.querySelector('.g').textContent = shown ? '>' : 'v';
+      let n = g.nextElementSibling;
+      while (n && !n.hasAttribute('data-grp')) {
+        if (n.dataset.sess) n.style.display = shown ? 'none' : '';
+        n = n.nextElementSibling;
+      }
+    });
+  }
+
+  /* ── Popups */
+  const popAt = (pop, anchor, above) => {
+    const r = anchor.getBoundingClientRect();
+    pop.hidden = false;
+    pop.style.left = r.left + 'px';
+    pop.style.top = (above ? r.top - pop.offsetHeight - 4 : r.bottom + 4) + 'px';
+  };
+  const hideAll = () => { for (const p of ['#profilemenu','#modelmenu','#ctxpop']) $(p).hidden = true; };
+  const wire = (btn, pop) => $(btn).addEventListener('click', (e) => {
+    const was = $(pop).hidden; hideAll();
+    if (was) popAt($(pop), e.currentTarget, true);
+    e.stopPropagation();
+  });
+  wire('#profile', '#profilemenu');
+  wire('#model', '#modelmenu');
+  wire('#ctx', '#ctxpop');
+  addEventListener('click', hideAll);
+  for (const pop of ['#profilemenu','#modelmenu','#ctxpop']) $(pop).addEventListener('click', (e) => e.stopPropagation());
+
+  /* ── Profile editor */
+  const modal = (on) => { $('#profileeditor').hidden = !on; $('#backdrop').hidden = !on; };
+  $('#editprofile').addEventListener('click', () => { hideAll(); modal(true); });
+  for (const b of all('#profileeditor [data-close]')) b.addEventListener('click', () => modal(false));
+  for (const group of ['[data-radio]']) {
+    const items = all(group);
+    for (const item of items) item.addEventListener('click', () => {
+      for (const o of items) { o.classList.remove('on'); o.querySelector('.m').textContent = '( )'; }
+      item.classList.add('on'); item.querySelector('.m').textContent = '(*)';
+    });
+  }
+  for (const c of all('[data-check]')) c.addEventListener('click', () => {
+    const on = c.classList.toggle('on');
+    c.querySelector('.m').textContent = on ? '[x]' : '[ ]';
+  });
+
+  /* ── Command center */
+  const cc = (on) => {
+    $('#cc').hidden = !on; $('#backdrop').hidden = !on;
+    if (on) $('#ccinput').focus();
+  };
+  addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'k') { e.preventDefault(); cc(true); }
+    if (e.key === 'Escape') { cc(false); modal(false); hideAll(); }
+  });
+  $('#backdrop').addEventListener('click', () => { cc(false); modal(false); });
+  $('#ccinput').addEventListener('input', () => {
+    const q = $('#ccinput').value.toLowerCase();
+    let n = 0;
+    for (const row of all('#cclist .bar')) {
+      const hit = row.textContent.toLowerCase().includes(q);
+      row.hidden = !hit;
+      if (hit) n++;
+    }
+    $('#ccfoot').textContent = n + ' result' + (n === 1 ? '' : 's');
+  });
+
+  /* ── Dock */
+  const dockOn = (on) => {
+    $('#body').classList.toggle('nodock', !on);
+    $('#dockbtn').textContent = 'dock: ' + (on ? 'right' : 'hidden');
+  };
+  $('#dockbtn').addEventListener('click', () => dockOn($('#body').classList.contains('nodock')));
+  $('#dockclose').addEventListener('click', () => dockOn(false));
+  for (const tab of all('#tabs [data-pane]')) tab.addEventListener('click', () => {
+    for (const t of all('#tabs [data-pane]')) t.classList.remove('on');
+    tab.classList.add('on');
+    for (const p of all('.pane')) p.classList.toggle('on', p.dataset.pane === tab.dataset.pane);
+  });
+  let dragging = false;
+  $('#edge').addEventListener('mousedown', (e) => { dragging = true; e.preventDefault(); });
+  addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    const w = Math.min(680, Math.max(170, innerWidth - e.clientX));
+    document.documentElement.style.setProperty('--dockw', w + 'px');
+  });
+  addEventListener('mouseup', () => { dragging = false; });
+
+  /* ── Composer */
+  const input = $('#input');
+  const sendIt = () => {
+    const text = input.value.trim();
+    if (!text) return;
+    $('#empty').hidden = true;
+    const turn = document.createElement('div');
+    turn.className = 'turn';
+    turn.innerHTML = '<div class="prompt"></div>' +
+      '<details class="chip" data-state="run"><summary><span class="g">~</span>thinking</summary>' +
+      '<div class="out">working&hellip;</div></details>';
+    turn.querySelector('.prompt').textContent = text;
+    $('#log').append(turn);
+    input.value = '';
+    $('#log').scrollTop = $('#log').scrollHeight;
+    setTimeout(() => {
+      const chip = turn.querySelector('.chip');
+      chip.dataset.state = 'ok';
+      chip.querySelector('.g').textContent = '*';
+      chip.querySelector('summary').lastChild.textContent = 'read src/App.css';
+      const md = document.createElement('div');
+      md.className = 'md';
+      md.innerHTML = '<h3>Answer</h3><p>A mockup, so the reply is a still. The shape is the ' +
+        'point: a marker, a rule, and no box anywhere.</p>' +
+        '<div class="usage">4,182 in &middot; 911 out</div>';
+      turn.append(md);
+      $('#log').scrollTop = $('#log').scrollHeight;
+    }, 800);
+  };
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendIt(); }
+  });
+  $('#send').addEventListener('click', sendIt);
+
+  $('#theme').addEventListener('click', () => document.documentElement.classList.toggle('light'));
+</script>

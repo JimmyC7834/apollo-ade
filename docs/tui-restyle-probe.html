@@ -1,0 +1,157 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>TUI restyle — alignment probe</title>
+<!--
+  Reference for the TUI restyle. Not a mock of the app and not a component
+  library: it is the set of choices the words "float a bit", "looks like text"
+  and "remove the sidebar styling" turned out to be hiding, made concrete so
+  they could be picked between rather than argued about.
+
+  Open it in a browser and hover things. Kept in docs because the decisions it
+  settled are cheaper to re-read than to re-derive; the tickets point at it.
+-->
+<style>
+  :root {
+    --bg:#1b1b1b; --fg:#e4e2df; --dim:#75726e; --mut:#a3a09b;
+    --card:#212121; --border:#303030; --strong:#4a4a4a;
+    --accent:#6cb6ff; --warn:#d0a215; --bad:#f14c4c;
+  }
+  body { background:var(--bg); color:var(--fg); font:13px/22px "Cascadia Mono",Consolas,monospace;
+         font-variant-ligatures:none; margin:0; padding:24px 28px; }
+  h2 { font-size:13px; font-weight:600; margin:32px 0 4px; color:var(--accent); }
+  h2::before { content:"## "; color:var(--dim); }
+  p.note { color:var(--mut); margin:0 0 12px; max-width:80ch; }
+  .row { display:flex; gap:36px; align-items:flex-start; flex-wrap:wrap; }
+  .col { min-width:230px; }
+  .cap { color:var(--dim); margin-bottom:6px; }
+  .cap b { color:var(--fg); font-weight:600; }
+  .item { display:block; box-sizing:border-box; cursor:pointer;
+          height:22px; line-height:22px; padding:0 6px; color:var(--mut); width:100%; }
+
+  /* A: float */
+  .a .item { transition:transform 90ms, background 90ms, box-shadow 90ms; }
+  .a .item:hover { color:var(--fg); background:var(--card);
+                   transform:translateY(-1px); box-shadow:0 2px 6px rgb(0 0 0/45%); }
+  /* B: brackets */
+  .b .item::before { content:"  "; color:var(--dim); }
+  .b .item::after  { content:"";   color:var(--dim); }
+  .b .item:hover { color:var(--fg); }
+  .b .item:hover::before { content:"[ "; }
+  .b .item:hover::after  { content:" ]"; }
+  /* C: invert bar */
+  .c .item:hover { background:var(--accent); color:#0d0d0d; }
+  /* D: float + marker */
+  .d .item { transition:transform 90ms, background 90ms, box-shadow 90ms; }
+  .d .item::before { content:"  "; color:var(--dim); }
+  .d .item:hover { color:var(--fg); background:var(--card);
+                   transform:translateY(-1px); box-shadow:0 2px 6px rgb(0 0 0/45%); }
+  .d .item:hover::before { content:"&gt; "; color:var(--accent); }
+
+  /* layout probes */
+  .lay { border:1px solid var(--border); height:210px; display:grid; }
+  .lay > div { padding:4px 8px; color:var(--mut); overflow:hidden; }
+  .lay .t { color:var(--dim); }
+  .g1, .g2, .g3 { grid-template-columns:1fr 240px; grid-template-rows:22px 1fr 22px; }
+  .g1 .hdr { grid-column:1/-1; border-bottom:1px solid var(--border); }
+  .g1 .ftr { grid-column:1/-1; border-top:1px solid var(--border); }
+  .g1 .dock { border-left:1px solid var(--border); }
+  .g2 { border-color:transparent; }
+  .g2 .hdr, .g2 .ftr { grid-column:1/-1; }
+  .g3 { border:1px solid var(--strong); }
+  .g3 .hdr { grid-column:1/-1; border-bottom:1px solid var(--strong); }
+  .g3 .ftr { grid-column:1/-1; border-top:1px solid var(--strong); }
+  .g3 .dock { border-left:1px solid var(--strong); background:var(--card); }
+  table { border-collapse:collapse; }
+  .icons td { padding:2px 18px 2px 0; color:var(--mut); }
+  .icons td:first-child, .icons td:nth-child(3), .icons td:nth-child(5) { color:var(--fg); }
+</style>
+
+<h2>Hover — what "float a bit" could mean</h2>
+<p class="note">The same list four ways. Hover each. All four are plain text at rest; they differ only in what the pointer does.</p>
+<div class="row">
+  <div class="col a">
+    <div class="cap"><b>A</b> · float only — lift 1px, card, shadow</div>
+    <div class="item">src/sessions.ts</div>
+    <div class="item">src/App.css</div>
+    <div class="item">tokens.css</div>
+  </div>
+  <div class="col b">
+    <div class="cap"><b>B</b> · brackets — pure TUI, no motion</div>
+    <div class="item">src/sessions.ts</div>
+    <div class="item">src/App.css</div>
+    <div class="item">tokens.css</div>
+  </div>
+  <div class="col c">
+    <div class="cap"><b>C</b> · invert bar — classic ncurses</div>
+    <div class="item">src/sessions.ts</div>
+    <div class="item">src/App.css</div>
+    <div class="item">tokens.css</div>
+  </div>
+  <div class="col d">
+    <div class="cap"><b>D</b> · float + <span style="color:var(--accent)">&gt;</span> marker</div>
+    <div class="item">src/sessions.ts</div>
+    <div class="item">src/App.css</div>
+    <div class="item">tokens.css</div>
+  </div>
+</div>
+
+<h2>Buttons — what says "clickable" at rest</h2>
+<div class="row">
+  <div class="col a" style="min-width:180px">
+    <div class="cap"><b>A</b> · bare text</div>
+    <div class="item">Save</div><div class="item">Discard</div>
+  </div>
+  <div class="col a" style="min-width:180px">
+    <div class="cap"><b>B</b> · brackets always</div>
+    <div class="item" style="color:var(--fg)">[ Save ]</div>
+    <div class="item" style="color:var(--fg)">[ Discard ]</div>
+  </div>
+  <div class="col a" style="min-width:180px">
+    <div class="cap"><b>E</b> · underline at rest</div>
+    <div class="item" style="text-decoration:underline;text-underline-offset:3px">Save</div>
+    <div class="item" style="text-decoration:underline;text-underline-offset:3px">Discard</div>
+  </div>
+</div>
+
+<h2>Chrome — how much rule survives</h2>
+<p class="note">Header / chat / dock / footer. "Remove styling for the right sidebar" — how far does that go?</p>
+<div class="row">
+  <div class="col" style="flex:1;min-width:320px">
+    <div class="cap"><b>1</b> · rules everywhere, no fills</div>
+    <div class="lay g1">
+      <div class="hdr t">tauri-ade-prototype · master</div>
+      <div>&gt; how does the navigator work?<br><span class="t">~ reading src/sessions.ts</span></div>
+      <div class="dock t">## diff<br>+ const born<br>- switchIndex</div>
+      <div class="ftr t">opus-5 · auto</div>
+    </div>
+  </div>
+  <div class="col" style="flex:1;min-width:320px">
+    <div class="cap"><b>2</b> · no rules at all — space only</div>
+    <div class="lay g2">
+      <div class="hdr t">tauri-ade-prototype · master</div>
+      <div>&gt; how does the navigator work?<br><span class="t">~ reading src/sessions.ts</span></div>
+      <div class="dock t">## diff<br>+ const born<br>- switchIndex</div>
+      <div class="ftr t">opus-5 · auto</div>
+    </div>
+  </div>
+  <div class="col" style="flex:1;min-width:320px">
+    <div class="cap"><b>3</b> · strong rules + dock fill</div>
+    <div class="lay g3">
+      <div class="hdr t">tauri-ade-prototype · master</div>
+      <div>&gt; how does the navigator work?<br><span class="t">~ reading src/sessions.ts</span></div>
+      <div class="dock t">## diff<br>+ const born<br>- switchIndex</div>
+      <div class="ftr t">opus-5 · auto</div>
+    </div>
+  </div>
+</div>
+
+<h2>Icons as text — the 18 in use today</h2>
+<table class="icons">
+<tr><td>add</td><td>+</td><td>archive</td><td>[a] · ↓</td><td>trash</td><td>x · del</td></tr>
+<tr><td>close</td><td>x</td><td>check</td><td>✓ · ok</td><td>warning</td><td>!</td></tr>
+<tr><td>chevron-right/down</td><td>&gt; · v</td><td>chevron-up</td><td>^</td><td>arrow-left</td><td>&lt;-</td></tr>
+<tr><td>file</td><td>· (or nothing)</td><td>root-folder</td><td>/</td><td>edit</td><td>e · ✎</td></tr>
+<tr><td>send</td><td>⏎ · &gt;</td><td>loading</td><td>~ (or spinner)</td><td>discard</td><td>×</td></tr>
+<tr><td>primitive-square</td><td>■ · ●</td><td>gate-policy</td><td>@ · auto</td><td></td><td></td></tr>
+</table>
+<p class="note">Pure ASCII throughout, or ASCII where it is obvious and a few Unicode glyphs (✓ ⏎ ■) where ASCII turns cryptic?</p>
