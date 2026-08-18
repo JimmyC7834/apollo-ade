@@ -897,9 +897,10 @@ and `>` are text, not icons.
 `docs/UIUX-UPDATE.md` authoritative for everything the user sees, and this slice overrules
 its iconography, its surfaces, its radii and its tone. Its regional model — one chat
 workbench, a dock of artifacts, no permanent panels — is not in question and is what slices
-37–41 were built on. **This is decided but not yet written down where it belongs**: an ADR
-and a `context.md` amendment are outstanding, and until they exist the two documents
-disagree.
+37–41 were built on. Written down as
+[ADR 0003](../../adr/0003-the-shell-guide-keeps-topology-and-loses-look.md), and
+`CONTEXT.md` amended to match: the Guide is authoritative for what the workbench **is**,
+and no longer for what it looks like. The palette is explicitly outside that split.
 
 ### Queued by the dev after Slice 38
 

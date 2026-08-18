@@ -55,14 +55,27 @@ buys length, not more findings.
 Two documents are authoritative, and they cover different things. Say which one
 you mean; never write "the guide" unqualified.
 
-**The Shell Guide** — `docs/UIUX-UPDATE.md`. Authoritative for everything the
-user sees: workbench topology, chrome, the transcript, the composer, profiles as
-a surface, the palette, themes, tokens, iconography, and the component stack
-they are written in. Where it and the guide below disagree, **the Shell Guide
-wins.** It is a design that was drawn elsewhere and is being migrated to here,
-so parts of it describe a mock with no engine — its own "Interaction caveats"
-say as much. Those parts are shape, not behaviour, and a ticket that implements
-one literally is a ticket that has misread it.
+**The Shell Guide** — `docs/UIUX-UPDATE.md`. Authoritative for what the
+workbench **is**: its regional topology, the transcript, the composer, profiles
+as a surface, which controls exist and what they do, and the accessibility
+contracts. Where it and the guide below disagree, **the Shell Guide wins.** It
+is a design that was drawn elsewhere and is being migrated to here, so parts of
+it describe a mock with no engine — its own "Interaction caveats" say as much.
+Those parts are shape, not behaviour, and a ticket that implements one literally
+is a ticket that has misread it.
+
+**It is no longer authoritative for what the workbench looks like** — see
+[ADR 0003](docs/adr/0003-the-shell-guide-keeps-topology-and-loses-look.md).
+Iconography, fills, elevation, radii, typography and tone are settled by the
+TUI restyle instead, and its reference is `docs/tui-restyle-probe.html` and
+`docs/tui-restyle-primitives.html`. The palette is **not** part of that split:
+`tokens.css` keeps every value the Guide gave it, and only stops painting them
+as backgrounds.
+
+`docs/tui-restyle-mockup.html` is a **review artifact, not a specification.** It
+carries the Shell Guide's own hazard for the same reason — it was drawn to be
+looked at — and it deliberately shows changes nobody asked for. Implementing it
+literally is the same misreading.
 
 **The guide** — `docs/# Building a VS Code-Like Agent IDE with Vertical
 Slices.md`. Authoritative for everything else: adapter seams, security policy,
