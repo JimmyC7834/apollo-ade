@@ -56,14 +56,36 @@ const STATUS_LABEL: Record<SessionStatus, string> = {
 };
 
 /**
+ * The same four states as a character each, because the strip *is* these
+ * characters: collapsed, a conversation is one glyph and nothing else.
+ *
+ * `~` and `?` are doing work — one says a turn is in flight, the other says it
+ * stopped and is waiting on you — and they say it without colour, which is what
+ * makes the strip legible to someone who cannot tell the two hues apart.
+ */
+const STATUS_GLYPH: Record<SessionStatus, string> = {
+	running: '~',
+	waiting: '?',
+	done: '✓',
+	idle: '*',
+};
+
+/**
  * The navigator belongs to the Chat Workbench and spans only its height.
  *
- * Collapsed it is a 28px strip of status markers; expanded it is 264px **over**
+ * Collapsed it is a 28px strip of status glyphs; expanded it is 264px **over**
  * chat — it never reflows it, which is why it is absolutely positioned rather
  * than a flex sibling.
  *
- * The strip is exactly one icon wide and has no scrollbar, which is what makes
- * it only icons: at 32px around a 31px icon column, a pixel of every label ran
+ * **Collapsed, the strip is the conversations and nothing else.** No group
+ * header, no chevron, no "choose folder": a header names a group, and there are
+ * no groups at 28px, because grouping is what expanding is *for*. That is also
+ * why a collapsed group opens back up while the strip is closed — a group whose
+ * sessions were hidden with no header to bring them back would be a
+ * conversation the strip had swallowed.
+ *
+ * The strip is exactly one glyph wide and has no scrollbar, which is what makes
+ * it only glyphs: at 32px around a 31px icon column, a pixel of every label ran
  * down its side.
  *
  * **It has no border and no shadow, and it is the chat's own background in both
@@ -72,8 +94,8 @@ const STATUS_LABEL: Record<SessionStatus, string> = {
  * above transcript text and have to be readable.
  *
  * Every row is exactly 32px and there are no dividers, no group margins and no
- * rounding on highlights. The active session gets no row background at all —
- * its marker grows from 12px to 18px instead.
+ * rounding on highlights. The active session gets no row background at all: its
+ * label brightens, and its glyph goes on saying what its status is.
  */
 export function SessionNavigator({
 	groups,
@@ -125,50 +147,60 @@ export function SessionNavigator({
 						 * A row rather than a button, because the `+` is a button and
 						 * buttons do not nest — the inner one stops receiving clicks.
 						 * Same shape the session rows take in ticket 56.
+						 *
+						 * Absent rather than hidden while the strip is closed: a header
+						 * is a control, and a control nobody can read is one the
+						 * keyboard should not stop at either.
 						 */}
-						<div className="ide-navigator-header">
-							<button
-								type="button"
-								className="ide-navigator-open"
-								aria-expanded={!groupCollapsed}
-								onClick={() =>
-									setCollapsedGroups((current) =>
-										current.includes(group.id)
-											? current.filter((id) => id !== group.id)
-											: [...current, group.id]
-									)
-								}
-							>
-								<span className="ide-navigator-icon">
-									{groupCollapsed ? (
-										/* Workspace status dots appear only when the group is
-										   collapsed — expanded, the session rows say it. */
-										<span
-											className={`ide-navigator-dot ide-status-${dominant(group.sessions)}`}
-										/>
-									) : (
-										<Icon name="chevron-down" />
-									)}
-								</span>
-								<span className="ide-navigator-label">
-									{group.label}
-									{group.branch ? ` · ${group.branch}` : ''}
-								</span>
-							</button>
-							{onNewSession ? (
+						{expanded ? (
+							<div className="ide-navigator-header">
 								<button
 									type="button"
-									className="ide-navigator-action-button"
-									title={`New session in ${group.label}`}
-									onClick={() => onNewSession(born)}
+									className="ide-navigator-open"
+									aria-expanded={!groupCollapsed}
+									onClick={() =>
+										setCollapsedGroups((current) =>
+											current.includes(group.id)
+												? current.filter((id) => id !== group.id)
+												: [...current, group.id]
+										)
+									}
 								>
-									<Icon name="add" />
-									<span className="ide-visually-hidden">{`New session in ${group.label}`}</span>
+									<span className="ide-navigator-icon">
+										{groupCollapsed ? (
+											/* The workspace's own state, as the glyph of the most
+											   urgent thing inside it. Shown only while the group is
+											   folded — open, its session rows say it row by row. */
+											<span
+												className={`ide-navigator-dot ide-status-${dominant(group.sessions)}`}
+												aria-hidden={true}
+											>
+												{STATUS_GLYPH[dominant(group.sessions)]}
+											</span>
+										) : (
+											<Icon name="chevron-down" />
+										)}
+									</span>
+									<span className="ide-navigator-label">
+										{group.label}
+										{group.branch ? ` · ${group.branch}` : ''}
+									</span>
 								</button>
-							) : null}
-						</div>
+								{onNewSession ? (
+									<button
+										type="button"
+										className="ide-navigator-action-button"
+										title={`New session in ${group.label}`}
+										onClick={() => onNewSession(born)}
+									>
+										<Icon name="add" />
+										<span className="ide-visually-hidden">{`New session in ${group.label}`}</span>
+									</button>
+								) : null}
+							</div>
+						) : null}
 
-						{groupCollapsed
+						{expanded && groupCollapsed
 							? null
 							: group.sessions.map((session) => (
 									/*
@@ -183,14 +215,19 @@ export function SessionNavigator({
 											type="button"
 											className="ide-navigator-row"
 											aria-current={session.id === activeId ? 'true' : undefined}
+											/* Collapsed, the label is clipped to nothing and the glyph
+											   is all there is, so the tooltip is the only way to tell
+											   one conversation from another without opening the strip. */
+											title={`${session.name} — ${STATUS_LABEL[session.status]}`}
 											onClick={() => onSelect(session)}
 										>
 											<span className="ide-navigator-icon">
 												<span
-													className={`ide-navigator-marker ide-status-${session.status}${
-														session.id === activeId ? ' ide-navigator-marker-active' : ''
-													}`}
-												/>
+													className={`ide-navigator-marker ide-status-${session.status}`}
+													aria-hidden={true}
+												>
+													{STATUS_GLYPH[session.status]}
+												</span>
 											</span>
 											<span className="ide-navigator-label">{session.name}</span>
 											{/*
@@ -204,8 +241,8 @@ export function SessionNavigator({
 											 * is a worse error than the one the marking was
 											 * put there to prevent.
 											 *
-											 * Which one has a harness is still shown: the live
-											 * session's marker is the larger one.
+											 * Which one has a harness is still shown: the active
+											 * session is the one whose label is not muted.
 											 */}
 											<span className="ide-visually-hidden">
 												{`— ${STATUS_LABEL[session.status]}${
@@ -251,7 +288,7 @@ export function SessionNavigator({
 					</div>
 				);
 			})}
-			{onChooseFolder ? (
+			{expanded && onChooseFolder ? (
 				<button type="button" className="ide-navigator-row" onClick={onChooseFolder}>
 					<span className="ide-navigator-icon">
 						<Icon name="root-folder" />

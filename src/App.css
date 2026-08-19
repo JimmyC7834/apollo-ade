@@ -1670,6 +1670,22 @@ body {
 	white-space: nowrap;
 }
 
+/*
+ * A bar button with nothing in it but a glyph is square: 24px by 24px, so the
+ * surface it lifts onto is the shape of the thing on it rather than a wide
+ * slab with a `+` adrift in the middle.
+ *
+ * `:only-child` counts elements and not text, so `researcher ▴` matches it too —
+ * one element, one text node. `.ide-bar-button-text` is the class those already
+ * carry, and excluding it is what keeps the profile button the width of its own
+ * name.
+ */
+.ide-bar-button:has(> .ide-icon:only-child):not(.ide-bar-button-text) {
+	justify-content: center;
+	width: var(--control-size);
+	padding: 0;
+}
+
 /* The context ring. Unlabelled by design; the button carries the percentage as
    its accessible name, because a circle is not a shape a screen reader reads. */
 .ide-ring {
@@ -2231,7 +2247,7 @@ body {
 	 * with no surface at all they are unreadable.
 	 */
 	background: var(--background);
-	transition: width 90ms ease-out;
+	transition: width var(--duration-fast) ease;
 }
 
 .ide-navigator-expanded {
@@ -2291,7 +2307,13 @@ body {
 	/* No rounding on active or hover highlights. */
 	border-radius: 0;
 	background: transparent;
-	color: var(--foreground);
+	/*
+	 * Muted at rest. The navigator floats, so its rows do not lift — brightness
+	 * is the whole of what pointing at one does, and a row already at full
+	 * strength has nowhere to brighten to. The active session is the exception,
+	 * and it is bright for the same reason.
+	 */
+	color: var(--muted-foreground);
 	font: inherit;
 	text-align: left;
 	cursor: pointer;
@@ -2353,8 +2375,8 @@ body {
 	color: var(--foreground);
 }
 
-/* The active session does not use a row background highlight; its marker
-   grows instead. */
+/* The active session does not use a row background highlight; it is simply the
+   one row that is not muted. */
 .ide-navigator-row[aria-current='true'] {
 	color: var(--foreground);
 }
@@ -2384,25 +2406,15 @@ body {
 	width: 24px;
 }
 
-/* Markers are rounded squares, not circles. */
-.ide-navigator-marker {
-	width: 12px;
-	height: 12px;
-	border-radius: 3px;
-	background: currentColor;
-}
-
-.ide-navigator-marker-active {
-	width: 18px;
-	height: 18px;
-	border-radius: 4px;
-}
-
+/*
+ * Markers are characters. They were 12px rounded squares, and an 18px one for
+ * the active session — a size that had to be remembered in two places and said
+ * nothing out loud. The glyph says it instead, the colour agrees with it, and
+ * the hidden status text beside the label is what a screen reader reads.
+ */
+.ide-navigator-marker,
 .ide-navigator-dot {
-	width: 8px;
-	height: 8px;
-	border-radius: 2px;
-	background: currentColor;
+	user-select: none;
 }
 
 .ide-status-running {
@@ -2477,7 +2489,14 @@ body {
 
 /* Collapsed: a 32px icon strip on the right, a 32px tab bar at the bottom. */
 
+/*
+ * And no rule, either. Expanded, the dock is a column of the app and the strong
+ * rule is the boundary between it and chat; collapsed there is no column to
+ * bound, only a few glyphs at the window's edge, and a rule beside them draws a
+ * panel that is not there.
+ */
 .ide-dock-collapsed {
+	border: none;
 	flex-direction: column;
 	width: 32px;
 	cursor: pointer;

@@ -21,10 +21,17 @@ const GLYPHS = {
 	archive: '≡',
 	'arrow-left': '←',
 	check: '✓',
-	'chevron-down': 'v',
-	'chevron-left': '<',
-	'chevron-right': '>',
-	'chevron-up': '^',
+	/*
+	 * Triangles rather than `v ^ < >`. A letterform sits on the baseline and a
+	 * bracket sits at x-height, so beside a label either one reads as slightly
+	 * fallen; these are drawn centred on the line by the font, which is the one
+	 * thing the ASCII versions cannot be. `>` is still `>` where it is a
+	 * *cursor* rather than a disclosure — see the row markers in `App.css`.
+	 */
+	'chevron-down': '▾',
+	'chevron-left': '◂',
+	'chevron-right': '▸',
+	'chevron-up': '▴',
 	'chrome-close': '✕',
 	'chrome-maximize': '□',
 	'chrome-minimize': '─',

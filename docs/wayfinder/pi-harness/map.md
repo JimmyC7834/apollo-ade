@@ -895,6 +895,26 @@ children*, which is a fact about the ancestor and not about the row being drawn.
 same CSS, and the fill audit and the lift were checked by reading computed styles rather
 than by eye. What that does not cover is the native titlebar's own controls.
 
+**The navigator was then changed rather than restyled, at the dev's request.** Collapsed,
+the strip is now the conversations and nothing else — one status glyph each, no group
+header, no chevron, no "choose folder" — because a header names a group and there are no
+groups at 28px. Expanded, the headers and the grouping come back. That is a UX change and
+not a restyle, so it is recorded here rather than folded into 63–67: the slice's own
+constraint held for the five tickets, and this is the thing that was asked for after them.
+
+Three smaller ones landed with it: the disclosure chevrons became triangles, because a `v`
+sits on the baseline and reads as fallen beside a label; the dock loses its rule as well as
+its ground while collapsed, since there is no column left to bound; and a bar button
+holding nothing but a glyph is square, so what it lifts onto is the shape of the thing on
+it.
+
+Left alone deliberately: **archive and delete are still absent from most session rows**,
+and that is `manageable()` in `sessions.ts`, not a styling bug. A session in another
+workspace has no archive or delete because `rename_entry` and `delete_entry` resolve
+against the *window's* root — offering them there would be a new write door into a root the
+window is not in, which is the confinement boundary itself. The reveal-on-hover mechanism
+was checked and is intact.
+
 One thing the slice found and did not fix: `ResizableSeparator` has no caller. The region
 sashes it drew went with the sidebars in slice 40, and the dock brought its own. It is
 styled to the new rule anyway, which is the wrong outcome — it should be deleted.
