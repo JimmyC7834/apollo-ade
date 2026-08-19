@@ -2523,12 +2523,6 @@ body {
 	border: none;
 	flex-direction: column;
 	width: 32px;
-	/*
-	 * The strip's buttons lift onto a small card, and a card flush against the
-	 * window edge is a card with one side missing. 2px around a 28px button is
-	 * the 32px the strip already was, so nothing outside it moves.
-	 */
-	padding: var(--space-1);
 	cursor: pointer;
 }
 
@@ -2538,6 +2532,12 @@ body {
 	height: 32px;
 }
 
+/*
+ * The buttons lift onto a small card, and a card flush against its neighbours is
+ * one long card. The 2px is a margin rather than padding on the strip so that it
+ * falls *between* them as well as around them; 28px plus the two makes the 32px
+ * the strip already was, so nothing outside it moves.
+ */
 .ide-dock-strip-tab {
 	display: inline-flex;
 	align-items: center;
@@ -2545,6 +2545,7 @@ body {
 	flex: none;
 	width: 28px;
 	height: 28px;
+	margin: var(--space-1);
 	padding: 0;
 	border: none;
 	background: transparent;

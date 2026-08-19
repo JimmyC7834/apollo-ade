@@ -167,21 +167,23 @@
 
 	/* Dimensions */
 	/*
-	 * Half what it was. 42px was a desktop application's title bar; a terminal
-	 * gives its chrome one line and spends the rest on content, and this is one
-	 * line — the same 22px every tree row and list row is, so the window's top
-	 * edge sits on the same grid as everything under it.
+	 * The line, and most of this application is one of them: a session in the
+	 * navigator, a file in the tree, a row of the command centre, a tab, and the
+	 * window's own title bar.
+	 *
+	 * The four below are written as this token rather than as `22px` because
+	 * that is the claim being made — that they are the same thing — and a claim
+	 * spelt out four times in numerals is a claim that will drift. They arrived
+	 * as 42px, 32px, 30px and `--pane-header-height`, each copied from a
+	 * different VS Code surface, which is what drift looks like.
 	 */
-	--titlebar-height: 22px;
-	--pane-header-height: 32px;
-	/*
-	 * Every tab strip, editor and panel and dock alike. It was 32px in one place
-	 * and 30px in another and `--pane-header-height` in a third; a tab is not a
-	 * pane header and never was. 24px is the control grid — the same square a
-	 * bar button holding one glyph is.
-	 */
-	--tabbar-height: 24px;
 	--row-height: 22px;
+	/* A terminal gives its chrome one line and spends the rest on content. */
+	--titlebar-height: var(--row-height);
+	/* Every tab strip: editor, panel and dock alike. A tab is not a pane header,
+	   which is what one of them used to read. */
+	--tabbar-height: var(--row-height);
+	--pane-header-height: 32px;
 	--control-size: 24px;
 	/* The grab, not the rule: the sash draws a 1px line inside 9px of target and
 	   pulls the difference back with a negative margin. */

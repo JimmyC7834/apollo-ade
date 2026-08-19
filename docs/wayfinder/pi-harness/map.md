@@ -912,8 +912,10 @@ it.
 marks the pane you are in — and all three tab strips do it the same way, and at the same
 height, where the editor strip, the panel strip and the dock strip each had their own mark
 *and* their own height (32px, 30px, and `--pane-header-height`, which a tab is not)
-inherited from whichever VS Code surface it was copied from. One token, 24px, the control
-grid. This is a fill, and it is not the fill ticket 65
+inherited from whichever VS Code surface it was copied from. They are all `--row-height`
+now, and so is the title bar — written as the token rather than as `22px` in four places,
+because the claim being made is that they are the same thing, and a claim spelt out four
+times in numerals is one that will drift. It already had. This is a fill, and it is not the fill ticket 65
 removed: that one was a raised, rounded, tinted plate behind something already legible;
 this is a character cell in reverse video, which is the only way a terminal has ever said
 *here*, and it reads for someone who cannot tell the two hues apart.
