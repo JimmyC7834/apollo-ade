@@ -52,7 +52,7 @@ const GLYPHS = {
 	 */
 	folder: '/',
 	'folder-opened': '/',
-	/* vi's ex prompt. Not '>', which is what the palette's own row cursor is. */
+	/* vi's ex prompt. Not '>', which read as a row cursor beside a palette row. */
 	gear: ':',
 	layout: '#',
 	lightbulb: '?',

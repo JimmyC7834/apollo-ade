@@ -2808,8 +2808,7 @@ body {
  * **Elevation belongs to a control, never to a row.** A button, a tab, a chip
  * header — a thing you press — lifts a pixel onto a small card. A row is not
  * pressed, it is *arrived at*: the tree, the navigator, the command centre, the
- * Context Explorer all brighten and take a `>` in a fixed-width gutter, and
- * stay exactly where they are.
+ * Context Explorer all invert, and stay exactly where they are.
  *
  * This used to be split by surface — rows on the flat page lifted, rows on
  * something already floating did not — and it read as two behaviours for one
@@ -2823,9 +2822,9 @@ body {
  *   because after ticket 65 nothing at rest is a box. `border-radius` therefore
  *   belongs to the thing that floats, and the transcript's blanket
  *   `border-radius: 0` stays true exactly as written.
- * - **Buttons lift and take no marker.** A `>` in front of `Save` reads as a
- *   bullet, not as a cursor. The marker is for rows, which are places you are
- *   going.
+ * - **Buttons lift and do not invert.** A reverse-video `Save` reads as a
+ *   button already pressed. The cursor is for rows, which are places you are
+ *   going, not things you are doing.
  *
  * Focus takes the lift *and* the outline. The lift alone, with no pointer to
  * explain it, reads as a glitch; the outline is what says the keyboard put it
@@ -2891,49 +2890,17 @@ body {
 }
 
 /*
- * A row you point at gets a marker — in a gutter that is the same width empty
- * as it is full, so nothing moves sideways when the pointer or the keyboard
- * arrives. No lift: this is a cursor moving down a list, which is what a
- * terminal does, and a list whose every row rises to meet the pointer is a list
- * that will not hold still long enough to be read.
+ * The row under the cursor is inverted, and that is the whole of it.
  *
- * Collapsed, the navigator is one glyph wide and has no label to point at, so
- * the gutter is only there once it is open.
- */
-.ide-navigator-expanded .ide-navigator-header::before,
-.ide-navigator-expanded .ide-navigator-row::before,
-.ide-quickpick-row::before,
-.ide-tree-row::before,
-.ide-context-explorer-open::before {
-	content: '';
-	flex: none;
-	display: inline-block;
-	/* The tree stretches its children to the row's full height so the guides can
-	   join up between rows; the marker is a character and belongs on the line. */
-	align-self: center;
-	width: 2ch;
-	color: var(--primary);
-}
-
-.ide-navigator-expanded .ide-navigator-header:hover::before,
-.ide-navigator-expanded .ide-navigator-header:focus-visible::before,
-.ide-navigator-expanded .ide-navigator-row:hover::before,
-.ide-navigator-expanded .ide-navigator-row:focus-visible::before,
-.ide-quickpick-row:hover::before,
-.ide-quickpick-row-active::before,
-.ide-tree-row:hover::before,
-.ide-tree-row:focus-visible::before,
-.ide-tree-row-active::before,
-.ide-context-explorer-open:hover::before,
-.ide-context-explorer-open:focus-visible::before {
-	content: '>';
-}
-
-/*
- * And the row it is on is inverted, which is the other half of the same idea:
- * in a curses list the cursor is a reverse-video line, and the `>` is what a
- * program adds when it cannot count on colour. Both, here, because the marker
- * is also what keeps the gutter from moving.
+ * There was a `>` in a fixed-width gutter as well, on the argument that a marker
+ * is what a program adds when it cannot count on colour. Reverse video is not
+ * colour — it is the same two colours the row already had, in the other order —
+ * so the argument did not apply, and what the gutter actually bought was two
+ * characters of indent on every row of every list, permanently, to hold a place
+ * for a mark that only ever appeared on one of them.
+ *
+ * No lift either: a list whose rows rise to meet the pointer will not hold still
+ * long enough to be read.
  *
  * Hover and selection are the *same* state deliberately. A mouse moving down a
  * list is the cursor moving down the list — that is what the pointer means in a
