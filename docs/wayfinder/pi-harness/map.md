@@ -909,12 +909,34 @@ holding nothing but a glyph is square, so what it lifts onto is the shape of the
 it.
 
 **The selected tab is inverted**, ink and ground swapped, the way a curses application
-marks the pane you are in — and all three tab strips do it the same way, where the editor
-strip, the panel strip and the dock strip each had their own mark inherited from whichever
-VS Code surface it was copied from. This is a fill, and it is not the fill ticket 65
+marks the pane you are in — and all three tab strips do it the same way, and at the same
+height, where the editor strip, the panel strip and the dock strip each had their own mark
+*and* their own height (32px, 30px, and `--pane-header-height`, which a tab is not)
+inherited from whichever VS Code surface it was copied from. One token, 24px, the control
+grid. This is a fill, and it is not the fill ticket 65
 removed: that one was a raised, rounded, tinted plate behind something already legible;
 this is a character cell in reverse video, which is the only way a terminal has ever said
 *here*, and it reads for someone who cannot tell the two hues apart.
+
+**And then the lists, which is where it stops being a tab treatment and becomes the
+selection model.** The row under the cursor is inverted — the tree, the Context Explorer,
+the navigator, the command centre, every select list — and hover and selection are
+deliberately the *same* state, because a mouse moving down a list in a terminal is the
+cursor moving down the list and there is nothing for a second treatment to say. The `>`
+stays: it is what a program adds when it cannot count on colour, and it is also what keeps
+the gutter from moving.
+
+Reverse video is an attribute of the cell, so nothing inside one keeps a colour of its own.
+That costs the navigator's status hues on the row you are pointing at, and it is exactly
+why those statuses were given glyphs — `~` and `?` go on saying which is which with no
+colour left to say it with. The tree's guides come along too, since `--border` is
+redefined to `currentcolor` on an inverted row rather than each guide being told
+separately. The one exception is the marker itself, which stays `--primary`: it is not in
+the cell, it is the cursor pointing at it.
+
+The collapsed navigator strip is the one list that does not invert. There is no row there
+to invert, only a glyph in a 28px column, and a solid block behind one character is a
+cursor sitting on nothing you can read. It brightens.
 
 **Two more after that.** The titlebar is half what it was — 42px was a desktop
 application's chrome, and 22px is one line on the same grid as every row beneath it. And a

@@ -509,10 +509,8 @@ body {
 	border-bottom: 1px solid var(--border);
 }
 
-/* Selected is brighter, not filled. The marker `Icon`s beside it and the
-   `aria-selected` the row already carries are what say so out loud. */
+/* Weight only; the colour is the cursor's, further down this file. */
 .ide-tree-row-active {
-	color: var(--foreground);
 	font-weight: 600;
 }
 
@@ -737,14 +735,8 @@ body {
  * only ever an accident of which VS Code surface each was copied from.
  */
 .ide-tabs-panel .ide-tab {
-	height: 30px;
 	border-right: none;
-	border-bottom: 1px solid transparent;
 	padding: 0 var(--space-3);
-}
-
-.ide-tabs-panel .ide-tab-active {
-	border-bottom-color: transparent;
 }
 
 .ide-tabs-panel .ide-tab:hover {
@@ -756,7 +748,7 @@ body {
 	align-items: center;
 	gap: var(--space-2);
 	flex: none;
-	height: var(--pane-header-height);
+	height: var(--tabbar-height);
 	padding: 0 var(--space-3);
 	border-right: 1px solid var(--border);
 	color: var(--muted-foreground);
@@ -1037,9 +1029,7 @@ body {
 	cursor: pointer;
 }
 
-.ide-quickpick-row-active {
-	color: var(--foreground);
-}
+/* Colour: see the cursor, further down this file. */
 
 .ide-quickpick-label {
 	white-space: nowrap;
@@ -2400,8 +2390,13 @@ body {
 	color: var(--foreground);
 }
 
-/* The active session does not use a row background highlight; it is simply the
-   one row that is not muted. */
+/*
+ * The active session, while the strip is closed. Expanded it is the row the
+ * cursor is parked on and it inverts like any other — see the cursor, further
+ * down this file. Collapsed there is no row to invert, only a glyph in a 28px
+ * column, and a solid block behind one character is a cursor sitting on nothing
+ * you can read. It brightens instead.
+ */
 .ide-navigator-row[aria-current='true'] {
 	color: var(--foreground);
 }
@@ -2597,7 +2592,7 @@ body {
 	cursor: row-resize;
 }
 
-/* Artifact tabs — 32px, content-sized between 80 and 180px. */
+/* Artifact tabs — one line tall, content-sized between 80 and 180px. */
 
 .ide-dock-tabs {
 	display: flex;
@@ -2626,7 +2621,6 @@ body {
 	   this is what makes showing it cost nothing. */
 	padding: 0 24px 0 var(--space-3);
 	border: none;
-	border-bottom: 1px solid transparent;
 	background: transparent;
 	color: var(--muted-foreground);
 	font: inherit;
@@ -2634,7 +2628,6 @@ body {
 }
 
 .ide-dock-tab-active .ide-dock-tab-label {
-	border-bottom-color: transparent;
 	background: var(--foreground);
 	color: var(--background);
 }
@@ -2936,13 +2929,62 @@ body {
 	content: '>';
 }
 
-.ide-navigator-header:hover,
-.ide-navigator-row:hover,
-.ide-quickpick-row:hover,
-.ide-nav-row:hover,
-.ide-select-row:hover,
-.ide-tree-row:hover,
-.ide-context-explorer-open:hover,
+/*
+ * And the row it is on is inverted, which is the other half of the same idea:
+ * in a curses list the cursor is a reverse-video line, and the `>` is what a
+ * program adds when it cannot count on colour. Both, here, because the marker
+ * is also what keeps the gutter from moving.
+ *
+ * Hover and selection are the *same* state deliberately. A mouse moving down a
+ * list is the cursor moving down the list — that is what the pointer means in a
+ * terminal — so there is nothing for a second treatment to say.
+ *
+ * `--border: currentcolor` because reverse video is an attribute of the cell,
+ * not of the text in it: everything drawn inside takes it, and the one thing
+ * that would otherwise be left behind is the tree's guides, which are borders.
+ */
+:is(
+	.ide-tree-row,
+	.ide-context-explorer-open,
+	.ide-navigator-expanded .ide-navigator-header,
+	.ide-navigator-expanded .ide-navigator-row,
+	.ide-quickpick-row,
+	.ide-nav-row,
+	.ide-select-row
+):is(:hover, :focus-visible),
+.ide-tree-row-active,
+.ide-quickpick-row-active,
+.ide-navigator-expanded .ide-navigator-row[aria-current='true'] {
+	background: var(--foreground);
+	color: var(--background);
+	--border: currentcolor;
+}
+
+/*
+ * Nothing *inside* the cell keeps a colour of its own. That does cost the
+ * navigator's status hues on the row you are pointing at — and it is why the
+ * statuses were given glyphs in the first place: `~` and `?` go on saying which
+ * is which with no colour left to say it with.
+ *
+ * The marker in the gutter is the exception, and it is a pseudo-element rather
+ * than a child, so it is not one this rule has to make. It stays `--primary`
+ * on both grounds. It is not *in* the cell; it is the cursor pointing at it.
+ */
+:is(
+	.ide-tree-row,
+	.ide-context-explorer-open,
+	.ide-navigator-expanded .ide-navigator-header,
+	.ide-navigator-expanded .ide-navigator-row,
+	.ide-quickpick-row,
+	.ide-nav-row,
+	.ide-select-row
+):is(:hover, :focus-visible) *,
+.ide-tree-row-active *,
+.ide-quickpick-row-active *,
+.ide-navigator-expanded .ide-navigator-row[aria-current='true'] * {
+	color: inherit;
+}
+
 /*
  * A close button brightens and nothing else. It used to lift, and it was the
  * one control that could not: the dock's close is centred by

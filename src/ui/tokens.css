@@ -164,7 +164,13 @@
 	 */
 	--titlebar-height: 22px;
 	--pane-header-height: 32px;
-	--tabbar-height: 32px;
+	/*
+	 * Every tab strip, editor and panel and dock alike. It was 32px in one place
+	 * and 30px in another and `--pane-header-height` in a third; a tab is not a
+	 * pane header and never was. 24px is the control grid — the same square a
+	 * bar button holding one glyph is.
+	 */
+	--tabbar-height: 24px;
 	--row-height: 22px;
 	--control-size: 24px;
 	/* The grab, not the rule: the sash draws a 1px line inside 9px of target and
