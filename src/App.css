@@ -731,9 +731,10 @@ body {
 }
 
 /*
- * Panel strip: flat, no boxes, active marked by an underline. This is the
- * shape VS Code uses inside the bottom panel, where the tabs sit on the same
- * surface as the content rather than above it.
+ * Panel strip: flat, no boxes. It used to mark the active tab with an underline
+ * and the editor strip marked it another way again; both are inverted now,
+ * because a tab strip is a tab strip and one of them having its own dialect was
+ * only ever an accident of which VS Code surface each was copied from.
  */
 .ide-tabs-panel .ide-tab {
 	height: 30px;
@@ -743,7 +744,7 @@ body {
 }
 
 .ide-tabs-panel .ide-tab-active {
-	border-bottom-color: var(--primary);
+	border-bottom-color: transparent;
 }
 
 .ide-tabs-panel .ide-tab:hover {
@@ -763,8 +764,32 @@ body {
 	user-select: none;
 }
 
+/*
+ * The selected tab is inverted — ink and ground swapped, the way a curses
+ * application marks the pane you are in.
+ *
+ * It is the one fill in the application, and it is not the fill ticket 65
+ * removed. That fill was decoration: a raised, rounded, tinted plate behind a
+ * control that was already legible. This is a *character cell rendered in
+ * reverse video*, which is the only way a terminal has ever said "here", and it
+ * survives being read by someone who cannot tell the two hues apart.
+ *
+ * Square, obviously. A tab is cells, and cells do not have corners.
+ */
 .ide-tab-active {
-	color: var(--foreground);
+	background: var(--foreground);
+	color: var(--background);
+}
+
+/*
+ * Inside an inverted cell every rule about colour runs backwards, and there is
+ * exactly one place that matters: the close button brightens towards
+ * `--foreground` on hover, which on this ground is the ground itself. It goes
+ * the other way here.
+ */
+.ide-tab-active .ide-tab-close:hover,
+.ide-tab-active .ide-tab-close:focus-visible {
+	color: var(--background);
 }
 
 .ide-tab-label {
@@ -2609,8 +2634,17 @@ body {
 }
 
 .ide-dock-tab-active .ide-dock-tab-label {
-	border-bottom-color: var(--primary);
-	color: var(--foreground);
+	border-bottom-color: transparent;
+	background: var(--foreground);
+	color: var(--background);
+}
+
+/* The close is overlaid on the label rather than inside it, so it is not a
+   descendant of the inverted element and has to be told separately. */
+.ide-dock-tab-active .ide-dock-tab-close,
+.ide-dock-tab-active .ide-dock-tab-close:hover,
+.ide-dock-tab-active .ide-dock-tab-close:focus-visible {
+	color: var(--background);
 }
 
 .ide-dock-tab-text {

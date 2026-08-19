@@ -908,6 +908,14 @@ its ground while collapsed, since there is no column left to bound; and a bar bu
 holding nothing but a glyph is square, so what it lifts onto is the shape of the thing on
 it.
 
+**The selected tab is inverted**, ink and ground swapped, the way a curses application
+marks the pane you are in — and all three tab strips do it the same way, where the editor
+strip, the panel strip and the dock strip each had their own mark inherited from whichever
+VS Code surface it was copied from. This is a fill, and it is not the fill ticket 65
+removed: that one was a raised, rounded, tinted plate behind something already legible;
+this is a character cell in reverse video, which is the only way a terminal has ever said
+*here*, and it reads for someone who cannot tell the two hues apart.
+
 **Two more after that.** The titlebar is half what it was — 42px was a desktop
 application's chrome, and 22px is one line on the same grid as every row beneath it. And a
 close button no longer lifts: the dock's is centred with `translateY(-50%)`, which the
