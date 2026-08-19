@@ -113,10 +113,20 @@
 	--ansi-bright-cyan: #1291b3;
 	--ansi-bright-white: #1c1b19;
 
-	/* Scrollbars — translucent so they work over any surface in either theme. */
-	--scrollbar-slider: rgb(0 0 0 / 22%);
-	--scrollbar-slider-hover: rgb(0 0 0 / 38%);
-	--scrollbar-slider-active: rgb(0 0 0 / 50%);
+	/*
+	 * Scrollbars — translucent so they work over any surface in either theme.
+	 *
+	 * **Eight-digit hex, and it has to be.** These three are read back off the
+	 * document and handed to Monaco (`theme.ts`), whose colour parser takes
+	 * `#rrggbb` and `#rrggbbaa` and nothing else — and on a string it cannot
+	 * parse it does not fall back to the default or throw, it returns *red*.
+	 * That is what a red editor scrollbar was: `rgb(0 0 0 / 22%)`, valid CSS,
+	 * unparseable by Monaco, silently red. `theme.check.ts` now fails the build
+	 * for any token on that list that is not hex.
+	 */
+	--scrollbar-slider: #00000038;
+	--scrollbar-slider-hover: #00000061;
+	--scrollbar-slider-active: #00000080;
 
 	/*
 	 * Everything below is theme-independent: it does not change between light
@@ -258,9 +268,10 @@
 	--ansi-bright-cyan: #29b8db;
 	--ansi-bright-white: #e5e5e5;
 
-	--scrollbar-slider: rgb(121 121 121 / 40%);
-	--scrollbar-slider-hover: rgb(100 100 100 / 70%);
-	--scrollbar-slider-active: rgb(191 191 191 / 40%);
+	/* Hex, for the reason the light block gives at length. */
+	--scrollbar-slider: #79797966;
+	--scrollbar-slider-hover: #646464b3;
+	--scrollbar-slider-active: #bfbfbf66;
 }
 
 /*
