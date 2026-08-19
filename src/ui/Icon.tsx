@@ -17,8 +17,8 @@
  */
 const GLYPHS = {
 	add: '+',
-	/* Compaction: many lines folded into one. */
-	archive: '≡',
+	/* A letter, not a picture. `≡` read as a menu next to a session row. */
+	archive: 'A',
 	'arrow-left': '←',
 	check: '✓',
 	/*

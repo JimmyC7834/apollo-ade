@@ -908,12 +908,19 @@ its ground while collapsed, since there is no column left to bound; and a bar bu
 holding nothing but a glyph is square, so what it lifts onto is the shape of the thing on
 it.
 
-Left alone deliberately: **archive and delete are still absent from most session rows**,
-and that is `manageable()` in `sessions.ts`, not a styling bug. A session in another
-workspace has no archive or delete because `rename_entry` and `delete_entry` resolve
-against the *window's* root — offering them there would be a new write door into a root the
-window is not in, which is the confinement boundary itself. The reveal-on-hover mechanism
-was checked and is intact.
+**And `manageable()` turned out to be wrong, which is what the missing archive and delete
+buttons were.** The rule refused every *live* session, on the argument that only a live
+session runs a turn so one test covered "in flight" as well. The argument was sound and the
+consequence was not: a window that has been worked in has every conversation in its root
+open, so the buttons appeared on nothing at all, and a feature you can only reach by first
+closing the session through a menu is a feature nobody finds.
+
+What is dangerous is now named directly — a running turn, a question waiting on screen, and
+the conversation you are currently reading — and `archiveSession` closes the harness before
+it touches the file, which is the ordering that makes it safe. A session in another
+workspace is still refused, and that one is not a convenience: `rename_entry` and
+`delete_entry` resolve against the *window's* root, so offering them there is a new write
+door into a root the window is not in.
 
 One thing the slice found and did not fix: `ResizableSeparator` has no caller. The region
 sashes it drew went with the sidebars in slice 40, and the dock brought its own. It is

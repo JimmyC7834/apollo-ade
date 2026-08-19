@@ -315,11 +315,26 @@ const row = (extra: Partial<Session> = {}): Session => ({
 
 // The ordinary case: a stored row in the folder the window is showing.
 assert.equal(manageable(row()), true);
-// A live session is never archived or deleted from under itself — and because
-// only a live session runs, this is also what keeps the buttons off a running
-// turn. Both spellings of "in flight" are covered by the one test.
-assert.equal(manageable(row({ live: true })), false);
+/*
+ * **A session being open is not a reason to withhold them.** It used to be:
+ * `!live` was the test, and in a window that has every conversation in its root
+ * open — which is what a window looks like after an afternoon's work — that
+ * meant the buttons never appeared at all. The harness is closed first now, and
+ * what is actually dangerous is tested for directly.
+ */
+assert.equal(manageable(row({ live: true })), true);
+// A turn in flight. Moving the file under a harness that is appending to it is
+// the thing the old `!live` test was really aiming at.
 assert.equal(manageable(row({ live: true, status: 'running' })), false);
+// Blocked on a question is in flight too: there is an interaction pending, and
+// archiving it answers it by destroying it.
+assert.equal(manageable(row({ live: true, status: 'waiting' })), false);
+// Never the conversation on screen. Archiving what you are reading is a state
+// nothing downstream expects, and it is one row, so it is cheap to exclude.
+assert.equal(manageable(row({ live: true, focused: true })), false);
+// A stored row is never focused, so an idle open one is the only case this
+// distinguishes — and it is the case that makes the buttons reachable.
+assert.equal(manageable(row({ live: true, status: 'done' })), true);
 // Another workspace: `rename_entry` and `delete_entry` resolve against the
 // window's root, so acting here would act on the wrong folder's file. The
 // buttons are withheld rather than the call being made and failing.

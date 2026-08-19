@@ -89,11 +89,21 @@ export interface Session {
 /**
  * Whether a row offers archive and delete — ticket 56.
  *
- * Three noes, and only the last is arbitrary:
+ * **This used to refuse every live session**, on the argument that only a live
+ * session runs a turn, so one test covered "in flight" as well. The argument
+ * was sound and the consequence was not: a window that has been worked in has
+ * every conversation in its root open, so the buttons appeared on nothing, and
+ * a feature reachable only by first closing the session through a menu is a
+ * feature nobody finds. The harness is closed before the file is touched — see
+ * `archiveSession` — and what is genuinely dangerous is now named directly.
  *
- * - **A live session.** Archiving the conversation you are having is a state
- *   nothing downstream expects, and deleting a running session's file is worse.
- *   Only a live session runs a turn, so this one test covers "in flight" too.
+ * Four noes, and only the last is arbitrary:
+ *
+ * - **A turn in flight.** `running` is a harness appending to the file this
+ *   would move; `waiting` is a question on screen that archiving would answer
+ *   by destroying it. These are what the old `live` test was aiming at.
+ * - **The conversation on screen.** Archiving what you are reading is a state
+ *   nothing downstream expects. It is one row, so excluding it costs nothing.
  * - **A session in another workspace.** `rename_entry` and `delete_entry`
  *   resolve against the *window's* root, and a stored row is a file rather than
  *   a registered session, so there is no id to write with. Offering them here
@@ -104,7 +114,13 @@ export interface Session {
  *   file it got. Nothing to move.
  */
 export function manageable(session: Session): boolean {
-	return !session.live && session.switchIndex === undefined && session.storedPath !== undefined;
+	return (
+		session.status !== 'running' &&
+		session.status !== 'waiting' &&
+		!session.focused &&
+		session.switchIndex === undefined &&
+		session.storedPath !== undefined
+	);
 }
 
 /**

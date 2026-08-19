@@ -1474,6 +1474,16 @@ export function WorkbenchController() {
 			if (!row.storedPath) {
 				return;
 			}
+			/*
+			 * The harness goes first, and that ordering is the whole safety of
+			 * this: a session still attached to the file appends to it, and a file
+			 * that moves under an open writer is the state `manageable` used to
+			 * avoid by refusing outright. `manageable` has already excluded a
+			 * running turn and the focused row, so nothing is interrupted here.
+			 */
+			if (row.live) {
+				sessionSet.close(row.id);
+			}
 			const move = archiveMove(row.storedPath);
 			try {
 				// Idempotent on both sides: `create_dir_all` does not mind an
@@ -1495,6 +1505,10 @@ export function WorkbenchController() {
 		async (row: Session) => {
 			if (!row.storedPath) {
 				return;
+			}
+			// Same ordering, same reason — see `archiveSession`.
+			if (row.live) {
+				sessionSet.close(row.id);
 			}
 			try {
 				await provider.deleteEntry(archiveMove(row.storedPath).from);
