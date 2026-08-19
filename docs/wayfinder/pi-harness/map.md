@@ -908,6 +908,13 @@ its ground while collapsed, since there is no column left to bound; and a bar bu
 holding nothing but a glyph is square, so what it lifts onto is the shape of the thing on
 it.
 
+**Two more after that.** The titlebar is half what it was — 42px was a desktop
+application's chrome, and 22px is one line on the same grid as every row beneath it. And a
+close button no longer lifts: the dock's is centred with `translateY(-50%)`, which the
+lift's own `transform` replaced outright, so pointing at it dropped it half a tab down —
+the dev's *"floating wrong way"*. It was wrong even where it worked, because a close button
+sits **on** a tab, and lifting it raises a card off a card.
+
 **And `manageable()` turned out to be wrong, which is what the missing archive and delete
 buttons were.** The rule refused every *live* session, on the argument that only a live
 session runs a turn so one test covered "in flight" as well. The argument was sound and the
@@ -951,11 +958,14 @@ that they stop being painted as backgrounds and start being read as text colour.
 the palette as well would mean changing Monaco's and xterm's derived themes, which is a
 slice of its own and not what was asked for.
 
-**Elevation belongs to a surface, not to a row.** A row on the flat page lifts; a row on
-something that already floats — the navigator, a menu, the command centre — does not. The
-dev found this one: *"for list most likely when hover won't want floating as I assume the
-list itself will be in a floating container."* It is a rule rather than a list of cases
-because two elevations for one decision reads as a bug wherever it happens.
+**Elevation belongs to a control, never to a row.** ~~A row on the flat page lifts; a row
+on something that already floats — the navigator, a menu, the command centre — does not.~~
+The dev found the first half of this: *"for list most likely when hover won't want floating
+as I assume the list itself will be in a floating container."* Seeing it run, he took the
+rest: *"explorer no need to float use cursor highlight style."* Split by surface it was two
+behaviours for one thing, and it looked like two. Now a thing you press lifts, and a thing
+you arrive at brightens and takes a `>` — the tree, the Context Explorer, the navigator and
+the command centre all the same.
 
 **A picture survives only where a character would be a lie.** In practice that is the
 context ring and nothing else — a proportion is the one thing a glyph cannot say. `+`, `x`

@@ -220,8 +220,8 @@ body {
 }
 
 /*
- * The ADE button. 42px tall like every other titlebar control, but content
- * width — it is a label, not an icon.
+ * The ADE button. As tall as the titlebar, like every other control in it, but
+ * content width — it is a label, not an icon.
  */
 .ide-titlebar-menu {
 	display: inline-flex;
@@ -2778,11 +2778,17 @@ body {
  * Everything in this application is text until you point at it. What happens
  * then is one rule, and the rule is about *surfaces*:
  *
- * **Elevation belongs to a surface, not to a row.** A row on the flat page
- * lifts a pixel onto a small card. A row on something that already floats — the
- * navigator, a menu, the command centre — does not lift; it brightens and takes
- * a `>` in its gutter. Two elevations for one decision reads as a bug, which is
- * why this is a rule rather than a list of cases.
+ * **Elevation belongs to a control, never to a row.** A button, a tab, a chip
+ * header — a thing you press — lifts a pixel onto a small card. A row is not
+ * pressed, it is *arrived at*: the tree, the navigator, the command centre, the
+ * Context Explorer all brighten and take a `>` in a fixed-width gutter, and
+ * stay exactly where they are.
+ *
+ * This used to be split by surface — rows on the flat page lifted, rows on
+ * something already floating did not — and it read as two behaviours for one
+ * thing, because that is what it was. A list whose rows rise to meet the
+ * pointer is a list that will not hold still to be read, and a cursor running
+ * down a column is what a terminal actually does.
  *
  * Two consequences worth stating, because they look like omissions:
  *
@@ -2799,17 +2805,13 @@ body {
  * there. The global `:focus-visible` rule at the top of this file draws it.
  */
 
-.ide-tree-row,
-.ide-context-explorer-open,
 .ide-dock-strip-tab,
 .ide-chip > summary,
 .ide-agent-undo,
 .ide-button,
 .ide-icon-button,
 .ide-bar-button,
-.ide-titlebar-menu,
-.ide-tab-close,
-.ide-dock-tab-close {
+.ide-titlebar-menu {
 	transition:
 		transform var(--duration-fast),
 		background var(--duration-fast),
@@ -2817,8 +2819,6 @@ body {
 		color var(--duration-fast);
 }
 
-.ide-tree-row:hover,
-.ide-context-explorer-open:hover,
 .ide-dock-strip-tab:hover,
 .ide-chip > summary:hover,
 .ide-agent-undo:hover,
@@ -2826,19 +2826,13 @@ body {
 .ide-icon-button:hover:not(:disabled),
 .ide-bar-button:hover:not(:disabled),
 .ide-titlebar-menu:hover,
-.ide-tab-close:hover,
-.ide-dock-tab-close:hover,
-.ide-tree-row:focus-visible,
-.ide-context-explorer-open:focus-visible,
 .ide-dock-strip-tab:focus-visible,
 .ide-chip > summary:focus-visible,
 .ide-agent-undo:focus-visible,
 .ide-button:focus-visible,
 .ide-icon-button:focus-visible,
 .ide-bar-button:focus-visible,
-.ide-titlebar-menu:focus-visible,
-.ide-tab-close:focus-visible,
-.ide-dock-tab-close:focus-visible {
+.ide-titlebar-menu:focus-visible {
 	/* `background-color`, not `background`: the shorthand resets background
 	   *image* too, and things that draw one — a tree row's guides — must not
 	   lose their structure the moment they are pointed at. */
@@ -2858,35 +2852,38 @@ body {
  */
 :root
 	:is(
-		.ide-tree-row,
-		.ide-context-explorer-open,
 		.ide-dock-strip-tab,
 		.ide-chip > summary,
 		.ide-agent-undo,
 		.ide-button,
 		.ide-icon-button,
 		.ide-bar-button,
-		.ide-titlebar-menu,
-		.ide-tab-close,
-		.ide-dock-tab-close
+		.ide-titlebar-menu
 	):is(:hover, :focus-visible) {
 	border-radius: var(--radius);
 }
 
 /*
- * A row on a floating surface. No lift, and a marker instead — in a gutter that
- * is the same width empty as it is full, so nothing moves sideways when the
- * pointer or the keyboard arrives.
+ * A row you point at gets a marker — in a gutter that is the same width empty
+ * as it is full, so nothing moves sideways when the pointer or the keyboard
+ * arrives. No lift: this is a cursor moving down a list, which is what a
+ * terminal does, and a list whose every row rises to meet the pointer is a list
+ * that will not hold still long enough to be read.
  *
  * Collapsed, the navigator is one glyph wide and has no label to point at, so
  * the gutter is only there once it is open.
  */
 .ide-navigator-expanded .ide-navigator-header::before,
 .ide-navigator-expanded .ide-navigator-row::before,
-.ide-quickpick-row::before {
+.ide-quickpick-row::before,
+.ide-tree-row::before,
+.ide-context-explorer-open::before {
 	content: '';
 	flex: none;
 	display: inline-block;
+	/* The tree stretches its children to the row's full height so the guides can
+	   join up between rows; the marker is a character and belongs on the line. */
+	align-self: center;
 	width: 2ch;
 	color: var(--primary);
 }
@@ -2896,7 +2893,12 @@ body {
 .ide-navigator-expanded .ide-navigator-row:hover::before,
 .ide-navigator-expanded .ide-navigator-row:focus-visible::before,
 .ide-quickpick-row:hover::before,
-.ide-quickpick-row-active::before {
+.ide-quickpick-row-active::before,
+.ide-tree-row:hover::before,
+.ide-tree-row:focus-visible::before,
+.ide-tree-row-active::before,
+.ide-context-explorer-open:hover::before,
+.ide-context-explorer-open:focus-visible::before {
 	content: '>';
 }
 
@@ -2904,29 +2906,37 @@ body {
 .ide-navigator-row:hover,
 .ide-quickpick-row:hover,
 .ide-nav-row:hover,
-.ide-select-row:hover {
+.ide-select-row:hover,
+.ide-tree-row:hover,
+.ide-context-explorer-open:hover,
+/*
+ * A close button brightens and nothing else. It used to lift, and it was the
+ * one control that could not: the dock's close is centred by
+ * `translateY(-50%)`, and the lift's own `transform` replaced that outright, so
+ * pointing at it dropped it half its height down the tab — a float in the wrong
+ * direction. Even where it did work it was wrong, because the button is *on* a
+ * tab: lifting it raised a card off a surface that is already a card.
+ */
+.ide-tab-close:hover,
+.ide-dock-tab-close:hover,
+.ide-tab-close:focus-visible,
+.ide-dock-tab-close:focus-visible {
 	color: var(--foreground);
 }
 
 /* A lift is motion, and motion is exactly what this preference is about. The
    brightness and the marker carry the whole meaning without it. */
 @media (prefers-reduced-motion: reduce) {
-	.ide-tree-row,
-	.ide-context-explorer-open,
 	.ide-dock-strip-tab,
 	.ide-chip > summary,
 	.ide-agent-undo,
 	.ide-button,
 	.ide-icon-button,
 	.ide-bar-button,
-	.ide-titlebar-menu,
-	.ide-tab-close,
-	.ide-dock-tab-close {
+	.ide-titlebar-menu {
 		transition: none;
 	}
 
-	.ide-tree-row:hover,
-	.ide-context-explorer-open:hover,
 	.ide-dock-strip-tab:hover,
 	.ide-chip > summary:hover,
 	.ide-agent-undo:hover,
@@ -2934,19 +2944,13 @@ body {
 	.ide-icon-button:hover,
 	.ide-bar-button:hover,
 	.ide-titlebar-menu:hover,
-	.ide-tab-close:hover,
-	.ide-dock-tab-close:hover,
-	.ide-tree-row:focus-visible,
-	.ide-context-explorer-open:focus-visible,
 	.ide-dock-strip-tab:focus-visible,
 	.ide-chip > summary:focus-visible,
 	.ide-agent-undo:focus-visible,
 	.ide-button:focus-visible,
 	.ide-icon-button:focus-visible,
 	.ide-bar-button:focus-visible,
-	.ide-titlebar-menu:focus-visible,
-	.ide-tab-close:focus-visible,
-	.ide-dock-tab-close:focus-visible {
+	.ide-titlebar-menu:focus-visible {
 		transform: none;
 	}
 }

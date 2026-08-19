@@ -156,7 +156,13 @@
 	--duration-fast: 120ms;
 
 	/* Dimensions */
-	--titlebar-height: 42px;
+	/*
+	 * Half what it was. 42px was a desktop application's title bar; a terminal
+	 * gives its chrome one line and spends the rest on content, and this is one
+	 * line — the same 22px every tree row and list row is, so the window's top
+	 * edge sits on the same grid as everything under it.
+	 */
+	--titlebar-height: 22px;
 	--pane-header-height: 32px;
 	--tabbar-height: 32px;
 	--row-height: 22px;
