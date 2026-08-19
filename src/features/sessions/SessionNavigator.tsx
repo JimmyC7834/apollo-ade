@@ -93,9 +93,15 @@ const STATUS_GLYPH: Record<SessionStatus, string> = {
  * panel beside it. Opaque rather than transparent because expanded labels sit
  * above transcript text and have to be readable.
  *
- * Every row is exactly 32px and there are no dividers, no group margins and no
- * rounding on highlights. The active session gets no row background at all: its
- * label brightens, and its glyph goes on saying what its status is.
+ * Every row — a workspace header included — is one `--row-height`, in the same
+ * type as every other, and there are no dividers and no group margins. A header
+ * is above its sessions, which is the whole of what it needs to say; it used to
+ * say it again in tracked-out small caps, which is a section label from a
+ * document and this is not one.
+ *
+ * Expanded, the row under the cursor is inverted. Collapsed there is no row to
+ * invert, only a glyph, so the active session brightens and its glyph goes on
+ * saying what its status is.
  */
 export function SessionNavigator({
 	groups,

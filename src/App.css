@@ -2225,9 +2225,10 @@ body {
    one pixel of every label bleeding down the collapsed strip.
 
    Collapsed width and icon column are now the same number, so the strip is the
-   icons and nothing else. 264px expanded, 32px rows, 12px markers and 18px for
-   the active one are unchanged. They are stated as literals rather than tokens
-   because they are one component's geometry, not a role anything else shares. */
+   icons and nothing else. 264px expanded is stated as a literal rather than a
+   token because it is one component's geometry, not a role anything else
+   shares. The row height is not: a conversation is a list row like any other
+   list row, so it reads `--row-height`. */
 
 
 
@@ -2291,7 +2292,7 @@ body {
 	display: flex;
 	align-items: center;
 	flex: none;
-	height: 32px;
+	height: var(--row-height);
 	overflow: hidden;
 }
 
@@ -2316,7 +2317,7 @@ body {
 	display: flex;
 	align-items: center;
 	flex: none;
-	height: 32px;
+	height: var(--row-height);
 	padding: 0;
 	border: none;
 	/* No rounding on active or hover highlights. */
@@ -2338,12 +2339,15 @@ body {
 	overflow: hidden;
 }
 
+/*
+ * A workspace header is a row like the rows under it. It used to be small caps,
+ * tracked out — a section label from a document, in a list that is not one. The
+ * only thing it needs to say is that it is above them, and it says that by
+ * being above them.
+ */
 .ide-navigator-open {
 	flex: 1;
 	color: var(--muted-foreground);
-	font-size: var(--text-small);
-	text-transform: uppercase;
-	letter-spacing: 0.04em;
 }
 
 /*

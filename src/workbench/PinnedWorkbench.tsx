@@ -162,7 +162,13 @@ export function PinnedWorkbench({
 							title={artifact.title}
 							onClick={() => onSelect(artifact.id)}
 						>
-							<Icon name={artifact.icon} />
+							{/*
+							 * No glyph. The Explorer's is `/`, so the tab read as
+							 * `/Explorer` — a path, which it is not — and on every other
+							 * artifact the glyph was saying a second time what the title
+							 * beside it already said. The collapsed strip above still
+							 * carries it, because there the glyph is all there is.
+							 */}
 							<span className="ide-dock-tab-text">{artifact.title}</span>
 						</button>
 						{/*
