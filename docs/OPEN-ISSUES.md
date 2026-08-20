@@ -43,22 +43,20 @@ opened since the theme landed), `resize: both` and the two-pane split on the
 Modal Workbench, and whether a tab's close button really appears without
 resizing the tab.
 
-## No model has ever called the `browser` tool
+## Escape has never been seen returning focus from a page
 
-Slice 43's tool (`src/agent/browserTool.ts`) is covered against a fake host in
-`browserTool.check.ts`, and everything underneath it was driven in the native
-window over the debugging port: a hidden webview opens and lays out, `eval`
-returns the DOM, the console the initialization script captured is readable, and
-the allow-list refuses a remote host at open, at navigate, and on a link the page
-itself follows. **What has not happened is a model choosing the tool.** So the
-host wiring — `setBrowserHost` → the adapter → Rust — and the transcript chip
-that offers to open a hidden tab are read off the code, not observed.
+Everything else in slice 43 has now been driven, including by a real model —
+`gemini-3.6-flash` opened a `file:` page, read its heading, clicked a button,
+typed into a field and read the console, and the chip in the transcript put the
+hidden tab into the dock. See ticket 70.
 
-Escape returning focus from a page is in the same state. The page-side half was
-seen (the navigation to `ade-ipc:esc` is cancelled by `on_navigation`), but
-nobody has watched the caret come back to the ADE.
+**This one has not.** The page-side half was driven — the navigation to
+`ade-ipc:esc` is cancelled by `on_navigation`, so the channel is real — but
+nobody has pressed Escape with the caret inside a page and watched it come back
+to the ADE. It needs a pair of eyes rather than the debugging port: OS focus is
+not something a synthetic `KeyboardEvent` can move.
 
-Neither surface has been looked at by a human, in either theme.
+Nothing in slice 43 has been looked at by a human, in either theme.
 
 ## A webview call that never answers holds an async worker
 

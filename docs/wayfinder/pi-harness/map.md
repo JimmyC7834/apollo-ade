@@ -1044,7 +1044,7 @@ is the case that matters, not browsing.
 |---|---|---|
 | **[68](tickets/68-a-child-webview-proven.md)** | A child webview, proven | done |
 | **[69](tickets/69-a-page-you-can-look-at.md)** | A page you can look at | done |
-| **[70](tickets/70-the-agent-drives-the-page.md)** | The agent drives the page | done, one criterion short |
+| **[70](tickets/70-the-agent-drives-the-page.md)** | The agent drives the page | done |
 
 68 gates both. 69 gates 70, because the tool drives a surface that has to exist.
 
@@ -1077,9 +1077,16 @@ because Tauri runs a synchronous command on the main thread and `add_child` bloc
 *for* the main thread — the first call deadlocked the app. And a tab id may never be reused:
 reopening a label that was closed a moment ago wedges the invoke that does it.
 
-**What the slice does not have: a model has never called the tool.** Everything underneath
-it was driven natively, and the tool's own logic is checked against a fake host, but the
-last link is unobserved. Recorded in `docs/OPEN-ISSUES.md`. The other deviation is that a
+**Driven against a real model.** `gemini-3.6-flash` opened a `file:` page, read its
+heading, clicked a button, typed into a field and read the console back, and the chip in the
+transcript put the hidden tab into the dock. Across seven tool calls the strip never gained
+a tab it was not asked for. The run found one thing worth fixing: `action` was a free string
+and the model reached for `"text"`, the name of the parameter beside it, so it is now a
+union of the five literals.
+
+**What is left unobserved: Escape returning focus from a page.** The channel is real — the
+navigation to `ade-ipc:esc` is cancelled by `on_navigation` — but OS focus is not something
+a synthetic key event can move, so it needs a pair of eyes. The other deviation is that a
 browser tab belongs to the window rather than to the session, because `pinned` is window
 state and every other artifact behaves that way.
 

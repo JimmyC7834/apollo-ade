@@ -5693,15 +5693,25 @@ Driven in the **native** window over the WebView2 debugging port.
   dismissal it comes back to 66; and selecting another dock tab moves it away again.
 - `npm run check` clean, including the two new check files and three new Rust tests.
 
+**And driven against a real model** — `gemini-3.6-flash`, on a purpose-built `file:` page
+with a heading, a button, a field and a `console.error`. Over two turns it opened the page,
+read the `h1` and answered with its text, clicked `#go` and reported the heading had become
+"The button was pressed", typed `Ada` into `#name` and reported "echo: Ada" — which only the
+page's own `input` listener writes, so the synthetic events reached the framework and not
+only the DOM — and read back "error: probe page: a deliberate console error, code 4711".
+Across seven tool calls the dock strip never gained a tab; the two chips in the transcript
+did, and clicking one put the page into the dock with its URL on the address row.
+
+**One thing that run found and fixed:** `action` was a free string, so the model reached for
+`"text"` — the name of the parameter beside it — and burnt a call on the error before
+correcting itself. It is now a union of the five literals.
+
 ### What was *not* validated
 
-- **No model has called the `browser` tool.** Its logic is covered against a fake host in
-  `browserTool.check.ts`, and every mechanism underneath it — hidden open, eval, DOM read,
-  console, allow-list — was driven natively. The last link, a real model choosing the tool and
-  the chip appearing in a transcript, has not been seen. This is the repo's own standing rule
-  and the gap is recorded in `OPEN-ISSUES.md` rather than papered over.
 - **Escape returning focus** was not observed end to end. The page-side half was seen — the
-  navigation to `ade-ipc:esc` is cancelled — but nobody watched the caret come back.
+  navigation to `ade-ipc:esc` is cancelled by `on_navigation` — but nobody has pressed
+  Escape with the caret inside a page and watched it come back. OS focus is not something a
+  synthetic `KeyboardEvent` can move, so this one needs a pair of eyes.
 - Nothing has been looked at by a human, in either theme.
 
 ### Caveats and deviations

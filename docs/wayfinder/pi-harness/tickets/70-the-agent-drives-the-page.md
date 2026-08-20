@@ -63,24 +63,40 @@ console is what this ticket captures.
 
 ## Acceptance criteria
 
-- [x] `browser` appears in `capabilities.tools` and can be switched off in a profile.
-- [x] Reading the live DOM works: `document.body.getBoundingClientRect`, `document.title`
-      and a node count all came back from a hidden page in the native window. **The model
-      has not been the one to ask** — see the last line.
-- [ ] The agent clicks a button and types into a field. The scripts are covered against a
-      fake host; no model has run them.
-- [x] The console the page logged is readable — `window.__adeConsole` came back holding
-      Vite's and React's lines and a probe `console.error`.
-- [ ] An agent-opened tab is hidden with no slot in the strip and appears as a chip. Built;
-      not observed, because no model has opened one.
-- [x] The chip is a button, not a `<details>`, and shows no chevron — `EventChip`'s
-      `action`.
-- [x] Page text in the transcript is marked as untrusted data, and the check asserts it.
+Driven end to end against **`gemini-3.6-flash`**, in the native window, on a purpose-built
+`file:` page with a heading, a button, a field and a `console.error`.
+
+- [x] `browser` appears in `capabilities.tools` and can be switched off in a profile. The
+      profile editor showed "Tools 7 of 7".
+- [x] The agent opened the page and read it, and reported something only obtainable from
+      the live DOM: asked for the `h1`, it called
+      `{"action":"read","selector":"h1","tab":"browser:1"}` and answered
+      **"Nothing has happened yet"** — the heading's text.
+- [x] The agent clicked `#go` and typed into `#name`, and the page responded: the heading
+      became **"The button was pressed"** and the echo line became **"echo: Ada"**. The echo
+      only updates from the page's own `input` listener, so the synthetic events reached
+      the framework rather than only the DOM.
+- [x] The agent read the console error the page logged —
+      **"error: probe page: a deliberate console error, code 4711"**.
+- [x] An agent-opened tab is hidden and has **no slot in the dock strip**: after two turns
+      and seven tool calls the strip still held only Problems, References and Terminal, and
+      the transcript held two chips.
+- [x] The chip's button opens the tab into the strip. Clicked: the strip gained a `file`
+      tab with the page's URL on its address row. It is a `<p class="ide-chip">` with a
+      `<button class="ide-chip-action">`, not a `<details>`, and carries no chevron.
+- [x] Page text in the transcript is marked as untrusted data — the transcript shows the
+      wrapper around the heading, verbatim.
 - [ ] Esc returning focus. The page-side half was driven: the navigation to `ade-ipc:esc`
-      is cancelled by `on_navigation`. Nobody watched the caret come back.
+      is cancelled by `on_navigation`. Nobody watched the caret come back. **This is the
+      one criterion still open.**
 - [x] A non-allowed host is refused, at open and at navigate and on a link the page
-      follows, and the refusal reaches the caller.
+      follows. Tool errors reach the model and it recovers from them: it sent
+      `action: "text"`, was told `text is not an action; use open, read, click, type or
+      console`, and corrected itself.
 - [x] `RESERVED` contains `browser`, and `userTools.ts`'s comment records the widening.
 - [x] `npm run check` and `cargo test` pass.
-- [ ] **Not driven against a real model.** Recorded in `docs/OPEN-ISSUES.md` rather than
-      claimed. This is the one criterion the slice does not meet.
+- [x] **Driven in the native window against a real model.**
+
+**Found by that run and fixed:** `action` was a free string, so the model reached for
+`"text"` — the name of the parameter beside it. It is now a union of the five literals, so
+the choice is constrained rather than hoped for.
