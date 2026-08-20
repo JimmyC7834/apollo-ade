@@ -14,9 +14,11 @@ import { ChangesView } from '../features/changes/ChangesView';
 import { ExplorerTree, type FileOperations } from '../features/explorer/ExplorerTree';
 import { ReferencesView } from '../features/lsp/ReferencesView';
 import type { Lsp } from '../features/lsp/useLsp';
+import { PluginsView } from '../features/plugins/PluginsView';
 import { ProblemsView } from '../features/problems/ProblemsView';
 import { SearchView } from '../features/search/SearchView';
 import type { Replacement } from '../features/search/replace';
+import type { PluginState } from '../plugins/host';
 import type { WorkspaceEntry, WorkspaceProvider } from '../workspace';
 
 export interface ArtifactViewProps {
@@ -36,6 +38,9 @@ export interface ArtifactViewProps {
 	readonly onPreviewReplace: (plan: Replacement) => void;
 	readonly onApplyReplace: (plans: readonly Replacement[]) => Promise<string>;
 	readonly onChange: (id: string, content: string) => void;
+	/** What the plugin host found and is running — ticket 72. */
+	readonly pluginState: PluginState;
+	readonly onSetPluginEnabled: (id: string, enabled: boolean) => void;
 }
 
 export function ArtifactView(props: ArtifactViewProps) {
@@ -94,6 +99,21 @@ export function ArtifactView(props: ArtifactViewProps) {
 				onOpen={props.onOpenFile}
 				lspStatus={props.lsp.status}
 				onRestartLsp={props.lsp.restart}
+				notices={props.pluginState.failures.map((failure) => ({
+					id: failure.id,
+					source: failure.name,
+					message: failure.reason,
+				}))}
+			/>
+		);
+	}
+	if (kind === 'plugins') {
+		return (
+			<PluginsView
+				plugins={props.pluginState.listed}
+				globalDir={props.pluginState.globalDir}
+				localDir={props.pluginState.localDir}
+				onSetEnabled={props.onSetPluginEnabled}
 			/>
 		);
 	}

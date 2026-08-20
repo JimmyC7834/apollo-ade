@@ -58,6 +58,7 @@ import { allTemplates, onTemplatesChange, useTemplateSource } from './promptTemp
 import { createAskTool, createAsker } from './ask';
 import { createBrowserTool } from './browserTool';
 import { applyContributors, composeSystemPrompt } from './systemPrompt';
+import { bridgePlugins } from '../plugins/harnessBridge.ts';
 import {
 	activeProfile,
 	activeToolNames,
@@ -642,7 +643,12 @@ function createRunner(
 		// own `rtk` flag, since a profile decides this the way it decides its
 		// policy. No `warn`: the notice belongs to the parent's transcript.
 		const offRtk = harness.on('tool_call', (event) => rewriteToolCall(event, profile.rtk));
-		const offGate = harness.on('tool_call', (event) => gate.onToolCall(event, profile.gatePolicy));
+		/*
+		 * Plugins run against a child too — a plugin that blocks `rm -rf` has to
+		 * block it wherever the model reaches for it. The child's own gate policy
+		 * is still the child's; only the chain around it is shared.
+		 */
+		const offGate = bridgePlugins(harness, (event) => gate.onToolCall(event, profile.gatePolicy));
 
 		/*
 		 * The child's events stay inside the child. Only one line of them escapes,
@@ -1002,7 +1008,14 @@ function createRunner(
 					onEvent({ kind: 'tool_input', id: event.toolCallId, input: { ...event.input } });
 				}
 			});
-			const offHook = harness.on('tool_call', (event) => gate.onToolCall(event));
+			/*
+			 * **The gate is reached through the plugin chain, not beside it.**
+			 * Registering both on `tool_call` separately is the trap `hooks.ts`
+			 * describes: `emitHook` keeps only the last non-undefined result, so a
+			 * plugin returning `{}` would erase `{ block: true }` and nothing would
+			 * fail. `runToolCall` runs the plugins, then this, with deny precedence.
+			 */
+			const offHook = bridgePlugins(harness, (event) => gate.onToolCall(event));
 			/*
 			 * The extension point for the system prompt
 			 * ([ticket 17](docs/wayfinder/pi-harness/tickets/17-system-prompt-assembly.md)).

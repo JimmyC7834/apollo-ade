@@ -2,6 +2,7 @@ mod browser;
 mod exec;
 mod git;
 mod lsp;
+mod plugins;
 mod profiles;
 mod provider;
 mod reaper;
@@ -46,6 +47,7 @@ pub fn run() {
             workspace::delete_entry,
             workspace::read_text_lines,
             workspace::global_skills_path,
+            plugins::list_plugins,
             profiles::read_global_profiles,
             profiles::global_profiles_path,
             provider::provider_stream,

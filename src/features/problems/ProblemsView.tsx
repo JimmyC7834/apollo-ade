@@ -2,7 +2,7 @@ import * as monaco from 'monaco-editor';
 import { useEffect, useMemo, useState } from 'react';
 
 import { fileIdForModel } from '../../editor/modelRegistry';
-import { Badge, WorkbenchTree, type TreeNode } from '../../ui';
+import { Badge, Icon, WorkbenchTree, type TreeNode } from '../../ui';
 import type { LspStatus } from '../lsp/client';
 import { LspStatusNote } from '../lsp/LspStatusNote';
 import {
@@ -47,6 +47,24 @@ export interface ProblemsViewProps {
 	 */
 	readonly lspStatus?: LspStatus;
 	readonly onRestartLsp?: () => void;
+	/**
+	 * Problems that are not in a file — a plugin that would not load, and from
+	 * ticket 73 one that missed its deadline or threw.
+	 *
+	 * Deliberately **not** a `Problem`. Every field of that type is about a
+	 * position in a source file, and a plugin failure has none: giving one a line
+	 * and a column of 1 would put `(1:1)` after every message and quietly turn a
+	 * precise model into an approximate one. They render above the tree, in the
+	 * one panel a user already watches for things that are wrong.
+	 */
+	readonly notices?: readonly ProblemNotice[];
+}
+
+export interface ProblemNotice {
+	readonly id: string;
+	/** Who is complaining — a plugin's name. */
+	readonly source: string;
+	readonly message: string;
 }
 
 /**
@@ -64,7 +82,7 @@ export interface ProblemsViewProps {
  * a subset would be worse than one that names its own edge, because the useful
  * reading of an empty list is "nothing is wrong" and that would be a lie.
  */
-export function ProblemsView({ onOpen, lspStatus, onRestartLsp }: ProblemsViewProps) {
+export function ProblemsView({ onOpen, lspStatus, onRestartLsp, notices = [] }: ProblemsViewProps) {
 	const [files, setFiles] = useState<readonly ProblemFile[]>([]);
 
 	useEffect(() => {
@@ -122,6 +140,16 @@ export function ProblemsView({ onOpen, lspStatus, onRestartLsp }: ProblemsViewPr
 				at — a file no editor has opened is not checked.
 			</p>
 			<LspStatusNote status={lspStatus} onRestart={onRestartLsp ?? (() => {})} />
+			{notices.length > 0 ? (
+				<ul className="ide-problems-notices">
+					{notices.map((notice) => (
+						<li key={notice.id}>
+							<Icon name="error" />
+							<strong>{notice.source}</strong> {notice.message}
+						</li>
+					))}
+				</ul>
+			) : null}
 			<WorkbenchTree
 				label="Problems"
 				nodes={nodes}

@@ -25,6 +25,37 @@ export interface Command {
 	readonly run: () => void;
 }
 
+/**
+ * The ids, named once.
+ *
+ * They were literals inside `buildCommands` until ticket 71, and they still
+ * could be — except that a plugin may now *say* one of these strings, which
+ * makes them an API rather than an internal label. `publicNames.ts` re-exports
+ * this object; a rename here is an `api` bump.
+ */
+export const COMMAND_IDS = {
+	openFolder: 'file.openFolder',
+	newSession: 'session.new',
+	closeSession: 'session.close',
+	save: 'file.save',
+	showEditor: 'view.showEditor',
+	browser: 'view.browser',
+	toggleDock: 'view.toggleDock',
+	closeActiveEditor: 'editor.closeActive',
+	accessibility: 'help.accessibility',
+} as const;
+
+/**
+ * The id of the command that reveals one artifact.
+ *
+ * Derived rather than listed, because the artifacts themselves are the list —
+ * adding one has always added its command for free, and writing them out here
+ * would be the second place that fact lives.
+ */
+export function showArtifactCommandId(artifactId: string): string {
+	return `view.show.${artifactId}`;
+}
+
 /** The full label used for matching and display: "View: Toggle Panel". */
 export function commandLabel(command: Command): string {
 	return command.category ? `${command.category}: ${command.title}` : command.title;
@@ -72,7 +103,7 @@ export function buildCommands(actions: WorkbenchActions): readonly Command[] {
 		...(openFolder
 			? [
 					{
-						id: 'file.openFolder',
+						id: COMMAND_IDS.openFolder,
 						category: 'File',
 						title: 'Open Folder',
 						run: openFolder,
@@ -80,25 +111,25 @@ export function buildCommands(actions: WorkbenchActions): readonly Command[] {
 				]
 			: []),
 		{
-			id: 'session.new',
+			id: COMMAND_IDS.newSession,
 			category: 'Session',
 			title: 'New Session',
 			run: actions.newSession,
 		},
 		{
-			id: 'session.close',
+			id: COMMAND_IDS.closeSession,
 			category: 'Session',
 			title: 'Close Session',
 			run: actions.closeSession,
 		},
 		{
-			id: 'file.save',
+			id: COMMAND_IDS.save,
 			category: 'File',
 			title: 'Save',
 			run: actions.saveActiveEditor,
 		},
 		{
-			id: 'view.showEditor',
+			id: COMMAND_IDS.showEditor,
 			category: 'View',
 			title: 'Show Editor',
 			disabled: actions.showEditorDisabled,
@@ -112,31 +143,31 @@ export function buildCommands(actions: WorkbenchActions): readonly Command[] {
 		 * References arrived with ticket 34 and needed nothing here.
 		 */
 		...TOOL_ARTIFACT_LIST.map((artifact) => ({
-			id: `view.show.${artifact.id}`,
+			id: showArtifactCommandId(artifact.id),
 			category: 'View',
 			title: `Show ${artifact.title}`,
 			run: () => actions.showArtifact(artifact.id),
 		})),
 		{
-			id: 'view.browser',
+			id: COMMAND_IDS.browser,
 			category: 'View',
 			title: 'Open a Browser Tab',
 			run: actions.openBrowserTab,
 		},
 		{
-			id: 'view.toggleDock',
+			id: COMMAND_IDS.toggleDock,
 			category: 'View',
 			title: 'Toggle Artifact Dock',
 			run: actions.toggleDock,
 		},
 		{
-			id: 'editor.closeActive',
+			id: COMMAND_IDS.closeActiveEditor,
 			category: 'Editor',
 			title: 'Close Active Editor',
 			run: actions.closeActiveEditor,
 		},
 		{
-			id: 'help.accessibility',
+			id: COMMAND_IDS.accessibility,
 			category: 'Help',
 			title: 'Show Keyboard Help',
 			run: actions.showAccessibilityHelp,

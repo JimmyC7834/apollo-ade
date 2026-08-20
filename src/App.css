@@ -549,6 +549,82 @@ body {
 	overflow: auto;
 }
 
+/* A problem with no position in a file — a plugin that would not load. It sits
+   above the tree because it is about the workbench rather than about the code,
+   and the panel is where a user already looks for things that are wrong. */
+.ide-problems-notices {
+	flex: none;
+	margin: 0;
+	padding: var(--space-2) var(--space-3);
+	border-bottom: 1px solid var(--border);
+	list-style: none;
+	font-size: var(--text-small);
+}
+
+.ide-problems-notices li {
+	display: flex;
+	gap: var(--space-2);
+	line-height: var(--row-height);
+	color: var(--destructive);
+}
+
+/* The plugin list. Rows, not a tree: a plugin has no children, and the switch
+   a local one carries wants a row of its own rather than a tree accessory. */
+.ide-plugins {
+	flex: 1;
+	overflow: auto;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.ide-plugins-row {
+	padding: var(--space-2) var(--space-3);
+	border-bottom: 1px solid var(--border);
+}
+
+.ide-plugins-head {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	line-height: var(--row-height);
+}
+
+.ide-plugins-name {
+	font-weight: 600;
+}
+
+.ide-plugins-toggle {
+	margin-left: auto;
+	padding: 0 var(--space-2);
+	border: 1px solid var(--border);
+	background: none;
+	color: var(--foreground);
+	font: inherit;
+	line-height: var(--row-height);
+	cursor: pointer;
+}
+
+.ide-plugins-toggle:hover {
+	background: var(--secondary);
+}
+
+.ide-plugins-description,
+.ide-plugins-dir,
+.ide-plugins-reason {
+	margin: 0;
+	color: var(--muted-foreground);
+	font-size: var(--text-small);
+}
+
+.ide-plugins-dir {
+	color: var(--foreground-subtle);
+}
+
+.ide-plugins-reason {
+	color: var(--destructive);
+}
+
 .ide-tree-description {
 	overflow: hidden;
 	color: var(--foreground-subtle);

@@ -443,16 +443,16 @@ reporting them:
   necessary: what an untrusted page may do to the agent's context, whether the agent may
   navigate off the allow-list unasked, and whether a host list is a per-profile trust
   surface.
-- **A plugin / extension system.** Raised by the dev while asking whether the browser tab
-  could be one. It cannot — see Slice 43. The grill was started and stopped one round in,
-  and the question it stopped on is the one to resume from: **name three plugins you
-  actually want.** A system whose motivating example is un-pluggable has no
-  implementations, and `CONTEXT.md` rules out an abstraction with one. What is already
-  known: the only extension point today is the declarative tool manifest; artifacts,
-  renderers and glyphs are closed unions; the `emitHook` trap means an extension with a
-  `tool_call` handler can silently replace the gate's `{ block: true }`; and "plugin" needs
-  a glossary line, because it currently means both a user extension we do not support and a
-  Rust crate we already depend on.
+- **A plugin system — settled, no longer deferred.** Grilled to an empty frontier and
+  recorded in
+  [ADR 0005](../../adr/0005-a-plugin-is-injected-and-the-api-is-a-promise.md); slices are
+  tickets 71-76. **A plugin is injected into our document with the ADE's full authority,
+  and the six-message API is a compatibility promise rather than a fence.** The dev
+  declined the evidence gate a third time - "name three plugins you actually want" is
+  still unanswered - so the gate is now that the surface grows one message at a time. The
+  sandbox alternative was worked out in full, turns out to be VS Code's architecture, and
+  is kept reachable by two rules: nothing but data crosses, and everything is
+  asynchronous. `plugin` is now a glossary word in `CONTEXT.md`, against `Tauri plugin`.
 - **Extension beyond tools** — hooks exposed to users, custom renderers, ADE chrome.
   The *tools* half of this graduated into
   [How a user adds their own tool](tickets/13-user-authored-tools.md) when the dev named
@@ -1047,6 +1047,30 @@ is the case that matters, not browsing.
 | **[70](tickets/70-the-agent-drives-the-page.md)** | The agent drives the page | done |
 
 68 gates both. 69 gates 70, because the tool drives a surface that has to exist.
+
+### Slice 44 — the plugin system
+
+The dev wants plugins: things a user adds to the ADE, as casual to install as copying a
+folder in, able to add features *and* change the workbench. Settled over five rounds of
+grilling and recorded as
+[ADR 0005](../../adr/0005-a-plugin-is-injected-and-the-api-is-a-promise.md). **A plugin is
+injected into our document with the ADE's full authority; the six-message API is a
+compatibility promise, not a fence.** The sandbox alternative - which turns out to be VS
+Code's architecture - is kept reachable by two rules: nothing but data crosses, and
+everything is asynchronous.
+
+| | | |
+|---|---|---|
+| **[71](tickets/71-one-file-of-public-names.md)** | One file of public names | done |
+| **[72](tickets/72-a-plugin-loads-and-adds-a-command.md)** | A plugin loads and adds a command | done |
+| **[73](tickets/73-a-plugin-acts-and-listens.md)** | A plugin acts, and listens without lifting a block | done |
+| **[74](tickets/74-a-plugin-declares-a-tool.md)** | A plugin declares a tool, and a profile turns it on | ready |
+| **[75](tickets/75-a-plugin-draws.md)** | A plugin draws | ready |
+| **[76](tickets/76-a-plugin-changes-the-chrome.md)** | A plugin changes the chrome | ready |
+
+72 is the tracer bullet and gates 73-76. 71 is a prefactor, starts immediately, and gates
+only 76 - a layout claim names an id, and that name becomes an API. 75 also waits on 73,
+for the deadline and the failure path a panel needs.
 
 **One constraint decided the whole design, and it is why 68 exists at all.** The ADE runs
 on `tauri://localhost` and a dev server on `http://localhost:5173`. Those are different

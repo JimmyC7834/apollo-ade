@@ -34,6 +34,7 @@ import { useLsp } from '../features/lsp/useLsp';
 import { refuseReason, type Replacement } from '../features/search/replace';
 import { SessionNavigator } from '../features/sessions/SessionNavigator';
 import { createPersistenceAdapter, type PersistedState } from '../persistence';
+import { pluginHost } from '../plugins/host';
 import { recordOpenSessions, takeOpenSessions, takeUnopened } from '../sessionRequest';
 import {
 	archiveMove,
@@ -1370,9 +1371,32 @@ export function WorkbenchController() {
 		[live.focused, live.sessions]
 	);
 
+	/*
+	 * What the plugin host is running — ticket 72.
+	 *
+	 * A module singleton read through `useSyncExternalStore` rather than state
+	 * the controller owns, because plugins load *before this component mounts*
+	 * and `provider.ts` reaches the same host from outside the tree. One store,
+	 * two readers.
+	 */
+	const pluginState = useSyncExternalStore(pluginHost.subscribe, pluginHost.snapshot);
+
+	/*
+	 * The second load. Global plugins are already in by now — `main.tsx` loads
+	 * them before React mounts, which is where the ADR puts injection. A *local*
+	 * plugin lives under a root and there is no root until one has been opened,
+	 * so this is where those are discovered. Nothing runs that the user has not
+	 * enabled for this root; discovery is only reading.
+	 */
+	useEffect(() => {
+		if (selection?.path) {
+			void pluginHost.load();
+		}
+	}, [selection?.path]);
+
 	const commands = useMemo(
-		() =>
-			buildCommands({
+		() => [
+			...buildCommands({
 				showArtifact,
 				toggleDock: () => setDockCollapsed((current) => !current),
 				closeActiveEditor: () => {
@@ -1398,7 +1422,16 @@ export function WorkbenchController() {
 				closeSession,
 				openBrowserTab,
 			}),
+			/*
+			 * Claimed by plugins, appended rather than merged. They are already
+			 * namespaced by plugin id, so nothing here can collide with a command
+			 * the workbench contributes — and the palette draws them with our own
+			 * component, which is what `claim` means.
+			 */
+			...pluginState.commands,
+		],
 		[
+			pluginState.commands,
 			showArtifact,
 			openBrowserTab,
 			newSession,
@@ -1934,6 +1967,8 @@ export function WorkbenchController() {
 								onPreviewReplace={openReplacePreview}
 								onApplyReplace={applyReplacements}
 								onChange={editFile}
+								pluginState={pluginState}
+								onSetPluginEnabled={(id, enabled) => void pluginHost.setEnabled(id, enabled)}
 							/>
 						) : null}
 					</PinnedWorkbench>

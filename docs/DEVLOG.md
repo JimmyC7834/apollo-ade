@@ -5737,3 +5737,117 @@ not, so a restored tab was a dock tab with no page behind it. Seen on the first 
 for per-session tabs. `pinned` is window state in this codebase — every other artifact behaves
 that way — so making browser tabs the one per-session artifact would have been a second
 mechanism for what the dock already does. Recorded here rather than done quietly.
+
+## Slice 44 — a plugin loads, acts and listens (tickets 71, 72, 73)
+
+The first three slices of the plugin system settled in
+[ADR 0005](adr/0005-a-plugin-is-injected-and-the-api-is-a-promise.md): one file of public
+names, a plugin that loads from disk and claims a command, and a plugin that reaches the
+running ADE through `invoke` and hears the agent through `on`.
+
+### What is there now
+
+**71 — one file of public names.** `src/publicNames.ts` re-exports the ids a plugin may say:
+the six tool artifacts, the workbench's own command ids, and the glyph vocabulary. Nothing is
+defined there — a name has one definition, and this file re-exports it, because a copy in
+*this particular file* is indistinguishable from a broken promise. `publicNames.check.ts`
+asserts the workbench still contributes every name promised, which is the failure a
+re-export cannot catch on its own.
+
+The rule for what is public is written down and is what makes the set smaller than "every id
+we have": we chose it, it is the same on every run and in every workspace, and a plugin can
+act on it. Session ids, editor ids, browser tab ids and LSP request ids are identities rather
+than names and fail rule 2.
+
+**Tokens are promised by scope, not by list** — every custom property `tokens.css` defines,
+and nothing else. The alternative was the copy the file otherwise refuses to make, and the
+check could only ever have told us the copy had gone stale. The cost is named in the file: the
+promise widens whenever a token is added.
+
+Two prefactors fell out. `COMMAND_IDS` in `commandRegistry.ts`, because the ids were literals
+inside `buildCommands` and are now an API. And `src/ui/glyphs.ts`, because `publicNames.ts` is
+checked under bare `node`, which cannot parse the JSX `Icon.tsx` is written in.
+
+**72 — a plugin loads and adds a command.** `src-tauri/src/plugins.rs` walks two folders and
+reads what it finds; `src/plugins/manifest.ts` decides what it means; `src/plugins/host.ts`
+injects and runs it. A plugin is a folder with a `plugin.json` naming `name`, `description`,
+an integer `api` and at least one of `script`, `panel`, `theme`. A malformed manifest, an
+`api` mismatch or a missing entry point disables the plugin with one line in Problems and the
+ADE still starts with the others loaded.
+
+**73 — a plugin acts and listens.** `invoke` is a pass-through to any Rust command under a
+deadline; `on` delivers eight events; `src/plugins/harnessBridge.ts` is the one file that puts
+plugins anywhere near pi.
+
+### The thing this slice exists to get right
+
+**A plugin may add a block and may never lift one.**
+
+pi's `emitHook` hands every handler the same event and keeps only the last non-undefined
+result. A plugin installing a `tool_call` handler and returning *any* object — `{}` included —
+silently replaces the gate's `{ block: true }`. Nothing fails. The permission gate is simply
+gone.
+
+Three things stop it, and none of them is a convention:
+
+- Plugin handlers are **never registered on the harness**. `provider.ts` registers one
+  handler, which calls `runToolCall`, which runs the chain and then the gate. The registry in
+  `hooks.ts` has no accessor that returns handlers, so there is nothing to hand to
+  `harness.on` even by accident.
+- Only `block === true` survives `asBlock`. `{ block: false }`, `{}`, a string and `undefined`
+  all read as "no opinion".
+- `hooks.check.ts` reads `provider.ts` and fails if it ever imports more from the plugin
+  system than `bridgePlugins`, if a third `tool_call` registration appears, or if `hooks.ts`
+  grows an exported handler list.
+
+### Caveats and deviations
+
+**The synchronous-loop gap is not solved, and this is the record of it.** A plugin's handler
+runs on our main thread. `withDeadline` bounds how long we *wait* — a promise cannot be
+cancelled, so the loser keeps running — and it catches a handler that awaits something slow.
+It does **not** catch a handler that spins in a synchronous loop: that freezes the window and
+no timer can interrupt it. This is the trigger ADR 0005 names for moving plugins into a
+sandboxed child webview, and it is written here rather than discovered later.
+
+**Eight events, not twenty-two.** Ticket 73 asks for all of pi's events and also asks that
+payloads be ours-shaped rather than pi's passed through raw. Those two pull opposite ways:
+publishing twenty-two events means publishing twenty-two payloads we have not designed, which
+is the pass-through the ticket rules out. Resolved toward the shaped half —
+`turn_start`, `turn_end`, `tool_call`, `tool_result`, `model_update`, `tools_update`,
+`compacted` and `abort`, each with a payload of ours — and the list grows one event at a
+time, which is the gate ADR 0005 put in place of the evidence gate.
+
+**The gate is not asked when a plugin has already said no.** The ticket's wording is "the gate
+runs last and unconditionally". The property that matters holds absolutely: a plugin can never
+turn a block into an allow. What is skipped is only the *question* — under `ask`, running the
+gate after a plugin has denied a call would put a card in front of the user whose answer could
+not change anything, and approving a call that stays blocked is worse than not being asked.
+
+**Global plugins load at boot; local ones load when a root is opened.** ADR 0005 says
+injection happens before React mounts, and for global plugins it does — `main.tsx` awaits
+`pluginHost.load()` before `createRoot`. A local plugin lives under a root and there is no
+root until one has been opened, so the controller calls `load` again then. The renderer never
+names the root: `list_plugins` takes no argument and reads `WorkspaceState`, because a root
+named by the renderer is the hole `choose_workspace` exists to close.
+
+**`on` returns `Promise<void>`, not a disposer.** Rule 2 of the ADR is that everything is
+asynchronous so the move to a sandbox stays available, and a returned *closure* is the other
+thing no transport can preserve. A plugin does not unregister its handlers; disabling the
+plugin drops all of them at once, which is the only granularity a transport could carry
+anyway.
+
+**Disabling cannot un-run code that has already run.** Turning a local plugin off drops its
+handlers and its commands and reloads, but the module is still in the document until the
+window is reloaded. Pretending otherwise would be the worse lie.
+
+### What was *not* validated
+
+**Nothing in this slice has been driven in the native window.** The checks are green —
+`npm run check` including three new check files and four new Rust tests, and `npm run build`
+— but discovery, injection, the `api` refusal, the local enable switch, a claimed command
+running, `invoke` reaching Rust and a plugin blocking a tool call have all been reasoned about
+and none of them has been watched. `docs/examples/hello-plugin/` exists so that can be done:
+copy it into the global plugins folder, or into `.ade/plugins/`, and drive it.
+
+The `tool_call` path in particular wants a real model, which is the standing rule for this
+repo: a unit test is not evidence that a feature works.

@@ -139,3 +139,41 @@ The browser pane is **not** equivalent to the native window — it serves no
 animation frames, so Monaco never lays out and timing behaves differently.
 Anything about focus, layout inside Monaco, or animation has to be checked
 natively; `docs/OPEN-ISSUES.md` explains how.
+
+## Words
+
+One word for one meaning. These collided, and the collisions are settled.
+
+**Plugin** — something a *user* adds to the ADE. The dev's word, and it wins.
+Two kinds exist: the declarative tool manifest, and the injected plugin of
+[ADR 0005](docs/adr/0005-a-plugin-is-injected-and-the-api-is-a-promise.md).
+"Extension" is pi's word for the same idea and is not ours; use it only when
+describing pi.
+
+**Tauri plugin** — a Rust crate we depend on (`tauri-plugin-*`). Always written
+with "Tauri" in front. Never shortened to "plugin".
+
+**Plugin manifest** — the `plugin.json` that declares a plugin. Not to be
+confused with a **tool manifest**, which declares a user tool inside a profile.
+
+**Global plugin** and **local plugin** — where the folder is, which is also the
+trust decision. A global plugin sits in the app-data plugins folder and runs
+because putting it there was the decision. A local plugin sits in `.ade/plugins/`
+under a project root, arrived with somebody's repository, and is listed and
+**inert** until it is enabled for that root. Never say "installed": nothing
+installs anything, you copy a folder.
+
+**Claim** — a chrome contribution a plugin declares and **we** draw: a command,
+a strip item, a dock tab, a notification, a menu entry. A claim is data. A
+plugin never renders a claim itself.
+
+**Plugin panel** — a surface a plugin draws itself, in a child webview, in a
+dock slot. The other half of what a claim is not. Same machinery as a browser
+tab ([ADR 0004](docs/adr/0004-a-browser-tab-is-a-child-webview.md)).
+
+**Relay** — an opaque payload passed between a plugin's script half and its
+plugin panel. The ADE carries it and never parses it.
+
+**Supported** and **unsupported** — a plugin call is supported when it uses one
+of the six declared messages, and we promise not to break it. Anything else a
+plugin reaches is unsupported: it works, and it carries no promise.

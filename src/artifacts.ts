@@ -27,7 +27,8 @@ export type ToolArtifactKind =
 	| 'replace'
 	| 'explorer'
 	| 'problems'
-	| 'references';
+	| 'references'
+	| 'plugins';
 
 export interface ArtifactRef {
 	readonly id: string;
@@ -60,6 +61,13 @@ export const TOOL_ARTIFACTS: Record<ToolArtifactKind, ArtifactRef> = {
 	 * second copy of Search.
 	 */
 	references: { id: 'artifact:references', title: 'References', icon: 'references' },
+	/*
+	 * What a user has added to the ADE — ticket 72. An artifact for a third
+	 * reason: it is the one surface a plugin must never be able to take away.
+	 * Ticket 76 lets a plugin hide chrome by name, and the route back to here is
+	 * what stops a plugin that hides everything from hiding its own off switch.
+	 */
+	plugins: { id: 'artifact:plugins', title: 'Plugins', icon: 'plugins' },
 };
 
 /**
