@@ -29,6 +29,7 @@ import {
 // script, which node resolves without Vite's help.
 import { destructive, type Gate } from './gate.ts';
 import { ASK_TOOL } from './ask.ts';
+import { BROWSER_TOOL } from './browserTool.ts';
 import { isTauri } from '../native.ts';
 import { rtkArgvFor } from './rtk.ts';
 
@@ -60,11 +61,20 @@ const PLACEHOLDER = /\{([a-zA-Z][a-zA-Z0-9_-]{0,63})\}/g;
  * `bash` would take the harness down at `setTools` rather than at parse.
  *
  * Ticket 13's rule was that the built-in exception **does not grow** — meaning
- * no new *executing* tool joins pi's four, which is still true. `ask_user` is
- * the one addition and it is the opposite kind of thing: it runs nothing, it
- * asks the user something. Imported rather than re-typed so the two cannot drift.
+ * no new *executing* tool joins pi's four. `ask_user` was let past it because it
+ * is the opposite kind of thing: it runs nothing, it asks the user something.
+ *
+ * **`browser` widens that rule, and this is the record of it.** It executes: it
+ * opens a page and clicks in it. Ticket 70 and
+ * [ADR 0004](../../docs/adr/0004-a-browser-tab-is-a-child-webview.md) are where
+ * the decision was made, on the grounds that a page is a surface the workbench
+ * owns rather than a program the model chose — the same reason `bash` is gated
+ * and this is not. The rule is now "the built-ins are the six below", and the
+ * next addition needs its own argument rather than this one.
+ *
+ * Imported rather than re-typed so the names cannot drift.
  */
-const RESERVED = new Set(['read', 'write', 'edit', 'bash', ASK_TOOL]);
+const RESERVED = new Set(['read', 'write', 'edit', 'bash', ASK_TOOL, BROWSER_TOOL]);
 
 /**
  * One parameter, in the manifest's long form.

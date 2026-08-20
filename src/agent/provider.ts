@@ -56,6 +56,7 @@ import { loadedRoot } from './profileFiles';
 import { isTauri } from '../native';
 import { allTemplates, onTemplatesChange, useTemplateSource } from './promptTemplates';
 import { createAskTool, createAsker } from './ask';
+import { createBrowserTool } from './browserTool';
 import { applyContributors, composeSystemPrompt } from './systemPrompt';
 import {
 	activeProfile,
@@ -437,6 +438,15 @@ function createRunner(
 		withWriteNotes(createEditTool()),
 		createBashTool(),
 		createAskTool(asker),
+		/*
+		 * The page the agent can look at — ticket 70. Listed among the built-ins
+		 * because a profile decides about it the way it decides about `bash`:
+		 * `"tools": { "browser": false }` is how a profile that must not open one
+		 * says so. It reads its workbench from `setBrowserHost` rather than being
+		 * built with one, because a tool is built once and the workbench is not
+		 * mounted yet when the runner is created.
+		 */
+		createBrowserTool(),
 		task,
 	];
 

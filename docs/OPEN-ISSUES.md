@@ -43,6 +43,33 @@ opened since the theme landed), `resize: both` and the two-pane split on the
 Modal Workbench, and whether a tab's close button really appears without
 resizing the tab.
 
+## No model has ever called the `browser` tool
+
+Slice 43's tool (`src/agent/browserTool.ts`) is covered against a fake host in
+`browserTool.check.ts`, and everything underneath it was driven in the native
+window over the debugging port: a hidden webview opens and lays out, `eval`
+returns the DOM, the console the initialization script captured is readable, and
+the allow-list refuses a remote host at open, at navigate, and on a link the page
+itself follows. **What has not happened is a model choosing the tool.** So the
+host wiring — `setBrowserHost` → the adapter → Rust — and the transcript chip
+that offers to open a hidden tab are read off the code, not observed.
+
+Escape returning focus from a page is in the same state. The page-side half was
+seen (the navigation to `ade-ipc:esc` is cancelled by `on_navigation`), but
+nobody has watched the caret come back to the ADE.
+
+Neither surface has been looked at by a human, in either theme.
+
+## A webview call that never answers holds an async worker
+
+`browser_eval` has a 15-second deadline for this reason. The other webview
+commands — `browser_place` above all, which runs on every resize — do not: they
+send a message to the main thread and wait, and a webview that has been destroyed
+underneath one appears to leave that wait outstanding. It was seen twice while
+driving close-then-reopen from a script, and never in ordinary use; monotonic tab
+ids removed the case that provoked it. If `invoke` is ever seen hanging on a
+browser tab, this is the first place to look.
+
 ## Turn undo has never run against a real repository
 
 `git_restore_checkpoint` (slice 45, ticket 28) is registered and its argument

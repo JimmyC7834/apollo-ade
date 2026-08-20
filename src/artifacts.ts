@@ -62,6 +62,42 @@ export const TOOL_ARTIFACTS: Record<ToolArtifactKind, ArtifactRef> = {
 	references: { id: 'artifact:references', title: 'References', icon: 'references' },
 };
 
+/**
+ * A browser tab — slice 43, and the first artifact kind that is not a singleton.
+ *
+ * `browser:1`, `browser:2`, in the same `pinned` list as everything else. Files
+ * were already many-of-a-kind in there beside the six singletons, so a numbered
+ * id costs no new tab machinery at all: only `artifactRef` has to know how to
+ * draw one.
+ *
+ * The number is an identity, not a position. It never changes for the life of
+ * the tab, because it is also the label of the child webview Rust is holding —
+ * and for the same reason it is **never reused**. Closing a webview and opening
+ * one with the same label straight afterwards wedges the invoke that does it,
+ * found in the first native run: the label is still taken for a moment after
+ * `close`. A counter that only goes up costs nothing and cannot race.
+ */
+export const BROWSER_PREFIX = 'browser:';
+
+export function isBrowserTab(id: string): boolean {
+	return id.startsWith(BROWSER_PREFIX);
+}
+
+export function browserTabId(n: number): string {
+	return `${BROWSER_PREFIX}${n}`;
+}
+
+/**
+ * The child webview's label.
+ *
+ * Not the artifact id: a Tauri label is matched against `[a-zA-Z0-9\-/:_]+`,
+ * and rather than depend on a colon staying inside that set, the one character
+ * that is in doubt is replaced. One function, so the two names cannot drift.
+ */
+export function browserTabLabel(id: string): string {
+	return id.replace(':', '-');
+}
+
 export const TOOL_ARTIFACT_IDS = Object.values(TOOL_ARTIFACTS).map((artifact) => artifact.id);
 
 export function isToolArtifact(id: string): boolean {

@@ -1,3 +1,4 @@
+mod browser;
 mod exec;
 mod git;
 mod lsp;
@@ -59,6 +60,13 @@ pub fn run() {
             lsp::lsp_start,
             lsp::lsp_send,
             lsp::lsp_stop,
+            browser::browser_open,
+            browser::browser_place,
+            browser::browser_navigate,
+            browser::browser_close,
+            browser::browser_eval,
+            browser::browser_return_focus,
+            browser::browser_open_external,
             git::git_branch,
             git::git_changes,
             git::git_diff,

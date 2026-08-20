@@ -7,7 +7,18 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { listSessionsIn, loadProfileFiles, type StoredSession } from '../agent';
 import { nextTurnId } from '../features/agent/liveSession';
 import { sessionSet } from '../features/agent/sessionSet';
-import { TOOL_ARTIFACTS, clampDock, dockSide, isToolArtifact } from '../artifacts';
+import {
+	TOOL_ARTIFACTS,
+	clampDock,
+	dockSide,
+	browserTabId,
+	browserTabLabel,
+	isBrowserTab,
+	isToolArtifact,
+} from '../artifacts';
+import { agentRect, createBrowserAdapter, normalizeUrl, urlHost } from '../browser';
+import { setBrowserHost } from '../agent/browserTool';
+import { BrowserTab } from '../features/browser/BrowserTab';
 import { createChangesProvider } from '../changes';
 import { buildCommands } from '../commands/commandRegistry';
 import { EditorDialog } from '../editor/EditorDialog';
@@ -33,7 +44,7 @@ import {
 } from '../sessions';
 import { createTerminalAdapter } from '../terminal';
 import { TerminalPanel } from '../features/terminal/TerminalPanel';
-import { Confirm, Prompt } from '../ui';
+import { Confirm, Prompt, useOccluded } from '../ui';
 import { applyTheme, type ThemeName } from '../ui/theme';
 import {
 	createWorkspaceProvider,
@@ -106,7 +117,64 @@ export function WorkbenchController() {
 		() => restored?.dockFraction ?? DEFAULT_DOCK_FRACTION
 	);
 	const [dockCollapsed, setDockCollapsed] = useState(restored?.dockCollapsed ?? false);
-	const [pinned, setPinned] = useState<readonly string[]>(restored?.pinned ?? []);
+	/*
+	 * Browser tabs are dropped on the way back in. `pinned` is persisted and a
+	 * page is not — a tab restored from the last launch would be a dock tab with
+	 * no page behind it, which is what the first native run of slice 43 showed.
+	 * Filtered here rather than at save time, so a state file written by an older
+	 * build is also cleaned up.
+	 */
+	const [pinned, setPinned] = useState<readonly string[]>(
+		(restored?.pinned ?? []).filter((id) => !isBrowserTab(id))
+	);
+
+	/*
+	 * Browser tabs — slice 43.
+	 *
+	 * **Existence and visibility are separate here, and nowhere else in the
+	 * dock.** `browserTabs` is every page that exists; `pinned` is the ones with
+	 * a slot in the tab strip. Every other artifact conflates the two, and a
+	 * browser tab cannot: the agent opens tabs *hidden*, and a long turn that
+	 * pinned each one would flood the dock with pages nobody asked to see. A
+	 * hidden tab lives in the transcript as a chip until the dev opens it.
+	 *
+	 * None of it is persisted. A page restored on the next launch is a page
+	 * painted over the workbench by something nobody did.
+	 */
+	const browser = useMemo(() => createBrowserAdapter(), []);
+	const [browserTabs, setBrowserTabs] = useState<
+		readonly { readonly id: string; readonly url: string; readonly host: string }[]
+	>([]);
+	/*
+	 * The agent's tools are built once, long before this component mounts, so
+	 * the host below is registered rather than passed — and it must not close
+	 * over a stale tab list. A ref written during render is what keeps `tabs()`
+	 * answering with what exists now.
+	 */
+	const tabsRef = useRef(browserTabs);
+	tabsRef.current = browserTabs;
+	// Only ever upward — see `browserTabId`. A reused label races its own close.
+	const tabCount = useRef(0);
+	const noteOpened = useCallback((id: string, host: string) => {
+		setBrowserTabs((current) => current.map((tab) => (tab.id === id ? { ...tab, host } : tab)));
+	}, []);
+	/*
+	 * The tab renders the refusal itself, above the page box. This is the other
+	 * half of it: a refusal that is only drawn is a refusal a screen reader never
+	 * hears, and the live region is how everything else in the workbench reports.
+	 */
+	const noteFailed = useCallback((_id: string, reason: string) => announce(reason), []);
+	const browserHosts = useMemo(
+		() => new Map(browserTabs.map((tab) => [tab.id, tab.host])),
+		[browserTabs]
+	);
+	/*
+	 * A page is a child HWND painted above the whole React tree, so an overlay
+	 * cannot be drawn over it — it has to be hidden instead. `occlusion.ts` is
+	 * where every overlay in the workbench says it is there; this is the one
+	 * place that reads it. See ADR 0004.
+	 */
+	const occluded = useOccluded();
 	const [activeArtifactId, setActiveArtifactId] = useState<string | undefined>(
 		restored?.activeArtifactId
 	);
@@ -1023,6 +1091,63 @@ export function WorkbenchController() {
 		setDockCollapsed(false);
 	}, []);
 
+	/**
+	 * A browser tab, in the dock — ticket 69.
+	 *
+	 * The number only ever goes up, and never comes back: it is the label of the
+	 * child webview Rust holds, and reopening a label that was closed a moment
+	 * ago wedges the call that does it. See `browserTabId`.
+	 */
+	const openBrowserTab = useCallback(() => {
+		const id = browserTabId((tabCount.current += 1));
+		setBrowserTabs((current) => [...current, { id, url: '', host: 'Browser' }]);
+		showArtifact(id);
+	}, [showArtifact]);
+
+	/*
+	 * What the `browser` tool is given — ticket 70. Registered rather than
+	 * passed, because the tool is built when the runner is, which is before any
+	 * of this exists.
+	 *
+	 * **A tab the agent opens is opened straight through the adapter, with no
+	 * React component behind it.** That is what "hidden" costs here, and it costs
+	 * nothing: a hidden page has no box in the dock to measure, so it has nothing
+	 * a component would do for it. When the dev opens one from the transcript it
+	 * gains a `BrowserTab`, which calls `open` again with the same label — Rust
+	 * navigates the webview that is already there and moves it into the dock.
+	 */
+	useEffect(() => {
+		setBrowserHost({
+			async open(url) {
+				const id = browserTabId((tabCount.current += 1));
+				const target = normalizeUrl(url);
+				// Awaited, so a URL the allow-list refuses reaches the model as a
+				// failed tool call rather than as a tab that quietly shows nothing.
+				await browser.open(browserTabLabel(id), target, agentRect(window.innerHeight));
+				const host = urlHost(target);
+				setBrowserTabs((current) => [...current, { id, url: target, host }]);
+				return { id, host };
+			},
+			tabs: () => tabsRef.current.map((tab) => ({ id: tab.id, host: tab.host })),
+			evaluate: (id, js) => browser.evaluate(browserTabLabel(id), js),
+		});
+		return () => setBrowserHost(undefined);
+	}, [browser]);
+
+	/*
+	 * A page outlives the component that shows it, so nothing else closes the
+	 * tabs the agent opened and never showed. Closing the window is the one
+	 * moment they are all certainly finished with.
+	 */
+	useEffect(
+		() => () => {
+			for (const tab of tabsRef.current) {
+				void browser.close(browserTabLabel(tab.id));
+			}
+		},
+		[browser]
+	);
+
 	/*
 	 * The language server — tickets 33, 34 and 35.
 	 *
@@ -1083,16 +1208,37 @@ export function WorkbenchController() {
 	 */
 	const openArtifact = useCallback(
 		(id: string) => {
+			/*
+			 * A browser tab is a dock thing too, and it is the one artifact that
+			 * can already exist while being unpinned — this is how a tab the agent
+			 * opened gets its slot in the strip. It is also the one that can stop
+			 * existing while its chip stays in the transcript, so the chip says so
+			 * rather than pinning a tab with no page behind it.
+			 */
+			if (isBrowserTab(id)) {
+				if (tabsRef.current.some((tab) => tab.id === id)) {
+					showArtifact(id);
+				} else {
+					announce('That browser tab has been closed.');
+				}
+				return;
+			}
 			if (isToolArtifact(id)) {
 				showArtifact(id);
 				return;
 			}
 			void openFile(id);
 		},
-		[openFile, showArtifact]
+		[announce, openFile, showArtifact]
 	);
 
 	const unpin = useCallback((id: string) => {
+		// Unpinning a browser tab destroys its page, the same way unpinning the
+		// terminal kills its shell. There is no unpinned-but-alive state for a tab
+		// the dev opened: the strip is the only place it exists.
+		if (isBrowserTab(id)) {
+			setBrowserTabs((current) => current.filter((tab) => tab.id !== id));
+		}
 		setPinned((current) => {
 			const next = current.filter((pinnedId) => pinnedId !== id);
 			// Unpinning the visible artifact selects its neighbour, the same way
@@ -1250,9 +1396,11 @@ export function WorkbenchController() {
 				showAccessibilityHelp: () => setHelpOpen(true),
 				newSession: () => void newSession(),
 				closeSession,
+				openBrowserTab,
 			}),
 		[
 			showArtifact,
+			openBrowserTab,
 			newSession,
 			closeSession,
 			closeEditor,
@@ -1709,7 +1857,7 @@ export function WorkbenchController() {
 						onFraction={setDockFraction}
 						collapsed={dockCollapsed}
 						onCollapsed={setDockCollapsed}
-						artifacts={pinned.map((id) => artifactRef(id, inputs))}
+						artifacts={pinned.map((id) => artifactRef(id, inputs, browserHosts))}
 						activeId={activeArtifact}
 						onSelect={setActiveArtifactId}
 						onUnpin={unpin}
@@ -1734,6 +1882,40 @@ export function WorkbenchController() {
 								<TerminalPanel adapter={terminalAdapter} root={selection?.path} />
 							</div>
 						) : null}
+						{/*
+						 * One layer per *pinned* browser tab, for the same reason the
+						 * terminal has one: unmounting destroys the thing. A page is a
+						 * child webview Rust owns, and `ArtifactView`'s subtree is
+						 * swapped whole on every tab switch.
+						 *
+						 * The layer is absolutely positioned and toggled with
+						 * `visibility`, never `hidden`. `hidden` would collapse the box
+						 * to nothing, and the box's rectangle is what tells Rust where
+						 * to paint — a zero rect is a page with no layout, which is the
+						 * exact failure hidden mode is designed around.
+						 */}
+						{browserTabs
+							.filter((tab) => pinned.includes(tab.id))
+							.map((tab) => (
+								<div
+									key={tab.id}
+									className="ide-browser-layer"
+									style={{
+										visibility: activeArtifact === tab.id ? 'visible' : 'hidden',
+									}}
+								>
+									<BrowserTab
+										id={tab.id}
+										adapter={browser}
+										initialUrl={tab.url || undefined}
+										visible={
+											activeArtifact === tab.id && !dockCollapsed && !occluded
+										}
+										onOpened={noteOpened}
+										onFailed={noteFailed}
+									/>
+								</div>
+							))}
 						{activeArtifact ? (
 							<ArtifactView
 								id={activeArtifact}

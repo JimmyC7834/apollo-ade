@@ -19,6 +19,7 @@ import { allSkills, permittedSkills, skillList } from '../../agent/skills';
 import { userTools } from '../../agent/userTools';
 import { Confirm, Icon, Overlay } from '../../ui';
 import { OTHER } from '../../agent/ask';
+import { BROWSER_TOOL, openedTab } from '../../agent/browserTool';
 import { thinkingUnavailable } from '../../agent/models';
 import { ComposerBar } from './ComposerBar';
 import type { LiveSession } from './liveSession';
@@ -244,6 +245,30 @@ function PartView({
 
 	if (part.kind === 'tool') {
 		const status = toolLabel(part, turn.status);
+		/*
+		 * The one tool call that offers a way in rather than a record — ticket 70.
+		 *
+		 * A tab the agent opened is hidden and has no slot in the dock strip,
+		 * because a long turn would otherwise fill the dock with pages nobody
+		 * asked to see. So the transcript is where it exists, and this button is
+		 * how it gets a slot. Not a `<details>`: see `EventChip`'s `action`.
+		 */
+		const opened = part.name === BROWSER_TOOL ? openedTab(part.output) : undefined;
+		if (opened) {
+			return (
+				<EventChip
+					icon="browser"
+					label="Browser"
+					result={opened.host}
+					state={part.state}
+					ariaLabel={`Browser tab opened on ${opened.host}`}
+					action={{
+						label: `Open ${opened.host}`,
+						run: () => onOpenArtifact?.(opened.id),
+					}}
+				/>
+			);
+		}
 		/*
 		 * The references this call earned, built from event data — the harness
 		 * writes them, the model never does. Rendered through the same Markdown

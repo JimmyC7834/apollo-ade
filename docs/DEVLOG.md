@@ -5610,3 +5610,120 @@ Worth watching for wherever this codebase holds an index, a path or a list acros
 because resolving indices up front put a restored conversation in the wrong folder, and its
 comment says exactly that. The click paths were written later and did not inherit it. A
 comment on the fix is not the same as a shared function, which is why the two now share one.
+
+## Slice 43 — the browser tab (tickets 68, 69, 70)
+
+### User outcome
+
+There is a page inside the ADE. You open a browser tab from the command centre, type a
+localhost URL on its one-line address row, and the app you are building is in the dock beside
+the code — and the agent can open one of its own, read it, click in it, type into it and read
+what it logged, so it can check its own web work instead of asking you to look.
+
+### Added
+
+- `src-tauri/src/browser.rs` — the whole native half. Six commands (`browser_open`,
+  `browser_place`, `browser_navigate`, `browser_close`, `browser_eval`,
+  `browser_return_focus`, `browser_open_external`), the host allow-list, the `on_navigation`
+  guard, and the initialization script every page runs.
+- `src/browser.ts` — the seam, with a Tauri adapter and a deterministic browser stand-in.
+- `src/features/browser/BrowserTab.tsx` — the address row, the empty box, and the position
+  sync.
+- `src/agent/browserTool.ts` — one tool named `browser`, with actions.
+- `src/ui/occlusion.ts` — where every overlay in the workbench declares itself.
+- `browser:<n>` ids and the `browser` glyph; a `View: Open a Browser Tab` command.
+- Checks: `src/browser.check.ts`, `src/agent/browserTool.check.ts`, and three Rust tests on
+  the allow-list.
+
+### UI extracted / reused
+
+The dock is untouched: a browser tab is an id in `pinned` like any other, and `artifactRef`
+learned one branch. `EventChip` grew an `action` — a button rather than a chevron, because the
+Guide's rule is that expanding must not open another surface, and opening a tab is exactly
+that. `Overlay`, `ContextMenu` and `Toasts` each gained one line declaring themselves as
+occluders.
+
+### Adapters and dependencies
+
+No new crate and no new npm package. `tauri` gained `features = ["unstable"]`, which is what
+gates multiple webviews in one window — `Window::add_child`, `WebviewBuilder` and
+`Manager::get_webview` are all behind it. `browser.rs` is the only file that touches that
+surface.
+
+### Security boundary
+
+The allow-list is **localhost, 127.0.0.1, ::1 and `file:`**, enforced in Rust at the point the
+URL is used — not in the UI that supplies it. It covers all three ways a URL arrives: the
+address row, the agent's tool, and a link the page itself follows (`on_navigation`, which
+cancels the navigation and reports it). The tool is GET-shaped: the model supplies a URL and
+never a body or a header. Page text reaches the model wrapped as untrusted data with an
+explicit instruction not to treat it as instruction. The CSP is unchanged (`frame-src 'none'`
+still holds — a child webview is not a frame) and `capabilities/default.json` is untouched,
+because capabilities gate the *JavaScript* Tauri API and the webview is created in Rust.
+
+`RESERVED` in `userTools.ts` grows to six. That widens ticket 13's written rule that the
+built-in exception does not grow, and the comment there now says so rather than contradicting
+the code — see ADR 0004.
+
+### Accessibility behavior
+
+The address row is a labelled field in a form; reload is a labelled button. A refusal is a
+`role="status"` line above the page box — above, because nothing can be drawn *over* the page
+— and is also announced through the live region, since a tab the agent opened has nobody
+looking at it. The chip's action is a plain button with a name that says the host.
+
+### Validation performed
+
+Driven in the **native** window over the WebView2 debugging port.
+
+- **Ticket 68's probe, which was the point of the ticket: a webview positioned outside the
+  parent's client rect still lays out.** Opened at `y = innerHeight + 32`, pointed at the dev
+  server: `document.body.getBoundingClientRect()` came back `1280 x 800`, `window.innerWidth`
+  / `innerHeight` `[1280, 800]`, `document.title` `"ADE"`, 629 nodes. Hidden mode needs no
+  fallback, and that is recorded in the ticket and in ADR 0004.
+- The allow-list refuses `https://example.com/` at open and at navigate, naming the host.
+- `on_navigation` blocks a link the *page* follows: after `location.href='https://example.com/'`
+  the page was still on `localhost:5190`. The `ade-ipc:` channel is cancelled the same way.
+- The initialization script's console capture holds the page's own output —
+  `window.__adeConsole` came back with Vite's and React's lines and a probe `console.error`.
+- The command centre opens a tab; the dock tab is labelled with the host after the URL loads;
+  the page paints over the reserved box at the dock's rectangle.
+- **The occlusion rule fires.** With the page in the dock the tab is placed at `y = 66`; with
+  the command centre open it moves to `y = 794` (`innerHeight + 32`, below the window); on
+  dismissal it comes back to 66; and selecting another dock tab moves it away again.
+- `npm run check` clean, including the two new check files and three new Rust tests.
+
+### What was *not* validated
+
+- **No model has called the `browser` tool.** Its logic is covered against a fake host in
+  `browserTool.check.ts`, and every mechanism underneath it — hidden open, eval, DOM read,
+  console, allow-list — was driven natively. The last link, a real model choosing the tool and
+  the chip appearing in a transcript, has not been seen. This is the repo's own standing rule
+  and the gap is recorded in `OPEN-ISSUES.md` rather than papered over.
+- **Escape returning focus** was not observed end to end. The page-side half was seen — the
+  navigation to `ade-ipc:esc` is cancelled — but nobody watched the caret come back.
+- Nothing has been looked at by a human, in either theme.
+
+### Caveats and deviations
+
+**Two things ADR 0004 did not predict, both found by building it.** Multiple webviews are
+behind tauri's `unstable` feature. And every command that touches a webview has to be `async`:
+Tauri runs a synchronous command on the main thread, and `add_child` posts work *to* the main
+thread and blocks waiting for it, so the first call deadlocked the whole application.
+
+**A browser tab id is never reused.** Closing a webview and opening one with the same label
+immediately afterwards wedges the invoke that does it — the label is still taken for a moment
+after `close`. A counter that only goes up costs nothing and cannot race, so `nextBrowserTabId`
+became `browserTabId(n)`.
+
+**`browser_eval` has a 15-second deadline.** A webview torn down mid-evaluation never calls
+its callback, and the caller is a tool call inside a model's turn: without a deadline, closing
+a tab at the wrong moment wedges the turn with no way back.
+
+**Browser tabs are dropped from `pinned` on restore.** `pinned` is persisted and a page is
+not, so a restored tab was a dock tab with no page behind it. Seen on the first native run.
+
+**Deviation from ticket 69: a tab belongs to the window, not to the session.** The ticket asks
+for per-session tabs. `pinned` is window state in this codebase — every other artifact behaves
+that way — so making browser tabs the one per-session artifact would have been a second
+mechanism for what the dock already does. Recorded here rather than done quietly.

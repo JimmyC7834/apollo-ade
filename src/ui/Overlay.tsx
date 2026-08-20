@@ -1,5 +1,7 @@
 import { useEffect, useId, useRef, type ReactNode } from 'react';
 
+import { useOccluder } from './occlusion';
+
 export interface OverlayProps {
 	readonly open: boolean;
 	/** Accessible name for the dialog. */
@@ -42,6 +44,10 @@ export function Overlay({
 	const ref = useRef<HTMLDialogElement>(null);
 	const openerRef = useRef<HTMLElement | null>(null);
 	const titleId = useId();
+
+	// A browser tab paints above the DOM, so an overlay has to say it is there.
+	// See `occlusion.ts` and ADR 0004.
+	useOccluder(open);
 
 	useEffect(() => {
 		const dialog = ref.current;

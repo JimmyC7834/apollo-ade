@@ -436,6 +436,23 @@ reporting them:
   `{ block: true }`. So whatever hosts user scripts either denies them the `tool_call`
   hook, or runs the handlers through a chaining runner with deny-precedence — the same
   shape `systemPrompt.ts` already uses for `before_agent_start`, and for the same reason.
+- **Browser tabs on arbitrary hosts.** Slice 43 ships localhost and `file:` only, and the
+  dev asked for the widening to be written down rather than argued now. The mechanism
+  already supports it — a child webview renders anything, and `X-Frame-Options` never
+  applies because nothing is framed. What is missing is the decisions a public web makes
+  necessary: what an untrusted page may do to the agent's context, whether the agent may
+  navigate off the allow-list unasked, and whether a host list is a per-profile trust
+  surface.
+- **A plugin / extension system.** Raised by the dev while asking whether the browser tab
+  could be one. It cannot — see Slice 43. The grill was started and stopped one round in,
+  and the question it stopped on is the one to resume from: **name three plugins you
+  actually want.** A system whose motivating example is un-pluggable has no
+  implementations, and `CONTEXT.md` rules out an abstraction with one. What is already
+  known: the only extension point today is the declarative tool manifest; artifacts,
+  renderers and glyphs are closed unions; the `emitHook` trap means an extension with a
+  `tool_call` handler can silently replace the gate's `{ block: true }`; and "plugin" needs
+  a glossary line, because it currently means both a user extension we do not support and a
+  Rust crate we already depend on.
 - **Extension beyond tools** — hooks exposed to users, custom renderers, ADE chrome.
   The *tools* half of this graduated into
   [How a user adds their own tool](tickets/13-user-authored-tools.md) when the dev named
@@ -1015,6 +1032,79 @@ workbench, a dock of artifacts, no permanent panels — is not in question and i
 [ADR 0003](../../adr/0003-the-shell-guide-keeps-topology-and-loses-look.md), and
 `CONTEXT.md` amended to match: the Guide is authoritative for what the workbench **is**,
 and no longer for what it looks like. The palette is explicitly outside that split.
+
+### Slice 43 — the browser tab
+
+The dev wants a page open inside the ADE: the app under development, looked at without
+leaving the ADE, and an agent that can open a link, read it and click in it. Settled over
+four rounds of grilling. The purpose is development — the agent checking its own web work
+is the case that matters, not browsing.
+
+| | | |
+|---|---|---|
+| **[68](tickets/68-a-child-webview-proven.md)** | A child webview, proven | done |
+| **[69](tickets/69-a-page-you-can-look-at.md)** | A page you can look at | done |
+| **[70](tickets/70-the-agent-drives-the-page.md)** | The agent drives the page | done, one criterion short |
+
+68 gates both. 69 gates 70, because the tool drives a surface that has to exist.
+
+**One constraint decided the whole design, and it is why 68 exists at all.** The ADE runs
+on `tauri://localhost` and a dev server on `http://localhost:5173`. Those are different
+origins, so an `<iframe>` would show the page and refuse `contentDocument` — the agent
+could display a page it cannot read a single node of. A Tauri **child webview** has no such
+limit: `Webview::eval_with_callback` evaluates JavaScript on any page and returns the
+JSON-serialised result to Rust. That one call is the entire drive channel, with no injected
+bridge and no cooperation from the page.
+
+**The price is accepted and written down.** On Windows a child webview is a real child
+HWND, created with `CreateWindowExW` and placed `HWND_TOP`, so the page paints above the
+whole React tree: no overlay of ours can draw over it. The mitigation is one rule — any
+overlay that opens hides the tab — which is cheap because the command centre, the modals
+and the toasts each have a single mount point. It also has to be positioned by hand on
+every layout change, and it clips to nothing.
+[ADR 0004](../../adr/0004-a-browser-tab-is-a-child-webview.md) carries the sourced lines
+and the five alternatives that lost.
+
+**Hidden mode was the one unverified assumption, and 68 answered it: a webview positioned
+outside the client rect lays out.** Measured in the native window — body rect `1280 x 800`,
+`window.innerHeight` 800, 629 nodes, `document.title` readable. So a tab is hidden by being
+positioned below the window, clipped by the OS but still laid out, and no fallback was
+needed.
+
+**Three things the grill did not predict, all found by building it.** Multiple webviews are
+behind tauri's `unstable` feature. Every command that touches a webview has to be `async`,
+because Tauri runs a synchronous command on the main thread and `add_child` blocks waiting
+*for* the main thread — the first call deadlocked the app. And a tab id may never be reused:
+reopening a label that was closed a moment ago wedges the invoke that does it.
+
+**What the slice does not have: a model has never called the tool.** Everything underneath
+it was driven natively, and the tool's own logic is checked against a fake host, but the
+last link is unobserved. Recorded in `docs/OPEN-ISSUES.md`. The other deviation is that a
+browser tab belongs to the window rather than to the session, because `pinned` is window
+state and every other artifact behaves that way.
+
+**Settled in the grill and not re-openable without a reason:** localhost and `file:` only;
+one tab per dock tab, per session; an address row and reload, no history; **one** tool
+named `browser` rather than a family, ungated, GET-shaped; agent-opened tabs hidden and
+announced as a TUI chip button in the transcript; hidden tabs take no slot in the dock
+strip; page text marked untrusted; no screenshots. The dev and the agent share one page and
+can both click it — recorded as a decision rather than left as a surprise.
+
+**It widens a rule.** `userTools.ts` records that the built-in exception does not grow — no
+new *executing* tool joins pi's four, and `ask_user` was let past because it "runs
+nothing". `browser` executes. `RESERVED` goes to six, and 70 amends the comment rather than
+leaving it contradicting the code.
+
+**Two costs that turned out not to exist.** The CSP stays `frame-src 'none'`, because a
+child webview is not a frame. And `capabilities/default.json` is untouched, because
+capabilities gate the *JavaScript* Tauri API while the webview is created in Rust — which
+is what "Rust is the only authority" required anyway.
+
+**Not a plugin, and it cannot be one.** The only extension point is the declarative tool
+manifest, which runs no foreign code by design; a browser tab needs `window.add_child`, and
+foreign code in a Web Worker has no `window` — which is the property that makes that
+isolation safe. Whether the ADE should grow a real extension system is a separate question,
+below.
 
 ### Queued by the dev after Slice 38
 

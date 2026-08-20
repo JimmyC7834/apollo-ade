@@ -20,6 +20,12 @@ const GLYPHS = {
 	/* A letter, not a picture. `≡` read as a menu next to a session row. */
 	archive: 'A',
 	'arrow-left': '←',
+	/*
+	 * A browser tab. A globe is a picture and needs two cells; this is a page
+	 * with something on it, which is what a browser tab is here — the app under
+	 * development, not the web.
+	 */
+	browser: '⊕',
 	check: '✓',
 	/*
 	 * Triangles rather than `v ^ < >`. A letterform sits on the baseline and a

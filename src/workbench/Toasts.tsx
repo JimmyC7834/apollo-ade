@@ -14,6 +14,7 @@
 //   reaching it.
 
 import { Icon } from '../ui';
+import { useOccluder } from '../ui/occlusion';
 
 export interface Toast {
 	readonly id: number;
@@ -28,6 +29,10 @@ export interface ToastsProps {
 }
 
 export function Toasts({ toasts, onDismiss }: ToastsProps) {
+	// A toast sits in the dock's corner, which is where the page is. See
+	// `occlusion.ts`.
+	useOccluder(toasts.length > 0);
+
 	if (toasts.length === 0) {
 		// Nothing rendered at all, so the region cannot sit invisibly over the
 		// dock's bottom-right corner catching pointer events.

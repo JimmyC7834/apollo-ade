@@ -7,6 +7,7 @@ export { Confirm, type ConfirmProps, type ConfirmAction } from './Confirm';
 export { ContextMenu, type ContextMenuProps, type ContextMenuItem } from './ContextMenu';
 export { Icon, type IconProps, type IconName } from './Icon';
 export { IconButton, type IconButtonProps } from './IconButton';
+export { useOccluded, useOccluder } from './occlusion';
 export { Overlay, type OverlayProps } from './Overlay';
 export { Pane, type PaneProps } from './Pane';
 export { Prompt, type PromptProps } from './Prompt';

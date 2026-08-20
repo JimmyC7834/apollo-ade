@@ -53,6 +53,8 @@ export interface WorkbenchActions {
 	newSession: () => void;
 	/** Stop watching the focused conversation. The file stays on disk. */
 	closeSession: () => void;
+	/** A page in the dock, for looking at the app under development — ticket 69. */
+	openBrowserTab: () => void;
 }
 
 /*
@@ -115,6 +117,12 @@ export function buildCommands(actions: WorkbenchActions): readonly Command[] {
 			title: `Show ${artifact.title}`,
 			run: () => actions.showArtifact(artifact.id),
 		})),
+		{
+			id: 'view.browser',
+			category: 'View',
+			title: 'Open a Browser Tab',
+			run: actions.openBrowserTab,
+		},
 		{
 			id: 'view.toggleDock',
 			category: 'View',

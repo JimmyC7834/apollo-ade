@@ -2683,6 +2683,13 @@ body {
 }
 
 .ide-dock-body {
+	/*
+	 * The positioning context for `.ide-browser-layer`. A browser tab's layer is
+	 * out of flow so that every pinned tab measures the *whole* dock body — the
+	 * box's rectangle is what tells Rust where to paint the page, and a layer
+	 * sharing flex space with its siblings would report a third of it.
+	 */
+	position: relative;
 	display: flex;
 	flex: 1;
 	flex-direction: column;
@@ -2708,6 +2715,134 @@ body {
 
 .ide-dock-layer[hidden] {
 	display: none;
+}
+
+/*
+ * A browser tab — slice 43.
+ *
+ * The page itself is not here. It is a child webview the operating system
+ * paints over `.ide-browser-page`, always on top of everything the DOM draws,
+ * which is why that box is empty and why nothing in this block tries to put a
+ * border, a shadow or a corner on it. See ADR 0004.
+ */
+/*
+ * The way in on a chip whose subject is a hidden surface — ticket 70. Not a
+ * disclosure and no chevron beside it: the Guide's rule is that expanding must
+ * not open another surface, so a control that does open one must not dress as
+ * an expander. Styled like every other control in the restyle: no fill at rest,
+ * inverted under the cursor.
+ */
+.ide-chip-action {
+	margin-left: auto;
+	border: 0;
+	background: none;
+	color: inherit;
+	font: inherit;
+	padding: 0 var(--space-2);
+	cursor: pointer;
+}
+
+.ide-chip-action:hover,
+.ide-chip-action:focus-visible {
+	background: var(--foreground);
+	color: var(--background);
+	outline: none;
+}
+
+.ide-browser-layer {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	min-height: 0;
+	overflow: hidden;
+}
+
+.ide-browser {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	min-width: 0;
+	min-height: 0;
+}
+
+/* One row, like every other row in the workbench. */
+.ide-browser-address {
+	display: flex;
+	align-items: center;
+	height: var(--row-height);
+	gap: var(--space-1);
+	border-bottom: 1px solid var(--border);
+	padding: 0 var(--space-2);
+}
+
+.ide-browser-url {
+	flex: 1;
+	min-width: 0;
+	height: 100%;
+	border: 0;
+	background: none;
+	color: var(--foreground);
+	font: inherit;
+}
+
+.ide-browser-url:focus-visible {
+	outline: 1px solid var(--ring);
+	outline-offset: -1px;
+}
+
+.ide-browser-reload {
+	border: 0;
+	background: none;
+	color: var(--muted-foreground);
+	font: inherit;
+	cursor: pointer;
+}
+
+.ide-browser-reload:hover:not(:disabled),
+.ide-browser-reload:focus-visible {
+	color: var(--foreground);
+}
+
+.ide-browser-reload:disabled {
+	opacity: 0.4;
+	cursor: default;
+}
+
+/*
+ * Above the page box, never over it: a message drawn inside the box would be
+ * underneath the page and invisible the moment a URL loads.
+ */
+.ide-browser-refusal {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	margin: 0;
+	padding: 0 var(--space-2);
+	min-height: var(--row-height);
+	color: var(--destructive);
+}
+
+.ide-browser-external {
+	border: 0;
+	background: none;
+	color: inherit;
+	font: inherit;
+	text-decoration: underline;
+	cursor: pointer;
+}
+
+.ide-browser-page {
+	flex: 1;
+	min-width: 0;
+	min-height: 0;
+}
+
+.ide-browser-empty {
+	margin: 0;
+	padding: var(--space-2);
+	color: var(--muted-foreground);
 }
 
 /*

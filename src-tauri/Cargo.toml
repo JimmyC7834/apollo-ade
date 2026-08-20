@@ -13,7 +13,12 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# `unstable` is what gates multiple webviews in one window: `Window::add_child`,
+# `WebviewBuilder` and `Manager::get_webview` are all behind it. A browser tab is
+# a child webview (ADR 0004), so the feature is not optional for this app. It is
+# an API-stability flag, not an experiment switch — the surface may be renamed in
+# a future minor, and `browser.rs` is the only file that touches it.
+tauri = { version = "2", features = ["unstable"] }
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

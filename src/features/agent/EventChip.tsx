@@ -21,10 +21,27 @@ export interface EventChipProps {
 	readonly state?: 'running' | 'done' | 'failed';
 	/** Read instead of the visible text, when the visible text is not enough. */
 	readonly ariaLabel?: string;
+	/**
+	 * A way in, for a chip whose subject is a surface rather than a record.
+	 *
+	 * A chip with an action is **not** a disclosure and draws no chevron. The
+	 * Guide's rule is that expanding must not open another surface — so a control
+	 * that does open one must not dress as an expander. `browser` is the case
+	 * this exists for: the tab it opened is real, hidden, and one click away.
+	 */
+	readonly action?: { readonly label: string; readonly run: () => void };
 	readonly children?: ReactNode;
 }
 
-export function EventChip({ icon, label, result, state, ariaLabel, children }: EventChipProps) {
+export function EventChip({
+	icon,
+	label,
+	result,
+	state,
+	ariaLabel,
+	action,
+	children,
+}: EventChipProps) {
 	const head = (
 		<>
 			<Icon name={icon} />
@@ -32,6 +49,19 @@ export function EventChip({ icon, label, result, state, ariaLabel, children }: E
 			{result ? <span className="ide-chip-result">{result}</span> : null}
 		</>
 	);
+
+	// See `action` above: a button that opens a surface, and no chevron beside
+	// it. Styled like every other control in the restyle — no fill at rest.
+	if (action) {
+		return (
+			<p className="ide-chip" data-state={state} aria-label={ariaLabel}>
+				{head}
+				<button type="button" className="ide-chip-action" onClick={action.run}>
+					{action.label}
+				</button>
+			</p>
+		);
+	}
 
 	// A chevron that expands nothing is a lie, so a chip with no details is not
 	// a disclosure at all.

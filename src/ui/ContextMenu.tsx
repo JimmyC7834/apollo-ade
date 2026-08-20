@@ -1,5 +1,7 @@
 import * as Menu from '@radix-ui/react-dropdown-menu';
 
+import { useOccluder } from './occlusion';
+
 export interface ContextMenuItem {
 	readonly id: string;
 	readonly label: string;
@@ -30,6 +32,9 @@ export interface ContextMenuProps {
  * are unchanged from the hand-rolled version, so no consumer moved.
  */
 export function ContextMenu({ anchor, label, items, onClose }: ContextMenuProps) {
+	// See `occlusion.ts`: a menu drawn over a browser tab would be drawn behind it.
+	useOccluder(anchor !== undefined);
+
 	return (
 		<Menu.Root open={anchor !== undefined} onOpenChange={(open) => !open && onClose()} modal={false}>
 			<Menu.Trigger

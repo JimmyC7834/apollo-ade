@@ -5,7 +5,7 @@
 // component that already existed and already worked in a region; slice 40 moved
 // where it is mounted, not what it does.
 
-import { TOOL_ARTIFACTS, toolArtifactKind, type ArtifactRef } from '../artifacts';
+import { TOOL_ARTIFACTS, isBrowserTab, toolArtifactKind, type ArtifactRef } from '../artifacts';
 import type { ChangesProvider } from '../changes';
 import { MonacoDiffEditor } from '../editor/MonacoDiffEditor';
 import { MonacoEditor } from '../editor/MonacoEditor';
@@ -50,6 +50,16 @@ export function ArtifactView(props: ArtifactViewProps) {
 	 * every root. See `WorkbenchController`.
 	 */
 	if (kind === 'terminal') {
+		return null;
+	}
+	/*
+	 * Nor a browser tab, and for a stronger version of the same reason. Its page
+	 * is a child webview Rust is holding, so unmounting this component destroys
+	 * the page — and this subtree is swapped whole on every tab switch. The
+	 * controller mounts one layer per *pinned* browser tab and hides the ones
+	 * that are not in front. See `BrowserTab`.
+	 */
+	if (isBrowserTab(props.id)) {
 		return null;
 	}
 	if (kind === 'changes') {
@@ -130,10 +140,20 @@ export function ArtifactView(props: ArtifactViewProps) {
 }
 
 /** The tab a pinned id draws, whether it names a tool artifact or a file. */
-export function artifactRef(id: string, inputs: readonly EditorInput[]): ArtifactRef {
+export function artifactRef(
+	id: string,
+	inputs: readonly EditorInput[],
+	/** The host each browser tab is showing, so its dock tab can say where it is. */
+	hosts?: ReadonlyMap<string, string>
+): ArtifactRef {
 	const kind = toolArtifactKind(id);
 	if (kind) {
 		return TOOL_ARTIFACTS[kind];
+	}
+	if (isBrowserTab(id)) {
+		// The host, not the id: two tabs called "Browser" tell the dev nothing,
+		// and the host is the one word that says which page this is.
+		return { id, title: hosts?.get(id) ?? 'Browser', icon: 'browser' };
 	}
 	const input = inputs.find((candidate) => candidate.id === id);
 	return {
