@@ -913,12 +913,14 @@ body {
 	margin: auto;
 	min-width: 320px;
 	max-width: 480px;
-	padding: var(--space-5);
-	border: 1px solid var(--border-strong);
-	border-radius: var(--radius);
+	padding: 0 var(--space-5) var(--space-5);
+	/* Square, like every other floating surface — the popup, the menu, the
+	   quick pick. Nothing at rest in this app is a rounded box. */
+	border: 1px solid var(--border);
 	background: var(--popover);
 	color: var(--foreground);
 	font-size: var(--text-base);
+	box-shadow: var(--shadow-overlay);
 }
 
 .ide-overlay::backdrop {
@@ -926,7 +928,9 @@ body {
 }
 
 .ide-overlay-title {
-	margin: 0 0 var(--space-4);
+	margin: 0 calc(var(--space-5) * -1) var(--space-4);
+	padding: var(--space-3) var(--space-5);
+	border-bottom: 1px solid var(--border);
 	font-size: var(--text-base);
 	font-weight: 600;
 }
@@ -1003,13 +1007,22 @@ body {
 	margin-bottom: auto;
 }
 
+/* The palette already sits inside a bordered popup — its field is a rule
+   underneath, not a second box, the same way the mockup's `.field` drops its
+   side borders once it is nested in a `.pop`. */
 .ide-quickpick-input {
 	width: 100%;
-	padding: var(--space-3);
-	border: 1px solid var(--ring);
-	border-radius: var(--radius);
+	padding: var(--space-2) var(--space-2) var(--space-3);
+	border: none;
+	border-bottom: 1px solid var(--border);
+	background: none;
 	color: var(--foreground);
 	font: inherit;
+}
+
+.ide-quickpick-input:focus {
+	outline: none;
+	border-bottom-color: var(--ring);
 }
 
 .ide-quickpick-list {
@@ -1025,7 +1038,6 @@ body {
 	align-items: center;
 	gap: var(--space-3);
 	padding: var(--space-2) var(--space-3);
-	border-radius: var(--radius);
 	cursor: pointer;
 }
 
