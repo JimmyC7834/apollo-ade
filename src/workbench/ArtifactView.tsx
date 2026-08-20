@@ -5,7 +5,13 @@
 // component that already existed and already worked in a region; slice 40 moved
 // where it is mounted, not what it does.
 
-import { TOOL_ARTIFACTS, isBrowserTab, toolArtifactKind, type ArtifactRef } from '../artifacts';
+import {
+	TOOL_ARTIFACTS,
+	isBrowserTab,
+	isPluginPanel,
+	toolArtifactKind,
+	type ArtifactRef,
+} from '../artifacts';
 import type { ChangesProvider } from '../changes';
 import { MonacoDiffEditor } from '../editor/MonacoDiffEditor';
 import { MonacoEditor } from '../editor/MonacoEditor';
@@ -99,8 +105,10 @@ export function ArtifactView(props: ArtifactViewProps) {
 				onOpen={props.onOpenFile}
 				lspStatus={props.lsp.status}
 				onRestartLsp={props.lsp.restart}
-				notices={props.pluginState.failures.map((failure) => ({
-					id: failure.id,
+				notices={props.pluginState.failures.map((failure, at) => ({
+					// One plugin can produce more than one line — a load failure and a
+					// token another plugin also set — so the position is part of the key.
+					id: `${failure.id}#${at}`,
 					source: failure.name,
 					message: failure.reason,
 				}))}
@@ -169,6 +177,11 @@ export function artifactRef(
 	const kind = toolArtifactKind(id);
 	if (kind) {
 		return TOOL_ARTIFACTS[kind];
+	}
+	if (isPluginPanel(id)) {
+		// The plugin's own name, and the plugin glyph rather than the browser one:
+		// a panel is a plugin drawing, not a page somebody navigated to.
+		return { id, title: hosts?.get(id) ?? 'Panel', icon: 'plugins' };
 	}
 	if (isBrowserTab(id)) {
 		// The host, not the id: two tabs called "Browser" tell the dev nothing,

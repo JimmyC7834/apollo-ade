@@ -1,6 +1,6 @@
 {
 	"name": "Hello",
-	"description": "Adds a command, calls a Rust command through invoke, and watches every tool call.",
+	"description": "Adds a command and a tool, calls a Rust command through invoke, and watches every tool call.",
 	"api": 1,
 	"script": "index.js"
 }

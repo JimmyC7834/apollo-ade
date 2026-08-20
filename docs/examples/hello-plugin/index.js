@@ -1,5 +1,5 @@
 /*
- * The smallest plugin that uses all three of what tickets 72 and 73 built.
+ * The smallest plugin that uses what tickets 72, 73 and 74 built.
  *
  * It lives in `.ade/plugins/`, which makes it a **local** plugin: this repository
  * carries it, and it is listed and inert until somebody enables it for this root
@@ -37,5 +37,67 @@ export default async function activate(ade) {
 	await ade.on('tool_call', (call) => {
 		console.log(`[hello] the model is calling ${call.tool}`, call.input);
 		return undefined;
+	});
+
+	/*
+	 * `claim('tool')` — a tool the model can call, once a profile says so.
+	 *
+	 * Two separate decisions: enabling this plugin is what runs the code above,
+	 * and naming `which_branch` in a profile's tool list is what lets a model
+	 * call it. It appears in the profile editor **off**, marked "from Hello".
+	 *
+	 * The parameters are the same short form a user tool manifest uses — a
+	 * description on its own means a required string.
+	 */
+	await ade.claim('tool', {
+		name: 'which_branch',
+		description: 'The git branch the workspace is on.',
+		parameters: {},
+		run: async () => (await ade.invoke('git_branch')) ?? 'not a git repository',
+	});
+
+	/*
+	 * `panel` and `relay` — the plugin's own page, in a dock tab.
+	 *
+	 * The path is relative to this plugin's folder and nothing outside it can be
+	 * named. The page is its own origin: it cannot reach the ADE's DOM and holds
+	 * none of its capabilities, and it links `plugin://ade/tokens.css` to get the
+	 * ADE's palette without importing anything.
+	 *
+	 * `relay` carries an opaque payload between these two halves. The shape below
+	 * — `{ ask: 'branch' }` out, `{ branch }` back — is this plugin's protocol.
+	 * The ADE never parses it, which is why it never has to know about it.
+	 */
+	await ade.on('relay', async (payload) => {
+		if (payload?.ask === 'branch') {
+			await ade.relay({ branch: (await ade.invoke('git_branch')) ?? null });
+		}
+	});
+	await ade.panel('panel.html');
+
+	/*
+	 * `theme` — values for tokens the ADE already has, and nothing else.
+	 *
+	 * No selectors, no rules, no stylesheet: a rule reaching the ADE's document
+	 * would be component replacement by another route, and that is the one thing
+	 * a plugin never does. Naming a token this ADE does not define is refused
+	 * rather than ignored, so a plugin written against a token that has since
+	 * gone says so instead of quietly doing nothing.
+	 *
+	 * Disabling this plugin puts the value back.
+	 */
+	await ade.theme({ '--ring': '#c26b3f' });
+
+	/*
+	 * `claim('layout')` — hide, rename and reorder what the ADE already draws,
+	 * by public id.
+	 *
+	 * Only ids the ADE promises may be named; anything else fails loudly. So does
+	 * anything that would hide the way back to the plugin list — which is how you
+	 * turn this plugin off again.
+	 */
+	await ade.claim('layout', {
+		rename: { 'artifact:terminal': 'Shell' },
+		order: ['artifact:terminal'],
 	});
 }

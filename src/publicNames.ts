@@ -57,7 +57,7 @@ export { ICON_NAMES, type IconName };
 
 /**
  * Tokens are promised **by scope, not by list**: every custom property
- * `src/tokens.css` defines is public, and nothing else is.
+ * `src/ui/tokens.css` defines is public, and nothing else is.
  *
  * The alternative — writing the names out here with a check that each exists in
  * the stylesheet — was rejected because it is the copy this file otherwise
@@ -75,4 +75,4 @@ export { ICON_NAMES, type IconName };
  * stylesheet at the point it is applied, which is ticket 76.
  */
 export const TOKEN_PROMISE =
-	'every custom property defined in src/tokens.css, and nothing else';
+	'every custom property defined in src/ui/tokens.css, and nothing else';

@@ -69,7 +69,7 @@ property of webviews, not a security claim about the plugin as a whole.
 ## Acceptance criteria
 
 - [ ] A plugin calls `panel` and its own page appears as a dock tab, drawing its own markup.
-- [ ] `plugin://` serves only that plugin's folder — a path escaping it is refused, tested
+- [x] `plugin://` serves only that plugin's folder — a path escaping it is refused, tested
       in Rust.
 - [ ] A panel that links `tokens.css` matches the ADE's palette and spacing, and follows a
       theme change.
@@ -77,5 +77,14 @@ property of webviews, not a security claim about the plugin as a whole.
       closes — the same behaviour a browser tab already has.
 - [ ] `relay` carries a payload both ways between the script and the panel, unparsed, and a
       payload large enough to exceed a URL survives the trip intact.
-- [ ] `npm run check` and `cargo test` pass.
+- [x] `npm run check` and `cargo test` pass.
 - [ ] Driven in the **native** window.
+
+**`panel` takes a path, not a URL** — relative to the plugin's own folder. A plugin author
+never types the `plugin://` prefix; accepting a full URL would mean deciding what to do with
+`https://`, `file:` and another plugin's folder, which is three rules to keep for ever for a
+question this ticket did not ask.
+
+The unticked boxes all need a window to look at. The relay round trip is exercised end to end
+in `panels.check.ts` — 40 KB through the same chunker the init script uses — but through the
+chunker, not through a real navigation.

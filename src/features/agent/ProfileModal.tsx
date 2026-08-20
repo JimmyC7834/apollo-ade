@@ -130,6 +130,7 @@ function SelectionRow({
 function SelectionPage({
 	title,
 	items,
+	noteFor,
 	isOn,
 	onToggle,
 	onAll,
@@ -137,6 +138,8 @@ function SelectionPage({
 }: {
 	readonly title: string;
 	readonly items: readonly string[];
+	/** Where this one came from, when it came from somewhere — see `sources`. */
+	readonly noteFor?: (name: string) => string | undefined;
 	readonly isOn: (name: string) => boolean;
 	readonly onToggle: (name: string) => void;
 	readonly onAll: (on: boolean) => void;
@@ -195,6 +198,7 @@ function SelectionPage({
 						<SelectionRow
 							key={name}
 							label={name}
+							note={noteFor?.(name)}
 							on={isOn(name)}
 							onToggle={() => onToggle(name)}
 						/>
@@ -293,6 +297,7 @@ export function ProfileModal({ open, profile, onClose, onAnnounce, root }: Profi
 				<SelectionPage
 					title="Tools"
 					items={capabilities.tools}
+					noteFor={(name) => capabilities.sources?.[name]}
 					isOn={toolOn}
 					onToggle={(name) =>
 						setDraft((current) => ({

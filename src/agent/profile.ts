@@ -107,6 +107,16 @@ export interface Capabilities {
 	 * tools nobody chose to have, opt-in for tools someone wrote.
 	 */
 	readonly optIn?: readonly string[];
+	/**
+	 * Where a tool came from, for tools that came from somewhere — ticket 74.
+	 *
+	 * Only plugins fill this in. pi's built-ins and the user's own manifests need
+	 * no attribution: one set is the ADE and the other is the person reading the
+	 * list. A plugin's tool is neither, and a profile editor that showed `echo`
+	 * beside `bash` with nothing to tell them apart would be asking for trust
+	 * without saying who for.
+	 */
+	readonly sources?: Readonly<Record<string, string>>;
 }
 
 let capabilities: Capabilities = { tools: [], skills: [] };

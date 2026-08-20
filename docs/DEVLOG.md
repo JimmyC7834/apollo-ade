@@ -5851,3 +5851,139 @@ copy it into the global plugins folder, or into `.ade/plugins/`, and drive it.
 
 The `tool_call` path in particular wants a real model, which is the standing rule for this
 repo: a unit test is not evidence that a feature works.
+
+## Slice 45 — a plugin declares, draws and changes the chrome (tickets 74, 75, 76)
+
+The rest of the plugin system. Ticket 72 and 73 gave a plugin a command, `invoke` and the
+hook chain; this gives it a tool the model can call, a page of its own, and the two ways it
+is allowed to change the ADE without drawing anything.
+
+All six messages now do something. What still rejects is a `claim` **kind** we do not know,
+and its message says so rather than the claim quietly doing nothing.
+
+### 74 — a tool, and the profile that turns it on
+
+**Two decisions, one act each.** Enabling a plugin says *run this code*. A profile naming its
+tool says *let the model call this*. `claim('tool', …)` puts the tool in `optIn`, so it
+appears in the profile editor **off**, exactly like a user-authored manifest and for ticket
+13's reason: a manifest on disk is not a trust decision.
+
+**Names are refused, not namespaced, and this is the ticket's "pick one, write down why".** A
+claimed *command* is namespaced (`hello/refresh`); a claimed *tool* is not. The two ids have
+different readers. A command id is ours — nobody types it, the palette shows a title and a
+category, and a prefix costs an author nothing. A tool name is **prose the model reads**, in
+the same list as `read`, `write` and `bash`; `hello_echo` is worse prompt material than
+`echo`, and a namespace we applied silently is a name its author never wrote. So a collision
+is a refusal with a line in Problems — which is also the rule `userTools.ts` already applies
+to a manifest shadowing a built-in. One rule for tool names rather than two.
+
+Three collisions, and they are caught in two places because they are visible at two different
+times. A built-in, and a tool another plugin claimed earlier in the same load, are refused at
+claim time. A *user* tool with the same name cannot be: it is read from a profile file on a
+different schedule, so the plugin's tool is dropped when the harness's tool list is composed
+and the plugin is told, without failing the rest of it.
+
+The profile editor shows where a tool came from. `Capabilities` grew `sources`, filled in only
+for plugins: pi's built-ins and the user's own manifests need no attribution, and a row saying
+`echo` beside `bash` with nothing to tell them apart is asking for trust without saying who
+for.
+
+Removal falls out of the store's shape. `installPluginTools` replaces the set whole, and
+`provider.ts` rebuilds the harness's tools on the same event — so disabling a plugin, a plugin
+failing, or a folder disappearing all take its tools out of a live session by the same path.
+
+### 75 — a page of its own
+
+Almost all of it was slice 43, pointed somewhere else. A panel **is** a browser tab: one child
+webview, one dock slot, the same `ResizeObserver` position sync, the same `hiddenRect`, the
+same occlusion rule. `BrowserTab` gained one prop — `chrome`, false for a panel — and that is
+the whole of the component work.
+
+What did not exist was a way to serve a plugin's files. `plugin://<scope>/<folder>/<file>` now
+does, registered in `lib.rs` and served by `plugins.rs`. Two path segments rather than the
+`global:hello` id spelled literally, because a colon in a URL path is legal and handled
+differently by every parser that touches it. Every request resolves through
+`workspace::resolve` — the same function a project read goes through — so a path escaping the
+plugin's folder is refused by the rule that already existed. Windows routes a custom scheme
+through `http://plugin.localhost`; the renderer never learns that, because `browser.rs`
+translates the URL and the path is identical on both platforms.
+
+`plugin://ade/tokens.css` is the honest answer to "can a plugin use your components". It
+cannot — nothing but data crosses, and a React component is not data — and it does not have to
+invent a look either. The stylesheet is `include_str!`'d, so it is the same file Vite compiles
+into the workbench rather than a second copy that can go missing in a release build.
+
+**`relay` is opaque and stays that way.** The plugin's two halves have no direct channel, so
+we carry an arbitrary JSON payload between them and never parse it. Whatever protocol a plugin
+wants between its own halves is its business, and that is what stops our six messages growing
+for reasons that have nothing to do with us.
+
+The transport underneath is uneven and the adapter hides it. Out of a page a message is a URL,
+so the init script cuts the payload into pieces and `joinRelay` puts it back together; into a
+page it is an evaluation, which takes the whole thing. `panels.check.ts` sends 40 KB through
+the same chunker the init script uses and asserts the object arrives intact.
+
+### 76 — the chrome, without drawing anything
+
+`theme(tokens)` sets values for custom properties the workbench already has. Values, never
+rules: braces, semicolons and angle brackets are refused, because one rule reaching our
+document is one `display: none` away from deleting the Guide's keyboard model with no claim
+ever having been made. A plugin with a whole stylesheet has one — it is its panel's.
+
+A token we do not define is refused rather than ignored, so a plugin written against a token
+that has since gone says so. Whether a token exists is asked of the live document rather than
+of a list in TypeScript, for the same reason `publicNames.ts` promises tokens by scope: a list
+beside `tokens.css` could only ever tell us the copy had gone stale.
+
+Layout claims hide, rename and reorder by public id — and `chrome.ts` imports those ids
+through `publicNames.ts` rather than from where they happen to live, because a layout claim is
+the one feature that turns an id into an API. An id outside the promise is refused; so is an
+id that does not exist, because a rename on our side otherwise becomes a plugin that appears
+to work and does nothing.
+
+**The way back.** The Plugins artifact and the command that opens it are refused as claim
+targets. A plugin that could hide them is a plugin you cannot turn off.
+
+Two plugins that fight resolve by last-enabled-wins — folder order, no precedence weights —
+and every token two plugins both set produces a line in Problems naming both and which won.
+
+### Caveats and deviations
+
+**A layout claim's `order` is a pull to the front, not a permutation.** A permutation would
+need a plugin to name every id there is, and would go wrong the day we add one. Named ids come
+first in the order named; everything else keeps its relative place behind them.
+
+**The strip and the dock tabs are one list in this workbench.** Ticket 76 names them as two
+things a claim must be able to act on. In the code they are the same array — the dock strip
+renders the pinned artifacts — so one `applyLayout` call covers both, rather than two call
+sites pretending to be independent.
+
+**`panel(url)` takes a relative path, not a URL.** The ticket writes `plugin://<name>/panel.html`;
+a plugin author never types that prefix, because accepting a full URL would mean deciding what
+to do with `https://`, `file:` and another plugin's folder — three questions the ticket did not
+ask and every one of which is a rule to keep for ever.
+
+**A plugin panel's `relay` chunks are sent one per task.** `location.href = …` is a navigation
+request, and a page that asks for several inside one task gets only the last one. Yielding
+between chunks is what makes each its own navigation, and it keeps them in order for free.
+This was reasoned out rather than found: it has not been driven natively.
+
+**A local plugin's tool is offered to every session in the window, not only to the root it was
+enabled for.** Unlike a user tool, which is guarded by `mine()`. The guard would be theatre
+here: a plugin is injected into our document with our authority the moment it is enabled, so
+confining one of its *tools* to one root confines nothing. The enable switch is the decision,
+and it is per root.
+
+### What was *not* validated
+
+**Nothing in this slice has been driven in the native window either.** `npm run check` is
+green — three new check files, five new Rust tests, 49 in total — and `npm run build` is
+green. What nobody has watched: a plugin tool appearing in the profile editor and a model
+calling it, `plugin://` serving a page, a panel tracking the dock and hiding behind an overlay,
+a relay payload making the round trip, a theme changing the workbench and being put back, and a
+layout claim hiding a tab.
+
+`docs/examples/hello-plugin/` now uses all six messages and is the artifact for doing that:
+copy it into the global plugins folder, or enable it under `.ade/plugins/`, and drive it. The
+tool path wants a real model, which is the standing rule for this repo — a unit test is not
+evidence that a feature works.

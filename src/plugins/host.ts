@@ -1,4 +1,4 @@
-// Running plugins — tickets 72 and 73.
+// Running plugins — tickets 72 to 76.
 //
 // ## What this is, in one line
 //
@@ -37,6 +37,22 @@ import {
 	type PluginEventName,
 } from './hooks.ts';
 import {
+	declareLayout,
+	declareTheme,
+	installChrome,
+	mergeTokens,
+	type LayoutClaim,
+	type ThemeClaim,
+} from './chrome.ts';
+import { closePanels, openPanel, relayToPanel } from './panels.ts';
+import {
+	declareTool,
+	installPluginTools,
+	pluginTools,
+	setOnToolDropped,
+	type PluginTool,
+} from './tools.ts';
+import {
 	evaluatePlugin,
 	isEnabled,
 	type Discovery,
@@ -56,11 +72,11 @@ export interface ClaimedCommand {
 /**
  * The six messages.
  *
- * `invoke`, `on` and `claim('command')` do something. `panel`, `relay`, `theme`
- * and every other claim kind are names that **reject**, naming the ticket that
- * will implement them — declared now rather than added later, because a plugin
- * author discovering the shape one message at a time cannot tell a feature that
- * has not landed from a misspelling.
+ * All six do something, as of ticket 76. They were declared together in ticket
+ * 72 and filled in one at a time, because a plugin author discovering the shape
+ * one message at a time cannot tell a feature that has not landed from a
+ * misspelling. What still rejects is a `claim` **kind** we do not know, and its
+ * message says so rather than the claim doing nothing.
  */
 export interface PluginApi {
 	invoke(command: string, args?: Record<string, unknown>): Promise<unknown>;
@@ -69,6 +85,48 @@ export interface PluginApi {
 	panel(url: string): Promise<void>;
 	relay(payload: unknown): Promise<void>;
 	theme(tokens: Record<string, string>): Promise<void>;
+}
+
+/**
+ * What one plugin claimed during one load.
+ *
+ * A bag rather than two parameters because a claim of either kind is the same
+ * act, and because everything in here is discarded together when the plugin
+ * that made the claims fails to finish loading.
+ */
+interface Claims {
+	readonly commands: ClaimedCommand[];
+	readonly tools: PluginTool[];
+	readonly themes: ThemeClaim[];
+	readonly layouts: LayoutClaim[];
+}
+
+/**
+ * Whether the workbench defines this custom property — ticket 76's whole
+ * validation rule for a theme.
+ *
+ * Asked of the live document rather than of a list in TypeScript. `tokens.css`
+ * is already exactly one definition of exactly this set, and a list beside it
+ * could only ever tell us the copy had gone stale — see `publicNames.ts`, which
+ * promises tokens by scope for the same reason.
+ */
+function tokenIsDefined(name: string): boolean {
+	if (typeof document === 'undefined') {
+		return false;
+	}
+	const read = (token: string) =>
+		getComputedStyle(document.documentElement).getPropertyValue(token).trim();
+	/*
+	 * A global plugin activates before React mounts, which can be before the
+	 * stylesheet has landed — and a document with no tokens in it yet would
+	 * refuse every token there is. So the answer is "yes" when we cannot tell:
+	 * a wrong name then sets a custom property nothing reads, which is inert,
+	 * where a wrong refusal fails a correct plugin at start-up.
+	 */
+	if (read('--background') === '') {
+		return true;
+	}
+	return read(name) !== '';
 }
 
 /** What the workbench renders. Plain data — see rule 1. */
@@ -146,10 +204,6 @@ function createHost() {
 		}
 	}
 
-	function notYet(message: string): Promise<never> {
-		return Promise.reject(new Error(message));
-	}
-
 	/**
 	 * `invoke` — every Rust command the ADE has, and no privileged path.
 	 *
@@ -179,6 +233,8 @@ function createHost() {
 	 */
 	function disable(pluginId: string, reason: string): void {
 		dropPlugin(pluginId);
+		closePanels(pluginId);
+		installPluginTools(pluginTools().filter((tool) => tool.pluginId !== pluginId));
 		const entry = state.listed.find((candidate) => candidate.id === pluginId);
 		publish({
 			...state,
@@ -202,6 +258,32 @@ function createHost() {
 	setOnBreach(disable);
 
 	/**
+	 * A tool that could not be offered, without failing the plugin that declared
+	 * it. The rest of the plugin is running and useful; one name was taken.
+	 */
+	setOnToolDropped((pluginId, reason) => {
+		const entry = state.listed.find((candidate) => candidate.id === pluginId);
+		if (state.failures.some((failure) => failure.id === pluginId && failure.reason === reason)) {
+			// The provider rebuilds its tool list whenever anything changes, so the
+			// same collision is reported on every rebuild. Once is enough.
+			return;
+		}
+		publish({
+			...state,
+			failures: [
+				...state.failures,
+				{
+					id: pluginId,
+					scope: entry?.scope ?? 'global',
+					dir: entry?.dir ?? '',
+					name: entry?.name ?? pluginId,
+					reason,
+				},
+			],
+		});
+	});
+
+	/**
 	 * The object one plugin is handed.
 	 *
 	 * Built per plugin rather than shared, because everything a message does has
@@ -209,7 +291,7 @@ function createHost() {
 	 * the plugin in Problems. A shared object would have to be told who was
 	 * calling, which is the sort of thing a plugin can lie about.
 	 */
-	function apiFor(plugin: LoadablePlugin, claimed: ClaimedCommand[]): PluginApi {
+	function apiFor(plugin: LoadablePlugin, claims: Claims, taken: readonly PluginTool[]): PluginApi {
 		return {
 			invoke: (command, args) => callInvoke(plugin, command, args),
 			on: async (event, handler) => {
@@ -225,14 +307,28 @@ function createHost() {
 				registerHandler(plugin.id, event as PluginEventName, handler);
 			},
 			claim: async (kind, spec) => {
-				if (kind !== 'command') {
-					throw new Error(`claim("${kind}") is not available yet — tickets 75 and 76`);
+				if (kind === 'command') {
+					claims.commands.push(commandFrom(plugin, spec));
+					return;
 				}
-				claimed.push(commandFrom(plugin, spec));
+				if (kind === 'layout') {
+					claims.layouts.push(declareLayout(plugin, spec));
+					return;
+				}
+				if (kind === 'tool') {
+					// `taken` is every tool claimed earlier in this load, plus the ones
+					// this plugin has already claimed — a plugin can collide with
+					// itself, and a duplicate inside one manifest is still a duplicate.
+					claims.tools.push(declareTool(plugin, spec, [...taken, ...claims.tools]));
+					return;
+				}
+				throw new Error(`claim("${kind}") is not available yet — ticket 76`);
 			},
-			panel: () => notYet('panel is not available yet — ticket 75'),
-			relay: () => notYet('relay is not available yet — ticket 75'),
-			theme: () => notYet('theme is not available yet — ticket 76'),
+			panel: (url) => openPanel(plugin, url),
+			relay: (payload) => relayToPanel(plugin.id, payload),
+			theme: async (tokens) => {
+				claims.themes.push(declareTheme(plugin, tokens, tokenIsDefined));
+			},
 		};
 	}
 
@@ -266,7 +362,8 @@ function createHost() {
 
 	async function activate(
 		plugin: LoadablePlugin,
-		claimed: ClaimedCommand[]
+		claims: Claims,
+		taken: readonly PluginTool[]
 	): Promise<string | undefined> {
 		if (!plugin.source) {
 			// Panel-only or theme-only. Nothing to run, and that is a whole plugin.
@@ -281,7 +378,7 @@ function createHost() {
 			// never finishes activating would otherwise never let the ADE start.
 			await withDeadline(
 				Promise.resolve(
-					(module.default as (api: PluginApi) => unknown)(apiFor(plugin, claimed))
+					(module.default as (api: PluginApi) => unknown)(apiFor(plugin, claims, taken))
 				),
 				`${plugin.id} loading`
 			);
@@ -321,6 +418,10 @@ function createHost() {
 		// with it, or a plugin whose folder has been deleted keeps deciding.
 		for (const previous of state.listed) {
 			dropPlugin(previous.id);
+			// Its panels go with its handlers. A reload re-runs the script, and a
+			// script that calls `panel` again is how the tab comes back — a panel
+			// that survived would be a page belonging to code that no longer runs.
+			closePanels(previous.id);
 		}
 
 		const key = discovery.localDir ?? '';
@@ -328,6 +429,9 @@ function createHost() {
 		const listed: ListedPlugin[] = [];
 		const failures: PluginFailure[] = [];
 		const commands: ClaimedCommand[] = [];
+		const tools: PluginTool[] = [];
+		const themes: ThemeClaim[] = [];
+		const layouts: LayoutClaim[] = [];
 
 		for (const found of discovery.plugins) {
 			const verdict = evaluatePlugin(found);
@@ -347,10 +451,10 @@ function createHost() {
 			}
 			const { plugin } = verdict;
 			const enabled = isEnabled(plugin, enabledLocally);
-			const claimed: ClaimedCommand[] = [];
+			const claims: Claims = { commands: [], tools: [], themes: [], layouts: [] };
 			// **Inert until enabled.** Nothing above this line ran any of the
 			// plugin's code; nothing below it runs unless this is true.
-			const reason = enabled ? await activate(plugin, claimed) : undefined;
+			const reason = enabled ? await activate(plugin, claims, tools) : undefined;
 			if (reason) {
 				// A plugin can install handlers and *then* throw. Its claims are
 				// discarded by not being pushed; its handlers have to be taken back
@@ -364,7 +468,10 @@ function createHost() {
 					reason,
 				});
 			} else {
-				commands.push(...claimed);
+				commands.push(...claims.commands);
+				tools.push(...claims.tools);
+				themes.push(...claims.themes);
+				layouts.push(...claims.layouts);
 			}
 			listed.push({
 				id: plugin.id,
@@ -376,6 +483,23 @@ function createHost() {
 				loaded: enabled && !reason,
 				...(reason ? { reason } : {}),
 			});
+		}
+
+		/*
+		 * The tool set is replaced whole, after the whole pass — so a plugin that
+		 * has been disabled, has failed or whose folder has gone loses its tools,
+		 * and the provider rebuilds the harness once rather than once per plugin.
+		 */
+		installPluginTools(tools);
+		/*
+		 * And the chrome, in load order — which is folder order, which is what
+		 * makes "last enabled wins" a rule anyone can predict. The conflicts come
+		 * back as Problems lines rather than being resolved silently: two plugins
+		 * fighting over one token is something the user has to be able to find.
+		 */
+		installChrome(themes, layouts);
+		for (const conflict of mergeTokens(themes).conflicts) {
+			failures.push({ id: 'plugins', scope: 'global', dir: '', name: 'Plugins', reason: conflict });
 		}
 
 		publish({

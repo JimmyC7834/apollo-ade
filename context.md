@@ -167,6 +167,21 @@ installs anything, you copy a folder.
 a strip item, a dock tab, a notification, a menu entry. A claim is data. A
 plugin never renders a claim itself.
 
+**Plugin tool** — a tool a plugin declares, which the model may call once a
+profile names it. Two acts, never one: enabling the plugin runs its code, and a
+profile naming the tool grants the model access. Its name is refused rather than
+namespaced on a collision, unlike a claimed command's id — a tool name is prose
+the model reads.
+
+**Layout claim** — a claim that changes something we already draw rather than
+adding to it: hide, rename, reorder, by **public id**. It never creates a
+surface; a plugin that wants one uses a plugin panel.
+
+**Public id** — an id a plugin may name, listed in `src/publicNames.ts`. Three
+things at once: we chose it, it is the same on every run and in every workspace,
+and a plugin can act on it. Renaming one is an `api` bump. An id outside the set
+is unsupported, and a layout claim naming one is refused.
+
 **Plugin panel** — a surface a plugin draws itself, in a child webview, in a
 dock slot. The other half of what a claim is not. Same machinery as a browser
 tab ([ADR 0004](docs/adr/0004-a-browser-tab-is-a-child-webview.md)).

@@ -66,12 +66,23 @@ that create new regions — a plugin that wants a new surface uses a panel
       them.
 - [ ] A plugin hides, reorders and renames a strip item, a dock tab and a command centre
       entry, by public id.
-- [ ] Naming an id that does not exist, or one that is not public, fails with one line in
+- [x] Naming an id that does not exist, or one that is not public, fails with one line in
       Problems that names the plugin and the id.
-- [ ] A theme carrying selectors or rules rather than values is refused.
+- [x] A theme carrying selectors or rules rather than values is refused.
 - [ ] Two plugins claiming the same thing resolve by last-enabled-wins, and the conflict is
       visible.
 - [ ] There is one route to the plugin list that no claim can hide, driven with a plugin
       that hides everything it is allowed to.
-- [ ] `npm run check` and `cargo test` pass.
+- [x] `npm run check` and `cargo test` pass.
 - [ ] Driven in the **native** window.
+
+**The strip and the dock tabs are one list here.** The dock strip renders the pinned
+artifacts, so one `applyLayout` call covers both rather than two call sites pretending to be
+independent.
+
+**`order` pulls to the front rather than permuting.** A permutation would need a plugin to
+name every id there is, and would go wrong the day we add one.
+
+The way back is `artifact:plugins` and the command that shows it, refused as claim targets and
+asserted in `chrome.check.ts`. What is unticked is watching a plugin that hides everything
+else fail to hide that one.

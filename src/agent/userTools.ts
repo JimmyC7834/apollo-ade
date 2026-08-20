@@ -74,7 +74,7 @@ const PLACEHOLDER = /\{([a-zA-Z][a-zA-Z0-9_-]{0,63})\}/g;
  *
  * Imported rather than re-typed so the names cannot drift.
  */
-const RESERVED = new Set(['read', 'write', 'edit', 'bash', ASK_TOOL, BROWSER_TOOL]);
+export const RESERVED = new Set(['read', 'write', 'edit', 'bash', ASK_TOOL, BROWSER_TOOL]);
 
 /**
  * One parameter, in the manifest's long form.
@@ -123,7 +123,7 @@ const TYPES = ['string', 'number', 'boolean'] as const;
  * that into the manifest's single rejection message — a parameter is not
  * separately salvageable from the tool it belongs to.
  */
-function parseParameter(raw: unknown): UserToolParameter | string {
+export function parseParameter(raw: unknown): UserToolParameter | string {
 	if (typeof raw === 'string') {
 		return raw.trim()
 			? { description: raw, type: 'string', required: true }
@@ -338,7 +338,7 @@ export function resolveArgv(tool: UserTool, params: Record<string, unknown>): st
  * what TypeBox emits a correct `required` array from — and the array is the
  * only thing a provider reads to decide whether it may omit an argument.
  */
-function schemaFor(spec: UserToolParameter): TSchema {
+export function schemaFor(spec: UserToolParameter): TSchema {
 	const options = { description: spec.description };
 	const base = spec.choices
 		? // `enum` on a string rather than a union of literals. TypeBox emits the

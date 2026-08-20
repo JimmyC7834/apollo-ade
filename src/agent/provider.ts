@@ -84,6 +84,7 @@ import {
 	useSkillSource,
 } from './skills';
 import { onUserToolsChange, userToolDefinitions, userTools } from './userTools';
+import { onPluginToolsChange, pluginToolDefinitions, pluginTools } from '../plugins/tools';
 
 /** Which shell Rust resolved, or undefined outside the native shell. */
 async function resolveShell(): Promise<string | undefined> {
@@ -460,12 +461,30 @@ function createRunner(
 	 * that knows both halves — pi's built-ins are constructed here, and the
 	 * store is what refuses a profile naming something outside the union.
 	 */
-	let tools = [...builtins, ...userToolDefinitions(gate, () => profile.current().rtk)];
+	/*
+	 * A plugin's tools go on the end — ticket 74. They follow the user tools'
+	 * default rather than the built-ins': off unless a profile names one, because
+	 * a plugin being enabled says "run this code" and a profile naming its tool is
+	 * the separate act that says "let the model call this".
+	 *
+	 * `compose` takes the names already spoken for, because the harness throws on
+	 * a duplicate and a plugin is the last one to arrive.
+	 */
+	const compose = () => {
+		const mine = [...builtins, ...userToolDefinitions(gate, () => profile.current().rtk)];
+		return [...mine, ...pluginToolDefinitions(new Set(mine.map((tool) => tool.name)))];
+	};
+	let tools = compose();
 	const declare = () =>
 		setCapabilities({
 			tools: tools.map((tool) => tool.name),
 			skills: allSkills().map((skill) => skill.name),
-			optIn: userTools().map((tool) => tool.name),
+			optIn: [...userTools(), ...pluginTools()].map((tool) => tool.name),
+			// Where a tool came from, for the profile editor: granting trust to a
+			// name deserves to show whose name it is.
+			sources: Object.fromEntries(
+				pluginTools().map((tool) => [tool.name, `from ${tool.pluginName}`])
+			),
 		});
 	declare();
 
@@ -857,7 +876,24 @@ function createRunner(
 		if (!mine()) {
 			return;
 		}
-		tools = [...builtins, ...userToolDefinitions(gate, () => profile.current().rtk)];
+		tools = compose();
+		declare();
+		void ready.then((harness) =>
+			enqueue(() => harness.setTools(tools, activeToolNames(profile.current())))
+		);
+	});
+
+	/*
+	 * And the same when a plugin is enabled, disabled, fails or is reloaded —
+	 * ticket 74's "removing a plugin removes its tools from a live session".
+	 *
+	 * No `mine()` guard, unlike the user tools above. A plugin is not a folder's:
+	 * a global one is the app's, and a local one was enabled by hand for the root
+	 * it lives under. `installPluginTools` publishes the whole surviving set, so
+	 * every harness in the window is meant to hear it.
+	 */
+	onPluginToolsChange(() => {
+		tools = compose();
 		declare();
 		void ready.then((harness) =>
 			enqueue(() => harness.setTools(tools, activeToolNames(profile.current())))

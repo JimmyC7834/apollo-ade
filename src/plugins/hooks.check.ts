@@ -145,14 +145,23 @@ assert.ok(
 );
 
 const provider = readFileSync(new URL('../agent/provider.ts', import.meta.url), 'utf8');
-const imported = [...provider.matchAll(/import\s*\{([^}]*)\}\s*from\s*'\.\.\/plugins\/[^']+'/g)]
-	.flatMap((match) => match[1].split(','))
-	.map((name) => name.trim())
-	.filter(Boolean);
+/*
+ * Not "provider.ts imports one name" — it imports the plugin tool store too,
+ * since ticket 74. What it may never import is *this* module: every entry point
+ * in here either runs handlers or hands them out, and the only supported way to
+ * reach the first is `bridgePlugins`.
+ */
+assert.ok(
+	!/from\s*'\.\.\/plugins\/hooks'/.test(provider),
+	'provider.ts must reach the hook chain through `bridgePlugins` and nothing else'
+);
+const imported = [...provider.matchAll(/import\s*\{([^}]*)\}\s*from\s*'\.\.\/plugins\/([^']+)'/g)]
+	.flatMap((match) => match[1].split(',').map((name) => `${match[2]}:${name.trim()}`))
+	.filter((entry) => !entry.endsWith(':'));
 assert.deepEqual(
 	imported,
-	['bridgePlugins'],
-	'provider.ts may reach the plugin system through `bridgePlugins` and nothing else'
+	['harnessBridge.ts:bridgePlugins', 'tools:onPluginToolsChange', 'tools:pluginToolDefinitions', 'tools:pluginTools'],
+	'provider.ts reaches the plugin system through the bridge and the tool store, and nothing else'
 );
 
 // Every `tool_call` registration in the provider goes through the bridge.

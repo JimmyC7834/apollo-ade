@@ -89,6 +89,76 @@ const INIT_SCRIPT: &str = r#"
   }
   window.addEventListener('error', (event) => say('error', [event.message]));
   window.addEventListener('unhandledrejection', (event) => say('error', ['unhandled rejection: ' + event.reason]));
+
+  /*
+   * `relay` — a plugin panel's half of ticket 75.
+   *
+   * Installed in every tab rather than only in a panel. A second init script
+   * would mean a second `initialization_script` and a flag threaded from the
+   * renderer down to `add_child`, and what it would buy is one unused global on
+   * a localhost page that already has `__adeConsole` on it.
+   *
+   * **The transport is uneven and this is the half that hides it.** A message
+   * out of a page is a URL, so a payload of any size is cut into pieces here and
+   * rejoined by our adapter; nothing on either side of the plugin learns that
+   * happened. Coming the other way there is no limit worth splitting — the ADE
+   * evaluates in the page directly — so `__adeRelay` takes the whole thing.
+   */
+  let seq = 0;
+  const CHUNK = 1200;
+  const handlers = [];
+  /*
+   * One chunk per task, never a loop of assignments.
+   *
+   * `location.href = ...` is a navigation request, and a page that asks for
+   * several inside one task gets the last one — the earlier ones are superseded
+   * before the handler ever sees them. Yielding between chunks is what makes
+   * each one its own navigation, and it keeps them in order for free.
+   */
+  const queue = [];
+  let draining = false;
+  const drain = () => {
+    const next = queue.shift();
+    if (next === undefined) { draining = false; return; }
+    send(next);
+    setTimeout(drain, 0);
+  };
+  const post = (message) => {
+    queue.push(message);
+    if (!draining) { draining = true; setTimeout(drain, 0); }
+  };
+  window.__adeRelay = (payload) => {
+    for (const handler of handlers) {
+      try { handler(payload); } catch (error) { say('error', ['relay handler: ' + error]); }
+    }
+  };
+  window.ade = {
+    relay(payload) {
+      const body = encodeURIComponent(JSON.stringify(payload === undefined ? null : payload));
+      const id = (seq += 1);
+      const total = Math.max(1, Math.ceil(body.length / CHUNK));
+      for (let index = 0; index < total; index += 1) {
+        send('relay:' + id + '.' + index + '.' + total + '.' + body.slice(index * CHUNK, (index + 1) * CHUNK));
+      }
+    },
+    onRelay(handler) { handlers.push(handler); },
+  };
+
+  /*
+   * The theme, which a panel follows by being told.
+   *
+   * Twice, because neither half is enough on its own: the query parameter is
+   * right at load, before a single frame is painted, and the function is how a
+   * theme *change* reaches a page that is already open. Reloading the panel to
+   * change its theme would throw away whatever the plugin had drawn in it.
+   */
+  window.__adeTheme = (name) => {
+    document.documentElement.classList.toggle('dark', name === 'dark');
+  };
+  try {
+    const wanted = new URLSearchParams(window.location.search).get('ade-theme');
+    if (wanted) { window.__adeTheme(wanted); }
+  } catch (error) { /* not a URL with a query; nothing to follow */ }
 })();
 "#;
 
@@ -120,8 +190,29 @@ pub fn check(url: &Url) -> Result<(), String> {
 }
 
 /// Parse and check in one step, so no caller can do one without the other.
+///
+/// **`plugin://` is translated rather than checked**, and that is the one
+/// exception. The allow-list above is about the *open web* — which hosts a page
+/// may be fetched from — and a plugin panel is fetched from a folder this
+/// process already read the plugin out of. What confines it is the protocol
+/// handler in `plugins.rs`, which resolves every request inside one plugin's
+/// folder; a second answer here would be a second rule for the same question.
+///
+/// The renderer writes `plugin://<scope>/<folder>/<file>` on every platform and
+/// this is where that becomes whatever the platform actually serves.
 fn resolve(raw: &str) -> Result<Url, String> {
     let url = Url::parse(raw).map_err(|error| format!("{raw} is not a URL: {error}"))?;
+    if url.scheme() == crate::plugins::PANEL_SCHEME {
+        let scope = url.host_str().unwrap_or_default();
+        let mut path = url.path().trim_start_matches('/').splitn(2, '/');
+        let folder = path.next().unwrap_or_default();
+        let file = path.next().unwrap_or("index.html");
+        if scope.is_empty() || folder.is_empty() {
+            return Err(format!("{raw} names no plugin file"));
+        }
+        let served = crate::plugins::panel_url(scope, folder, file);
+        return Url::parse(&served).map_err(|error| format!("{served} is not a URL: {error}"));
+    }
     check(&url)?;
     Ok(url)
 }

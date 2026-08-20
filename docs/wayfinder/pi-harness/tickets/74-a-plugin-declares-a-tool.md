@@ -60,8 +60,20 @@ still binds anything it runs.
 - [ ] Calling it runs the plugin's own function, under the deadline, and its result reaches
       the transcript like any other tool result.
 - [ ] The profile editor shows which plugin a tool came from.
-- [ ] A plugin tool that shadows a built-in, and two plugins claiming one name, are both
+- [x] A plugin tool that shadows a built-in, and two plugins claiming one name, are both
       handled by the chosen rule, with the reason written down.
 - [ ] Removing or disabling a plugin removes its tools from a live session.
-- [ ] `npm run check` and `cargo test` pass.
+- [x] `npm run check` and `cargo test` pass.
 - [ ] Driven in the **native** window, against a real model calling the tool.
+
+**Naming, as chosen:** a colliding tool name is **refused** with a line in Problems, never
+namespaced. A tool name is prose the model reads, in the same list as `read` and `bash`;
+`hello_echo` is worse prompt material than `echo`, and a namespace we applied silently is a
+name its author never wrote. It is also the rule `userTools.ts` already applies to a manifest
+shadowing a built-in — one rule for tool names rather than two. A claimed *command* is still
+namespaced, because a command id is ours and nobody reads it.
+
+Everything unticked needs a running window; the tool call also needs a real model. The two
+about listing and removal are true of the store and are checked there — nobody has watched
+them happen in a profile editor or in a live session. `docs/examples/hello-plugin/` declares
+`which_branch` so that can be done.

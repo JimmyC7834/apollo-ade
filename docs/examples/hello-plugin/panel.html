@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<title>Hello panel</title>
+		<!--
+			The ADE's own palette, over the plugin's own protocol.
+
+			A panel cannot import our components — nothing but data crosses the
+			plugin boundary, and a React component is not data — but it does not
+			have to invent a look either. Every custom property the workbench has
+			is in here, and `plugin://ade/tokens.css` is where it is served from.
+
+			The theme is a class on <html>, set for us before this file's first
+			paint and updated when the workbench's theme changes.
+		-->
+		<link rel="stylesheet" href="plugin://ade/tokens.css" />
+		<style>
+			body {
+				margin: 0;
+				padding: 12px;
+				background: var(--background);
+				color: var(--foreground);
+				font: 13px/1.5 system-ui, sans-serif;
+			}
+			button {
+				height: var(--row-height);
+				padding: 0 10px;
+				border: 1px solid var(--border);
+				border-radius: 0;
+				background: transparent;
+				color: var(--foreground);
+				font: inherit;
+			}
+			button:hover {
+				background: var(--secondary);
+			}
+			pre {
+				margin: 12px 0 0;
+				padding: 8px;
+				border: 1px solid var(--border);
+				background: var(--card);
+				white-space: pre-wrap;
+			}
+		</style>
+	</head>
+	<body>
+		<button id="ask" type="button">Ask the plugin for the branch</button>
+		<pre id="out">Nothing yet.</pre>
+		<script>
+			/*
+			 * `window.ade` is installed before this file runs. It has exactly two
+			 * members and neither of them is ours: `relay` sends an opaque payload
+			 * to the plugin's injected half, and `onRelay` receives one.
+			 *
+			 * What is inside the payload is this plugin's own protocol. The ADE
+			 * never parses it, which is why it never has to grow a message for it.
+			 */
+			const out = document.querySelector('#out');
+			document.querySelector('#ask').addEventListener('click', () => {
+				out.textContent = 'Asked…';
+				window.ade.relay({ ask: 'branch' });
+			});
+			window.ade.onRelay((payload) => {
+				out.textContent = JSON.stringify(payload, null, 2);
+			});
+		</script>
+	</body>
+</html>

@@ -39,6 +39,12 @@ use tauri::Manager;
 
 use crate::workspace::{self, WorkspaceState};
 
+/// The scheme a plugin's own page is served over — ticket 75.
+pub const PANEL_SCHEME: &str = "plugin";
+
+/// The plugin id the ADE serves its own files under. Not a folder on disk.
+const ADE: &str = "ade";
+
 /// What discovery found, and where the global folder is.
 ///
 /// The path travels with the list because a feature whose folder is at an
@@ -81,7 +87,7 @@ pub struct DiscoveredPlugin {
 
 /// Where the global folder lives. Created lazily by the user, not by us: an
 /// empty folder appearing in app data is noise until someone wants one.
-fn global_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+fn global_dir<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<PathBuf, String> {
     app.path()
         .app_data_dir()
         .map(|dir| dir.join("plugins"))
@@ -246,5 +252,219 @@ mod tests {
             &mut out,
         );
         assert!(out.is_empty());
+    }
+}
+
+// ## A plugin's own page — ticket 75
+//
+// `plugin://<scope>/<folder>/<file>` serves one plugin's folder and nothing
+// outside it. The scope and the folder are two path segments rather than the
+// `global:hello` id spelled literally, because a colon in a URL path is legal
+// and handled differently by every parser that touches it — two segments cannot
+// be got wrong.
+//
+// A panel is therefore **its own origin**: it cannot reach our DOM and it holds
+// none of our Tauri capabilities. That is a property of webviews rather than a
+// claim about the plugin, whose injected half still runs with our authority.
+
+/// The URL a panel is opened at, in the form this platform actually serves.
+///
+/// Windows and Android route a custom scheme through `http://<scheme>.localhost`
+/// and everything else serves it directly. Built here rather than in the
+/// renderer so nothing above this file has to know which platform it is on; the
+/// path is the same either way, which is what the handler below parses.
+pub fn panel_url(scope: &str, folder: &str, relative: &str) -> String {
+    let path = format!("{scope}/{folder}/{}", relative.trim_start_matches('/'));
+    if cfg!(any(windows, target_os = "android")) {
+        format!("http://{PANEL_SCHEME}.localhost/{path}")
+    } else {
+        format!("{PANEL_SCHEME}://localhost/{path}")
+    }
+}
+
+/// Split `/<scope>/<folder>/<rest>` into its three parts.
+///
+/// Takes the *path* rather than the URL, because the two platform forms differ
+/// in everything except the path.
+fn panel_parts(path: &str) -> Option<(String, String, String)> {
+    let mut segments = path.trim_start_matches('/').splitn(3, '/');
+    let scope = segments.next()?.to_owned();
+    let folder = segments.next()?.to_owned();
+    let rest = segments.next().unwrap_or_default();
+    let rest = if rest.is_empty() { "index.html".to_owned() } else { rest.to_owned() };
+    if scope.is_empty() || folder.is_empty() {
+        return None;
+    }
+    Some((scope, folder, rest))
+}
+
+/// Where a plugin's folder is, from the two names in a panel URL.
+///
+/// `folder` is checked for being one path component before it is joined, so a
+/// URL naming `../..` never reaches the filesystem at all. The file inside it
+/// then goes through `workspace::resolve` like everything else here, which is
+/// what refuses a symlink pointing out.
+fn panel_file<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    state: &WorkspaceState,
+    scope: &str,
+    folder: &str,
+    relative: &str,
+) -> Result<PathBuf, String> {
+    if Path::new(folder).components().count() != 1 || folder.contains("..") {
+        return Err(format!("{folder} is not a plugin folder"));
+    }
+    let dir = match scope {
+        "global" => global_dir(app)?.join(folder),
+        "local" => workspace::root_of(state)?
+            .join(".ade")
+            .join("plugins")
+            .join(folder),
+        other => return Err(format!("{other} is not a plugin scope")),
+    };
+    let root = workspace::canonical(&dir).map_err(|e| e.to_string())?;
+    workspace::resolve(&root, relative)
+}
+
+/// What a browser makes of a file, by its extension. Text needs the charset.
+fn content_type(path: &Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "html" | "htm" => "text/html; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "js" | "mjs" => "text/javascript; charset=utf-8",
+        "json" => "application/json; charset=utf-8",
+        "svg" => "image/svg+xml",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "woff2" => "font/woff2",
+        _ => "application/octet-stream",
+    }
+}
+
+// **Our palette, over the plugin's own protocol.**
+//
+// `plugin://ade/tokens.css` is the honest answer to "can a plugin use your
+// components": it cannot import them — nothing but data crosses, and a React
+// component is not data — and it does not have to invent a look either. A panel
+// that links this gets every custom property the workbench has.
+//
+// Compiled in rather than read off disk. It is the same file Vite compiles into
+// the workbench, so there is still exactly one definition; reading it at runtime
+// would need it shipped as a bundle resource, which is a second copy that can go
+// missing in a release build and never in a dev one.
+//
+// The theme is a class on `<html>`, so a panel follows the workbench by being
+// told which one is on — see `panels.ts`.
+const TOKENS_CSS: &str = include_str!("../../src/ui/tokens.css");
+
+fn refuse(reason: String) -> tauri::http::Response<Vec<u8>> {
+    tauri::http::Response::builder()
+        .status(404)
+        .header("Content-Type", "text/plain; charset=utf-8")
+        .body(reason.into_bytes())
+        .expect("a 404 with a string body is always valid")
+}
+
+/// Serve one file out of one plugin's folder.
+pub fn serve_panel<R: tauri::Runtime>(
+    ctx: tauri::UriSchemeContext<'_, R>,
+    request: tauri::http::Request<Vec<u8>>,
+) -> tauri::http::Response<Vec<u8>> {
+    let Some((scope, folder, relative)) = panel_parts(request.uri().path()) else {
+        return refuse(format!("{} names no plugin file", request.uri().path()));
+    };
+    if scope == ADE && folder == "tokens.css" {
+        return tauri::http::Response::builder()
+            .header("Content-Type", "text/css; charset=utf-8")
+            .body(TOKENS_CSS.as_bytes().to_vec())
+            .expect("a css body is always valid");
+    }
+    let app = ctx.app_handle();
+    let state = app.state::<WorkspaceState>();
+    match panel_file(app, state.inner(), &scope, &folder, &relative) {
+        Err(reason) => refuse(reason),
+        Ok(path) => match fs::read(&path) {
+            Err(error) => refuse(error.to_string()),
+            Ok(bytes) => tauri::http::Response::builder()
+                .header("Content-Type", content_type(&path))
+                .body(bytes)
+                .expect("a file body is always valid"),
+        },
+    }
+}
+
+#[cfg(test)]
+mod panel_tests {
+    use super::*;
+
+    #[test]
+    fn a_panel_url_carries_the_scope_and_the_folder_as_segments() {
+        let url = panel_url("local", "hello", "panel.html");
+        assert!(url.ends_with("/local/hello/panel.html"), "{url}");
+        // Whichever form the platform serves, the path is what the handler reads.
+        assert_eq!(
+            panel_parts("/local/hello/panel.html"),
+            Some(("local".into(), "hello".into(), "panel.html".into()))
+        );
+        // A bare folder is its index, the way any static server answers.
+        assert_eq!(
+            panel_parts("/global/hello/"),
+            Some(("global".into(), "hello".into(), "index.html".into()))
+        );
+        assert_eq!(panel_parts("/hello"), None);
+    }
+
+    #[test]
+    fn a_panel_cannot_escape_its_own_folder() {
+        let temp = std::env::temp_dir().join("ade-panel-confinement");
+        let plugin = temp.join("evil");
+        fs::create_dir_all(&plugin).unwrap();
+        fs::write(temp.join("secret.txt"), "sh").unwrap();
+        fs::write(plugin.join("panel.html"), "<b>hi</b>").unwrap();
+        let root = workspace::canonical(&plugin).unwrap();
+
+        // The file inside is served; everything above it is refused, by the same
+        // resolver a project read goes through.
+        assert!(workspace::resolve(&root, "panel.html").is_ok());
+        assert!(workspace::resolve(&root, "../secret.txt").is_err());
+        assert!(workspace::resolve(&root, "..\\secret.txt").is_err());
+        assert!(workspace::resolve(&root, "/etc/passwd").is_err());
+        fs::remove_dir_all(&temp).ok();
+    }
+
+    #[test]
+    fn a_folder_segment_is_never_a_path() {
+        // Refused before the filesystem is touched, which is why this holds with
+        // no app handle to hand.
+        for bad in ["..", "a/b", "a\\b", "../.."] {
+            assert!(
+                Path::new(bad).components().count() != 1 || bad.contains(".."),
+                "{bad} must not pass for a folder name"
+            );
+        }
+        assert_eq!(Path::new("hello").components().count(), 1);
+    }
+
+    #[test]
+    fn tokens_are_served_and_are_the_workbench_ones() {
+        // Compiled in, so this is the same text `tokens.css` holds.
+        assert!(TOKENS_CSS.contains("--background"));
+        assert!(TOKENS_CSS.contains(".dark"));
+    }
+
+    #[test]
+    fn a_content_type_is_chosen_by_extension() {
+        assert_eq!(content_type(Path::new("a/panel.html")), "text/html; charset=utf-8");
+        assert_eq!(content_type(Path::new("a/style.css")), "text/css; charset=utf-8");
+        assert_eq!(content_type(Path::new("a/logo.png")), "image/png");
+        assert_eq!(content_type(Path::new("a/thing.bin")), "application/octet-stream");
     }
 }

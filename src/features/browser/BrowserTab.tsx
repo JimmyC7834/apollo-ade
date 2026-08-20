@@ -40,6 +40,15 @@ export interface BrowserTabProps {
 	 * call that asked for it or it reaches nobody.
 	 */
 	readonly onFailed: (id: string, reason: string) => void;
+	/**
+	 * False for a plugin panel — ticket 75.
+	 *
+	 * The same component, because a panel is the same thing: a child webview in
+	 * a dock tab, measured by the same box and hidden by the same rule. What it
+	 * does not get is an address row, because a plugin drew this page and there
+	 * is nowhere else for it to go.
+	 */
+	readonly chrome?: boolean;
 }
 
 interface Refusal {
@@ -55,7 +64,15 @@ function boxRect(element: HTMLElement | null): Rect | undefined {
 	return { x: box.x, y: box.y, width: box.width, height: box.height };
 }
 
-export function BrowserTab({ id, adapter, visible, initialUrl, onOpened, onFailed }: BrowserTabProps) {
+export function BrowserTab({
+	id,
+	adapter,
+	visible,
+	initialUrl,
+	onOpened,
+	onFailed,
+	chrome = true,
+}: BrowserTabProps) {
 	const label = browserTabLabel(id);
 	const boxRef = useRef<HTMLDivElement>(null);
 	const [url, setUrl] = useState(initialUrl ?? '');
@@ -175,6 +192,7 @@ export function BrowserTab({ id, adapter, visible, initialUrl, onOpened, onFaile
 
 	return (
 		<div className="ide-browser">
+			{chrome ? (
 			<form
 				className="ide-browser-address"
 				onSubmit={(event) => {
@@ -207,6 +225,7 @@ export function BrowserTab({ id, adapter, visible, initialUrl, onOpened, onFaile
 					<Icon name="discard" />
 				</button>
 			</form>
+			) : null}
 			{refusal ? (
 				<p className="ide-browser-refusal" role="status">
 					<span>{refusal.reason}</span>
@@ -230,9 +249,11 @@ export function BrowserTab({ id, adapter, visible, initialUrl, onOpened, onFaile
 			<div className="ide-browser-page" ref={boxRef}>
 				{url === '' ? (
 					<p className="ide-browser-empty">
-						{adapter.isNative
-							? 'Type a URL. Localhost and file: URLs only.'
-							: 'A browser tab needs the native window; there is no page here under npm run dev.'}
+						{!adapter.isNative
+							? 'A page needs the native window; there is none here under npm run dev.'
+							: chrome
+								? 'Type a URL. Localhost and file: URLs only.'
+								: 'This panel has not loaded.'}
 					</p>
 				) : null}
 			</div>

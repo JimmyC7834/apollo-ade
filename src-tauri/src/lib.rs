@@ -15,6 +15,11 @@ mod workspace;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        // A plugin's own page, served out of that plugin's folder and nowhere
+        // else — ticket 75. Registered here because a scheme belongs to the
+        // application rather than to a webview; `plugins::serve_panel` is the
+        // whole of it, confinement included.
+        .register_uri_scheme_protocol(plugins::PANEL_SCHEME, plugins::serve_panel)
         .manage(workspace::WorkspaceState::default())
         .manage(workspace::SessionRoots::default())
         .manage(workspace::Writers::default())

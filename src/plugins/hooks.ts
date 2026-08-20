@@ -45,6 +45,15 @@ export const PLUGIN_EVENTS = [
 	'tools_update',
 	'compacted',
 	'abort',
+	/*
+	 * Not a harness event at all — ticket 75. It is the plugin's own panel
+	 * talking back to the plugin's own script, and it is in this list because
+	 * `on` is the one way a plugin registers for anything and a second
+	 * registration mechanism for one event would be a second mechanism.
+	 *
+	 * The payload is whatever the panel sent. We never parse it.
+	 */
+	'relay',
 ] as const;
 
 export type PluginEventName = (typeof PLUGIN_EVENTS)[number];
@@ -261,6 +270,27 @@ export async function notifyPlugins(
 	// A copy, because a handler that fails is dropped from `registrations` while
 	// this loop is walking it.
 	for (const entry of registrations.filter((candidate) => candidate.event === event)) {
+		await runOne(entry, payload, ms);
+	}
+	return undefined;
+}
+
+/**
+ * One plugin hears it, and nothing it says is honoured.
+ *
+ * `relay` is the reason this exists: a panel belongs to one plugin, and
+ * broadcasting its payload would hand one plugin's private protocol to every
+ * other plugin in the window.
+ */
+export async function notifyPlugin(
+	pluginId: string,
+	event: PluginEventName,
+	payload: unknown,
+	ms = DEADLINE_MS
+): Promise<undefined> {
+	for (const entry of registrations.filter(
+		(candidate) => candidate.event === event && candidate.pluginId === pluginId
+	)) {
 		await runOne(entry, payload, ms);
 	}
 	return undefined;

@@ -1064,11 +1064,11 @@ everything is asynchronous.
 | **[71](tickets/71-one-file-of-public-names.md)** | One file of public names | done |
 | **[72](tickets/72-a-plugin-loads-and-adds-a-command.md)** | A plugin loads and adds a command | done |
 | **[73](tickets/73-a-plugin-acts-and-listens.md)** | A plugin acts, and listens without lifting a block | done |
-| **[74](tickets/74-a-plugin-declares-a-tool.md)** | A plugin declares a tool, and a profile turns it on | ready |
-| **[75](tickets/75-a-plugin-draws.md)** | A plugin draws | ready |
-| **[76](tickets/76-a-plugin-changes-the-chrome.md)** | A plugin changes the chrome | ready |
+| **[74](tickets/74-a-plugin-declares-a-tool.md)** | A plugin declares a tool, and a profile turns it on | done |
+| **[75](tickets/75-a-plugin-draws.md)** | A plugin draws | done |
+| **[76](tickets/76-a-plugin-changes-the-chrome.md)** | A plugin changes the chrome | done |
 
-72 is the tracer bullet and gates 73-76. 71 is a prefactor, starts immediately, and gates
+All six are landed; none has been driven in the native window. 72 is the tracer bullet and gates 73-76. 71 is a prefactor, starts immediately, and gates
 only 76 - a layout claim names an id, and that name becomes an API. 75 also waits on 73,
 for the deadline and the failure path a panel needs.
 

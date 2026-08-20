@@ -14,7 +14,9 @@ import {
 	browserTabId,
 	browserTabLabel,
 	isBrowserTab,
+	isPluginPanel,
 	isToolArtifact,
+	pluginPanelId,
 } from '../artifacts';
 import { agentRect, createBrowserAdapter, normalizeUrl, urlHost } from '../browser';
 import { setBrowserHost } from '../agent/browserTool';
@@ -35,6 +37,13 @@ import { refuseReason, type Replacement } from '../features/search/replace';
 import { SessionNavigator } from '../features/sessions/SessionNavigator';
 import { createPersistenceAdapter, type PersistedState } from '../persistence';
 import { pluginHost } from '../plugins/host';
+import { applyLayout, layoutClaims, mergeTokens, onChromeChange, themeClaims } from '../plugins/chrome';
+import {
+	deliverToPlugin,
+	joinRelay,
+	setPanelHost,
+	type Pending,
+} from '../plugins/panels';
 import { recordOpenSessions, takeOpenSessions, takeUnopened } from '../sessionRequest';
 import {
 	archiveMove,
@@ -126,7 +135,9 @@ export function WorkbenchController() {
 	 * build is also cleaned up.
 	 */
 	const [pinned, setPinned] = useState<readonly string[]>(
-		(restored?.pinned ?? []).filter((id) => !isBrowserTab(id))
+		// A plugin panel goes the same way and for the same reason: the page
+		// behind it belongs to a plugin that has not been loaded yet.
+		(restored?.pinned ?? []).filter((id) => !isBrowserTab(id) && !isPluginPanel(id))
 	);
 
 	/*
@@ -144,7 +155,13 @@ export function WorkbenchController() {
 	 */
 	const browser = useMemo(() => createBrowserAdapter(), []);
 	const [browserTabs, setBrowserTabs] = useState<
-		readonly { readonly id: string; readonly url: string; readonly host: string }[]
+		readonly {
+			readonly id: string;
+			readonly url: string;
+			readonly host: string;
+			/** Set for a plugin panel — ticket 75. Absent for a browser tab. */
+			readonly pluginId?: string;
+		}[]
 	>([]);
 	/*
 	 * The agent's tools are built once, long before this component mounts, so
@@ -188,6 +205,10 @@ export function WorkbenchController() {
 	 */
 	const [theme, setTheme] = useState<ThemeName>(restored?.theme ?? 'dark');
 	useMemo(() => applyTheme(theme), [theme]);
+	// Read when a panel is opened, which can happen from outside React — see the
+	// panel host below. A ref written during render, like `tabsRef`.
+	const themeRef = useRef(theme);
+	themeRef.current = theme;
 
 	const [helpOpen, setHelpOpen] = useState(false);
 	const [branch, setBranch] = useState<string | undefined>(undefined);
@@ -1129,7 +1150,12 @@ export function WorkbenchController() {
 				setBrowserTabs((current) => [...current, { id, url: target, host }]);
 				return { id, host };
 			},
-			tabs: () => tabsRef.current.map((tab) => ({ id: tab.id, host: tab.host })),
+			// Browser tabs only. A plugin's panel is a page the agent did not open
+			// and has no business driving.
+			tabs: () =>
+				tabsRef.current
+					.filter((tab) => tab.pluginId === undefined)
+					.map((tab) => ({ id: tab.id, host: tab.host })),
 			evaluate: (id, js) => browser.evaluate(browserTabLabel(id), js),
 		});
 		return () => setBrowserHost(undefined);
@@ -1216,7 +1242,7 @@ export function WorkbenchController() {
 			 * existing while its chip stays in the transcript, so the chip says so
 			 * rather than pinning a tab with no page behind it.
 			 */
-			if (isBrowserTab(id)) {
+			if (isBrowserTab(id) || isPluginPanel(id)) {
 				if (tabsRef.current.some((tab) => tab.id === id)) {
 					showArtifact(id);
 				} else {
@@ -1237,7 +1263,7 @@ export function WorkbenchController() {
 		// Unpinning a browser tab destroys its page, the same way unpinning the
 		// terminal kills its shell. There is no unpinned-but-alive state for a tab
 		// the dev opened: the strip is the only place it exists.
-		if (isBrowserTab(id)) {
+		if (isBrowserTab(id) || isPluginPanel(id)) {
 			setBrowserTabs((current) => current.filter((tab) => tab.id !== id));
 		}
 		setPinned((current) => {
@@ -1394,43 +1420,160 @@ export function WorkbenchController() {
 		}
 	}, [selection?.path]);
 
+	/*
+	 * A plugin's own page, in the dock — ticket 75.
+	 *
+	 * Registered rather than passed, like `setBrowserHost` above it and for the
+	 * same reason: a plugin's `panel` call is written before this component
+	 * exists. A panel joins `browserTabs` because it *is* a browser tab in every
+	 * respect that matters — one child webview, one dock slot, the same position
+	 * sync and the same occlusion rule — and carries a `pluginId` to say whose.
+	 *
+	 * The theme rides in as a query parameter so the page is never painted in the
+	 * wrong one; the effect below is what carries a later change.
+	 */
+	useEffect(() => {
+		setPanelHost({
+			open(panel) {
+				const id = pluginPanelId((tabCount.current += 1));
+				const separator = panel.url.includes('?') ? '&' : '?';
+				setBrowserTabs((current) => [
+					...current,
+					{
+						id,
+						url: `${panel.url}${separator}ade-theme=${themeRef.current}`,
+						host: panel.title,
+						pluginId: panel.pluginId,
+					},
+				]);
+				showArtifact(id);
+			},
+			deliver(pluginId, payload) {
+				// Into the page directly. There is no size limit worth splitting in
+				// this direction — `browser_eval` takes the whole string.
+				for (const tab of tabsRef.current.filter((open) => open.pluginId === pluginId)) {
+					void browser.evaluate(
+						browserTabLabel(tab.id),
+						`window.__adeRelay(${JSON.stringify(payload ?? null)})`
+					);
+				}
+			},
+			closeFor(pluginId) {
+				for (const tab of tabsRef.current.filter((open) => open.pluginId === pluginId)) {
+					void browser.close(browserTabLabel(tab.id));
+				}
+				setBrowserTabs((current) => current.filter((tab) => tab.pluginId !== pluginId));
+			},
+		});
+		return () => setPanelHost(undefined);
+	}, [browser, showArtifact]);
+
+	/*
+	 * The other direction: a panel talking back to its own plugin.
+	 *
+	 * The message arrives on the same channel Escape does, in pieces, because
+	 * what a page can send is a URL. `joinRelay` puts them back together and
+	 * nothing on either side of the plugin learns that happened.
+	 */
+	useEffect(() => {
+		const pending: Pending = new Map();
+		return browser.onMessage((label, message) => {
+			const joined = joinRelay(pending, label, message);
+			if (!joined) {
+				return;
+			}
+			const tab = tabsRef.current.find((open) => browserTabLabel(open.id) === label);
+			if (tab?.pluginId) {
+				void deliverToPlugin(tab.pluginId, joined.payload);
+			}
+		});
+	}, [browser]);
+
+	// A theme change reaches a page that is already open. See `__adeTheme`.
+	useEffect(() => {
+		for (const tab of browserTabs.filter((open) => open.pluginId !== undefined)) {
+			void browser.evaluate(browserTabLabel(tab.id), `window.__adeTheme(${JSON.stringify(theme)})`);
+		}
+	}, [browser, browserTabs, theme]);
+
+	/*
+	 * What plugins have claimed about our chrome — ticket 76.
+	 *
+	 * Two module stores read the same way `pluginState` is, because a claim is
+	 * made before this component mounts. Layout claims are data about lists we
+	 * already render, which is what makes hiding, renaming and reordering a
+	 * filter rather than new machinery.
+	 */
+	const layout = useSyncExternalStore(onChromeChange, layoutClaims);
+	const themes = useSyncExternalStore(onChromeChange, themeClaims);
+
+	/*
+	 * A theme is values, set as inline custom properties on the document.
+	 *
+	 * Inline, so it wins over `tokens.css` without a stylesheet existing; and
+	 * removed by name when the claim goes, so disabling a plugin restores the
+	 * workbench rather than leaving its colours behind. Monaco and xterm read
+	 * their colours back off the document, so they follow this for free.
+	 */
+	useEffect(() => {
+		const { tokens } = mergeTokens(themes);
+		for (const [name, value] of Object.entries(tokens)) {
+			document.documentElement.style.setProperty(name, value);
+		}
+		// Monaco keeps a compiled copy of its colours, so it has to be retinted
+		// after the values move under it. `applyTheme` is the one call that does.
+		if (Object.keys(tokens).length > 0) {
+			applyTheme(themeRef.current);
+		}
+		return () => {
+			for (const name of Object.keys(tokens)) {
+				document.documentElement.style.removeProperty(name);
+			}
+		};
+	}, [themes]);
+
+	/*
+	 * Every command the workbench contributes, then every command a plugin
+	 * claimed.
+	 *
+	 * The workbench's own go through `applyLayout`, which is where a layout claim
+	 * hides, renames and reorders them. A plugin's do not: a claim names *public*
+	 * ids, and a claimed command's id is namespaced by the plugin that made it, so
+	 * there is nothing in there a claim is allowed to name.
+	 */
 	const commands = useMemo(
-		() => [
-			...buildCommands({
-				showArtifact,
-				toggleDock: () => setDockCollapsed((current) => !current),
-				closeActiveEditor: () => {
-					if (activeEditorId) {
-						closeEditor(activeEditorId);
-					}
-				},
-				saveActiveEditor: () => {
-					if (activeEditorId) {
-						void saveFile(activeEditorId);
-					}
-				},
-				// Reopening is only meaningful with something to reopen, and an
-				// empty modal over the agent is worse than no modal.
-				showEditor: () => setEditorOpen(true),
-				showEditorDisabled: inputs.length === 0 ? 'No open editors' : undefined,
-				// The command exists wherever the capability does, and nothing
-				// disables it any more: a root change keeps the editors of the root
-				// it leaves rather than discarding them — ticket 49.
-				openFolder: provider.canChooseWorkspace ? () => void openFolder() : undefined,
-				showAccessibilityHelp: () => setHelpOpen(true),
-				newSession: () => void newSession(),
-				closeSession,
-				openBrowserTab,
-			}),
-			/*
-			 * Claimed by plugins, appended rather than merged. They are already
-			 * namespaced by plugin id, so nothing here can collide with a command
-			 * the workbench contributes — and the palette draws them with our own
-			 * component, which is what `claim` means.
-			 */
-			...pluginState.commands,
-		],
+		() =>
+			applyLayout(
+				buildCommands({
+					showArtifact,
+					toggleDock: () => setDockCollapsed((current) => !current),
+					closeActiveEditor: () => {
+						if (activeEditorId) {
+							closeEditor(activeEditorId);
+						}
+					},
+					saveActiveEditor: () => {
+						if (activeEditorId) {
+							void saveFile(activeEditorId);
+						}
+					},
+					// Reopening is only meaningful with something to reopen, and an
+					// empty modal over the agent is worse than no modal.
+					showEditor: () => setEditorOpen(true),
+					showEditorDisabled: inputs.length === 0 ? 'No open editors' : undefined,
+					// The command exists wherever the capability does, and nothing
+					// disables it any more: a root change keeps the editors of the root
+					// it leaves rather than discarding them — ticket 49.
+					openFolder: provider.canChooseWorkspace ? () => void openFolder() : undefined,
+					showAccessibilityHelp: () => setHelpOpen(true),
+					newSession: () => void newSession(),
+					closeSession,
+					openBrowserTab,
+				}),
+				layout
+			).concat(pluginState.commands),
 		[
+			layout,
 			pluginState.commands,
 			showArtifact,
 			openBrowserTab,
@@ -1890,7 +2033,10 @@ export function WorkbenchController() {
 						onFraction={setDockFraction}
 						collapsed={dockCollapsed}
 						onCollapsed={setDockCollapsed}
-						artifacts={pinned.map((id) => artifactRef(id, inputs, browserHosts))}
+						artifacts={applyLayout(
+							pinned.map((id) => artifactRef(id, inputs, browserHosts)),
+							layout
+						)}
 						activeId={activeArtifact}
 						onSelect={setActiveArtifactId}
 						onUnpin={unpin}
@@ -1944,6 +2090,7 @@ export function WorkbenchController() {
 										visible={
 											activeArtifact === tab.id && !dockCollapsed && !occluded
 										}
+										chrome={tab.pluginId === undefined}
 										onOpened={noteOpened}
 										onFailed={noteFailed}
 									/>

@@ -96,6 +96,28 @@ export function browserTabId(n: number): string {
 }
 
 /**
+ * A plugin's own page, in a dock slot — ticket 75.
+ *
+ * Numbered from the same counter a browser tab is, because the two are the same
+ * machinery: a panel is a child webview in a dock tab, and the only differences
+ * are where its page comes from and that it has no address row. Sharing the
+ * counter is what stops two artifacts ever asking Rust for one webview label.
+ *
+ * A separate *prefix* rather than a separate mechanism, so `artifactRef` can
+ * draw it with the plugin's own name and the plugin glyph, and so the agent's
+ * `browser` tool lists browser tabs and not somebody's panel.
+ */
+export const PANEL_PREFIX = 'panel:';
+
+export function isPluginPanel(id: string): boolean {
+	return id.startsWith(PANEL_PREFIX);
+}
+
+export function pluginPanelId(n: number): string {
+	return `${PANEL_PREFIX}${n}`;
+}
+
+/**
  * The child webview's label.
  *
  * Not the artifact id: a Tauri label is matched against `[a-zA-Z0-9\-/:_]+`,
@@ -105,6 +127,9 @@ export function browserTabId(n: number): string {
 export function browserTabLabel(id: string): string {
 	return id.replace(':', '-');
 }
+
+/** A panel's webview label. The same rule, and the same reason. */
+export const panelLabel = browserTabLabel;
 
 export const TOOL_ARTIFACT_IDS = Object.values(TOOL_ARTIFACTS).map((artifact) => artifact.id);
 
